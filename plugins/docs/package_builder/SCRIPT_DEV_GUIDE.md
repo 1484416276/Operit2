@@ -383,6 +383,7 @@ METADATA
 -   `platform.linux`: 当前运行平台是否为 Linux（boolean）
 -   `platform.android`: 当前运行平台是否为 Android（boolean）
 -   `platform.macos`: 当前运行平台是否为 macOS（boolean）
+-   `platform.ios`: 当前运行平台是否为 iOS（boolean）
 -   `ui.virtual_display`: 是否具备虚拟屏能力（boolean）
 -   `android.permission_level`: 权限等级（enum，会以字符串形式参与比较）
 -   `android.shizuku_available`: Shizuku 是否可用（boolean）
@@ -1062,4 +1063,3 @@ VS Code 会自动打开一个新的终端面板，并执行相应的脚本，你
 ```
 
 完成这两个文件的创建后，重启 VS Code，“运行和调试”中的配置项就应该可用了。 
-

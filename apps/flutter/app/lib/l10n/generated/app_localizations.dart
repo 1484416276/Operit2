@@ -1823,13 +1823,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryAppearanceSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Theme and language'**
+  /// **'Theme, bubbles, and interaction'**
   String get settingsCategoryAppearanceSubtitle;
 
   /// No description provided for @settingsCategoryAppearanceDescription.
   ///
   /// In en, this message translates to:
-  /// **'Adjust the client theme and current localization display.'**
+  /// **'Customize global theme, background media, message bubbles, and chat interaction.'**
   String get settingsCategoryAppearanceDescription;
 
   /// No description provided for @settingsCategoryDataTitle.
@@ -5911,6 +5911,78 @@ abstract class AppLocalizations {
   /// **'Language follows the localization configuration loaded at app startup.'**
   String get settingsAppearanceLanguageDescription;
 
+  /// No description provided for @settingsAppearanceBubblesTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages & Bubbles'**
+  String get settingsAppearanceBubblesTab;
+
+  /// No description provided for @settingsAppearanceInteractionTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Interaction & Feed'**
+  String get settingsAppearanceInteractionTab;
+
+  /// No description provided for @settingsAppearanceBubbleStyleSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Layout & Style'**
+  String get settingsAppearanceBubbleStyleSection;
+
+  /// No description provided for @settingsAppearanceBubbleFontSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble Fonts'**
+  String get settingsAppearanceBubbleFontSection;
+
+  /// No description provided for @settingsAppearanceBubbleImageSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Bubble Images'**
+  String get settingsAppearanceBubbleImageSection;
+
+  /// No description provided for @settingsAppearanceInteractionStatusSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Process & Status'**
+  String get settingsAppearanceInteractionStatusSection;
+
+  /// No description provided for @settingsAppearanceBackgroundEffectsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Visual Effects'**
+  String get settingsAppearanceBackgroundEffectsSection;
+
+  /// No description provided for @settingsAppearanceBackgroundVideoSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Video Playback'**
+  String get settingsAppearanceBackgroundVideoSection;
+
+  /// No description provided for @settingsAppearanceLivePreviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Live Preview'**
+  String get settingsAppearanceLivePreviewTitle;
+
+  /// No description provided for @settingsAppearanceLivePreviewUserSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Help me organize today\'s work plan.'**
+  String get settingsAppearanceLivePreviewUserSample;
+
+  /// No description provided for @settingsAppearanceLivePreviewAiSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Sure! I\'ve organized your core task list and we\'re ready to start.'**
+  String get settingsAppearanceLivePreviewAiSample;
+
+  /// No description provided for @settingsAppearanceLivePreviewThinkingSample.
+  ///
+  /// In en, this message translates to:
+  /// **'Analyzing context and schedule priorities...'**
+  String get settingsAppearanceLivePreviewThinkingSample;
+
   /// No description provided for @settingsDataRuntimeSection.
   ///
   /// In en, this message translates to:
@@ -7028,6 +7100,148 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Read the six-digit code shown by the device.'**
   String get edgePairingCodeHint;
+
+  /// No description provided for @chatMessageResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Response'**
+  String get chatMessageResponse;
+
+  /// No description provided for @chatMessagePrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Prompt'**
+  String get chatMessagePrompt;
+
+  /// No description provided for @chatMessagePromptBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Prompt by {sender}'**
+  String chatMessagePromptBy(String sender);
+
+  /// No description provided for @chatMessageTokensTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Tokens: ↑{input} · ↓{output}'**
+  String chatMessageTokensTooltip(String input, String output);
+
+  /// No description provided for @chatMessageTokensCachedTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Tokens: ↑{input} (cached: {cached}) · ↓{output}'**
+  String chatMessageTokensCachedTooltip(
+    String input,
+    String cached,
+    String output,
+  );
+
+  /// No description provided for @chatMessageTimingTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Timing: {wait} wait · {output} output'**
+  String chatMessageTimingTooltip(String wait, String output);
+
+  /// No description provided for @chatMessageTimeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Time: {time}'**
+  String chatMessageTimeTooltip(String time);
+
+  /// No description provided for @chatMessageInfoDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Details'**
+  String get chatMessageInfoDialogTitle;
+
+  /// No description provided for @chatMessageDeleteConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm delete'**
+  String get chatMessageDeleteConfirmTitle;
+
+  /// No description provided for @chatMessageDeleteConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this message?'**
+  String get chatMessageDeleteConfirmMessage;
+
+  /// No description provided for @chatMessageSender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sender: {sender}'**
+  String chatMessageSender(String sender);
+
+  /// No description provided for @chatMessageTimestamp.
+  ///
+  /// In en, this message translates to:
+  /// **'Timestamp: {timestamp}'**
+  String chatMessageTimestamp(String timestamp);
+
+  /// No description provided for @chatMessageRole.
+  ///
+  /// In en, this message translates to:
+  /// **'Role: {roleName}'**
+  String chatMessageRole(String roleName);
+
+  /// No description provided for @chatMessageModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model: {modelName}'**
+  String chatMessageModel(String modelName);
+
+  /// No description provided for @chatMessageProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider: {provider}'**
+  String chatMessageProvider(String provider);
+
+  /// No description provided for @chatMessageTokensInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Input tokens: {count}'**
+  String chatMessageTokensInput(String count);
+
+  /// No description provided for @chatMessageTokensCached.
+  ///
+  /// In en, this message translates to:
+  /// **'Cached input tokens: {count}'**
+  String chatMessageTokensCached(String count);
+
+  /// No description provided for @chatMessageTokensOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Output tokens: {count}'**
+  String chatMessageTokensOutput(String count);
+
+  /// No description provided for @chatMessageWaitDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait duration: {duration}'**
+  String chatMessageWaitDuration(String duration);
+
+  /// No description provided for @chatMessageOutputDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Output duration: {duration}'**
+  String chatMessageOutputDuration(String duration);
+
+  /// No description provided for @chatMessageTokenSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Token speed: {speed}'**
+  String chatMessageTokenSpeed(String speed);
+
+  /// No description provided for @chatMessageCacheShort.
+  ///
+  /// In en, this message translates to:
+  /// **'cache {count}'**
+  String chatMessageCacheShort(String count);
+
+  /// No description provided for @chatMessageCacheHitRate.
+  ///
+  /// In en, this message translates to:
+  /// **'Cache hit rate: {rate}'**
+  String chatMessageCacheHitRate(String rate);
 }
 
 class _AppLocalizationsDelegate

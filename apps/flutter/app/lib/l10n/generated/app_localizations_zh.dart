@@ -927,10 +927,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryAppearanceTitle => '外观与交互';
 
   @override
-  String get settingsCategoryAppearanceSubtitle => '主题、语言';
+  String get settingsCategoryAppearanceSubtitle => '主题、气泡与交互';
 
   @override
-  String get settingsCategoryAppearanceDescription => '调整客户端主题和当前本地化显示。';
+  String get settingsCategoryAppearanceDescription =>
+      '调整全局主题、背景壁纸、聊天气泡样式与信息流交互。';
 
   @override
   String get settingsCategoryDataTitle => '数据与备份';
@@ -3132,6 +3133,43 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceLanguageDescription => '语言跟随应用启动时的本地化配置。';
 
   @override
+  String get settingsAppearanceBubblesTab => '消息与气泡';
+
+  @override
+  String get settingsAppearanceInteractionTab => '交互与信息';
+
+  @override
+  String get settingsAppearanceBubbleStyleSection => '版式与风格';
+
+  @override
+  String get settingsAppearanceBubbleFontSection => '气泡字体';
+
+  @override
+  String get settingsAppearanceBubbleImageSection => '气泡贴图';
+
+  @override
+  String get settingsAppearanceInteractionStatusSection => '过程与状态';
+
+  @override
+  String get settingsAppearanceBackgroundEffectsSection => '视觉效果';
+
+  @override
+  String get settingsAppearanceBackgroundVideoSection => '视频播放';
+
+  @override
+  String get settingsAppearanceLivePreviewTitle => '实时预览';
+
+  @override
+  String get settingsAppearanceLivePreviewUserSample => '帮我梳理一下今天的工作计划。';
+
+  @override
+  String get settingsAppearanceLivePreviewAiSample =>
+      '好的！我已经为你整理好核心任务清单，随时可以开始执行。';
+
+  @override
+  String get settingsAppearanceLivePreviewThinkingSample => '正在分析上下文与日程优先级...';
+
+  @override
   String get settingsDataRuntimeSection => '数据概览';
 
   @override
@@ -3760,4 +3798,113 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get edgePairingCodeHint => '查看设备提供的 6 位配对码。';
+
+  @override
+  String get chatMessageResponse => '回复';
+
+  @override
+  String get chatMessagePrompt => '提示词';
+
+  @override
+  String chatMessagePromptBy(String sender) {
+    return '$sender 的提示词';
+  }
+
+  @override
+  String chatMessageTokensTooltip(String input, String output) {
+    return 'Token: ↑$input · ↓$output';
+  }
+
+  @override
+  String chatMessageTokensCachedTooltip(
+    String input,
+    String cached,
+    String output,
+  ) {
+    return 'Token: ↑$input（缓存: $cached）· ↓$output';
+  }
+
+  @override
+  String chatMessageTimingTooltip(String wait, String output) {
+    return '耗时: $wait 等待 · $output 输出';
+  }
+
+  @override
+  String chatMessageTimeTooltip(String time) {
+    return '时间: $time';
+  }
+
+  @override
+  String get chatMessageInfoDialogTitle => '消息信息';
+
+  @override
+  String get chatMessageDeleteConfirmTitle => '确认删除';
+
+  @override
+  String get chatMessageDeleteConfirmMessage => '确定删除这条消息？';
+
+  @override
+  String chatMessageSender(String sender) {
+    return '发送者: $sender';
+  }
+
+  @override
+  String chatMessageTimestamp(String timestamp) {
+    return '时间戳: $timestamp';
+  }
+
+  @override
+  String chatMessageRole(String roleName) {
+    return '角色: $roleName';
+  }
+
+  @override
+  String chatMessageModel(String modelName) {
+    return '模型: $modelName';
+  }
+
+  @override
+  String chatMessageProvider(String provider) {
+    return '提供商: $provider';
+  }
+
+  @override
+  String chatMessageTokensInput(String count) {
+    return '输入 token: $count';
+  }
+
+  @override
+  String chatMessageTokensCached(String count) {
+    return '缓存输入 token: $count';
+  }
+
+  @override
+  String chatMessageTokensOutput(String count) {
+    return '输出 token: $count';
+  }
+
+  @override
+  String chatMessageWaitDuration(String duration) {
+    return '等待耗时: $duration';
+  }
+
+  @override
+  String chatMessageOutputDuration(String duration) {
+    return '输出耗时: $duration';
+  }
+
+  @override
+  String chatMessageTokenSpeed(String speed) {
+    return 'Token 速率: $speed';
+  }
+
+  @override
+  String chatMessageCacheShort(String count) {
+    return '缓存 $count';
+  }
+
+  @override
+  String chatMessageCacheHitRate(String rate) {
+    return '缓存命中率: $rate';
+  }
 }

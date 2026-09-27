@@ -951,11 +951,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
 
   @override
-  String get settingsCategoryAppearanceSubtitle => 'Theme and language';
+  String get settingsCategoryAppearanceSubtitle =>
+      'Theme, bubbles, and interaction';
 
   @override
   String get settingsCategoryAppearanceDescription =>
-      'Adjust the client theme and current localization display.';
+      'Customize global theme, background media, message bubbles, and chat interaction.';
 
   @override
   String get settingsCategoryDataTitle => 'Data & Backup';
@@ -3255,6 +3256,45 @@ class AppLocalizationsEn extends AppLocalizations {
       'Language follows the localization configuration loaded at app startup.';
 
   @override
+  String get settingsAppearanceBubblesTab => 'Messages & Bubbles';
+
+  @override
+  String get settingsAppearanceInteractionTab => 'Interaction & Feed';
+
+  @override
+  String get settingsAppearanceBubbleStyleSection => 'Layout & Style';
+
+  @override
+  String get settingsAppearanceBubbleFontSection => 'Bubble Fonts';
+
+  @override
+  String get settingsAppearanceBubbleImageSection => 'Bubble Images';
+
+  @override
+  String get settingsAppearanceInteractionStatusSection => 'Process & Status';
+
+  @override
+  String get settingsAppearanceBackgroundEffectsSection => 'Visual Effects';
+
+  @override
+  String get settingsAppearanceBackgroundVideoSection => 'Video Playback';
+
+  @override
+  String get settingsAppearanceLivePreviewTitle => 'Live Preview';
+
+  @override
+  String get settingsAppearanceLivePreviewUserSample =>
+      'Help me organize today\'s work plan.';
+
+  @override
+  String get settingsAppearanceLivePreviewAiSample =>
+      'Sure! I\'ve organized your core task list and we\'re ready to start.';
+
+  @override
+  String get settingsAppearanceLivePreviewThinkingSample =>
+      'Analyzing context and schedule priorities...';
+
+  @override
   String get settingsDataRuntimeSection => 'Data overview';
 
   @override
@@ -3913,4 +3953,113 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get edgePairingCodeHint =>
       'Read the six-digit code shown by the device.';
+
+  @override
+  String get chatMessageResponse => 'Response';
+
+  @override
+  String get chatMessagePrompt => 'Prompt';
+
+  @override
+  String chatMessagePromptBy(String sender) {
+    return 'Prompt by $sender';
+  }
+
+  @override
+  String chatMessageTokensTooltip(String input, String output) {
+    return 'Tokens: ↑$input · ↓$output';
+  }
+
+  @override
+  String chatMessageTokensCachedTooltip(
+    String input,
+    String cached,
+    String output,
+  ) {
+    return 'Tokens: ↑$input (cached: $cached) · ↓$output';
+  }
+
+  @override
+  String chatMessageTimingTooltip(String wait, String output) {
+    return 'Timing: $wait wait · $output output';
+  }
+
+  @override
+  String chatMessageTimeTooltip(String time) {
+    return 'Time: $time';
+  }
+
+  @override
+  String get chatMessageInfoDialogTitle => 'Message Details';
+
+  @override
+  String get chatMessageDeleteConfirmTitle => 'Confirm delete';
+
+  @override
+  String get chatMessageDeleteConfirmMessage => 'Delete this message?';
+
+  @override
+  String chatMessageSender(String sender) {
+    return 'Sender: $sender';
+  }
+
+  @override
+  String chatMessageTimestamp(String timestamp) {
+    return 'Timestamp: $timestamp';
+  }
+
+  @override
+  String chatMessageRole(String roleName) {
+    return 'Role: $roleName';
+  }
+
+  @override
+  String chatMessageModel(String modelName) {
+    return 'Model: $modelName';
+  }
+
+  @override
+  String chatMessageProvider(String provider) {
+    return 'Provider: $provider';
+  }
+
+  @override
+  String chatMessageTokensInput(String count) {
+    return 'Input tokens: $count';
+  }
+
+  @override
+  String chatMessageTokensCached(String count) {
+    return 'Cached input tokens: $count';
+  }
+
+  @override
+  String chatMessageTokensOutput(String count) {
+    return 'Output tokens: $count';
+  }
+
+  @override
+  String chatMessageWaitDuration(String duration) {
+    return 'Wait duration: $duration';
+  }
+
+  @override
+  String chatMessageOutputDuration(String duration) {
+    return 'Output duration: $duration';
+  }
+
+  @override
+  String chatMessageTokenSpeed(String speed) {
+    return 'Token speed: $speed';
+  }
+
+  @override
+  String chatMessageCacheShort(String count) {
+    return 'cache $count';
+  }
+
+  @override
+  String chatMessageCacheHitRate(String rate) {
+    return 'Cache hit rate: $rate';
+  }
 }

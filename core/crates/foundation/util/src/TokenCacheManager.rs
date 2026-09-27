@@ -37,10 +37,8 @@ impl TokenCacheManager {
         self.output_token_count
     }
 
-    /// Clears all tracked token counts.
+    /// Resets per-request token counters while retaining previous history for prefix cache matching.
     pub fn reset_token_counts(&mut self) {
-        self.previous_chat_history.clear();
-        self.previous_history_token_count = 0;
         self.cached_input_token_count = 0;
         self.current_input_token_count = 0;
         self.output_token_count = 0;
@@ -58,8 +56,26 @@ impl TokenCacheManager {
 
     /// Updates measured input token counts reported by a provider.
     pub fn update_actual_tokens(&mut self, actual_input: i64, cached_input: i64) {
-        self.current_input_token_count = actual_input;
-        self.cached_input_token_count = cached_input;
+        if cached_input > 0 {
+            self.current_input_token_count = actual_input;
+            self.cached_input_token_count = cached_input;
+        } else if self.cached_input_token_count > 0 {
+            let total_estimated = self.cached_input_token_count + self.current_input_token_count;
+            if total_estimated > 0 && actual_input > 0 {
+                let ratio = (actual_input as f64) / (total_estimated as f64);
+                let scaled_cached =
+                    ((self.cached_input_token_count as f64) * ratio).round() as i64;
+                self.cached_input_token_count = scaled_cached.clamp(0, actual_input);
+                self.current_input_token_count =
+                    (actual_input - self.cached_input_token_count).max(0);
+            } else {
+                self.current_input_token_count = actual_input;
+            }
+        } else {
+            self.current_input_token_count = actual_input;
+        }
+        self.previous_history_token_count =
+            self.cached_input_token_count + self.current_input_token_count;
     }
 
     /// Estimates input tokens from chat message content.
@@ -93,6 +109,16 @@ impl TokenCacheManager {
             if !chat_history.is_empty() {
                 self.previous_chat_history = history_with_tools;
             }
+            let _ = AppLogger::d(
+                "TokenCacheManager",
+                &format!(
+                    "calculate_input_tokens cached={} new={} total={} commonPrefix={}",
+                    cached_tokens,
+                    new_tokens,
+                    cached_tokens + new_tokens,
+                    common_prefix_length
+                ),
+            );
         }
 
         cached_tokens + new_tokens

@@ -3798,4 +3798,113 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get edgePairingCodeHint => '查看设备提供的 6 位配对码。';
+
+  @override
+  String get chatMessageResponse => '回复';
+
+  @override
+  String get chatMessagePrompt => '提示词';
+
+  @override
+  String chatMessagePromptBy(String sender) {
+    return '$sender 的提示词';
+  }
+
+  @override
+  String chatMessageTokensTooltip(String input, String output) {
+    return 'Token: ↑$input · ↓$output';
+  }
+
+  @override
+  String chatMessageTokensCachedTooltip(
+    String input,
+    String cached,
+    String output,
+  ) {
+    return 'Token: ↑$input（缓存: $cached）· ↓$output';
+  }
+
+  @override
+  String chatMessageTimingTooltip(String wait, String output) {
+    return '耗时: $wait 等待 · $output 输出';
+  }
+
+  @override
+  String chatMessageTimeTooltip(String time) {
+    return '时间: $time';
+  }
+
+  @override
+  String get chatMessageInfoDialogTitle => '消息信息';
+
+  @override
+  String get chatMessageDeleteConfirmTitle => '确认删除';
+
+  @override
+  String get chatMessageDeleteConfirmMessage => '确定删除这条消息？';
+
+  @override
+  String chatMessageSender(String sender) {
+    return '发送者: $sender';
+  }
+
+  @override
+  String chatMessageTimestamp(String timestamp) {
+    return '时间戳: $timestamp';
+  }
+
+  @override
+  String chatMessageRole(String roleName) {
+    return '角色: $roleName';
+  }
+
+  @override
+  String chatMessageModel(String modelName) {
+    return '模型: $modelName';
+  }
+
+  @override
+  String chatMessageProvider(String provider) {
+    return '提供商: $provider';
+  }
+
+  @override
+  String chatMessageTokensInput(String count) {
+    return '输入 token: $count';
+  }
+
+  @override
+  String chatMessageTokensCached(String count) {
+    return '缓存输入 token: $count';
+  }
+
+  @override
+  String chatMessageTokensOutput(String count) {
+    return '输出 token: $count';
+  }
+
+  @override
+  String chatMessageWaitDuration(String duration) {
+    return '等待耗时: $duration';
+  }
+
+  @override
+  String chatMessageOutputDuration(String duration) {
+    return '输出耗时: $duration';
+  }
+
+  @override
+  String chatMessageTokenSpeed(String speed) {
+    return 'Token 速率: $speed';
+  }
+
+  @override
+  String chatMessageCacheShort(String count) {
+    return '缓存 $count';
+  }
+
+  @override
+  String chatMessageCacheHitRate(String rate) {
+    return '缓存命中率: $rate';
+  }
 }

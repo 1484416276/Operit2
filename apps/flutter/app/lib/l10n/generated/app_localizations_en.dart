@@ -3953,4 +3953,113 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get edgePairingCodeHint =>
       'Read the six-digit code shown by the device.';
+
+  @override
+  String get chatMessageResponse => 'Response';
+
+  @override
+  String get chatMessagePrompt => 'Prompt';
+
+  @override
+  String chatMessagePromptBy(String sender) {
+    return 'Prompt by $sender';
+  }
+
+  @override
+  String chatMessageTokensTooltip(String input, String output) {
+    return 'Tokens: ↑$input · ↓$output';
+  }
+
+  @override
+  String chatMessageTokensCachedTooltip(
+    String input,
+    String cached,
+    String output,
+  ) {
+    return 'Tokens: ↑$input (cached: $cached) · ↓$output';
+  }
+
+  @override
+  String chatMessageTimingTooltip(String wait, String output) {
+    return 'Timing: $wait wait · $output output';
+  }
+
+  @override
+  String chatMessageTimeTooltip(String time) {
+    return 'Time: $time';
+  }
+
+  @override
+  String get chatMessageInfoDialogTitle => 'Message Details';
+
+  @override
+  String get chatMessageDeleteConfirmTitle => 'Confirm delete';
+
+  @override
+  String get chatMessageDeleteConfirmMessage => 'Delete this message?';
+
+  @override
+  String chatMessageSender(String sender) {
+    return 'Sender: $sender';
+  }
+
+  @override
+  String chatMessageTimestamp(String timestamp) {
+    return 'Timestamp: $timestamp';
+  }
+
+  @override
+  String chatMessageRole(String roleName) {
+    return 'Role: $roleName';
+  }
+
+  @override
+  String chatMessageModel(String modelName) {
+    return 'Model: $modelName';
+  }
+
+  @override
+  String chatMessageProvider(String provider) {
+    return 'Provider: $provider';
+  }
+
+  @override
+  String chatMessageTokensInput(String count) {
+    return 'Input tokens: $count';
+  }
+
+  @override
+  String chatMessageTokensCached(String count) {
+    return 'Cached input tokens: $count';
+  }
+
+  @override
+  String chatMessageTokensOutput(String count) {
+    return 'Output tokens: $count';
+  }
+
+  @override
+  String chatMessageWaitDuration(String duration) {
+    return 'Wait duration: $duration';
+  }
+
+  @override
+  String chatMessageOutputDuration(String duration) {
+    return 'Output duration: $duration';
+  }
+
+  @override
+  String chatMessageTokenSpeed(String speed) {
+    return 'Token speed: $speed';
+  }
+
+  @override
+  String chatMessageCacheShort(String count) {
+    return 'cache $count';
+  }
+
+  @override
+  String chatMessageCacheHitRate(String rate) {
+    return 'Cache hit rate: $rate';
+  }
 }

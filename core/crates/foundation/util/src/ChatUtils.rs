@@ -79,7 +79,7 @@ impl ChatUtils {
             .filter(|ch| ('\u{4E00}'..='\u{9FFF}').contains(ch))
             .count();
         let other_char_count = text.chars().count().saturating_sub(chinese_char_count);
-        ((chinese_char_count as f64 * 1.5) + (other_char_count as f64 * 0.25)) as i64
+        ((chinese_char_count as f64 * 1.5) + (other_char_count as f64 * 0.25)).ceil() as i64
     }
 
     /// Extracts a JSON object string from an assistant response.

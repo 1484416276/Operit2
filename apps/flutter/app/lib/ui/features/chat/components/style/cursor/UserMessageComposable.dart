@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
@@ -28,6 +29,7 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
     final parseResult = parseMessageContent(widget.message.displayText);
@@ -214,8 +216,11 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
                             if (showUserName) ...<Widget>[
                               Text(
                                 parseResult.proxySenderName == null
-                                    ? 'Prompt'
-                                    : 'Prompt by ${parseResult.proxySenderName}',
+                                    ? (l10n?.chatMessagePrompt ?? 'Prompt')
+                                    : (l10n?.chatMessagePromptBy(
+                                            parseResult.proxySenderName!,
+                                          ) ??
+                                          'Prompt by ${parseResult.proxySenderName}'),
                                 style: theme.textTheme.labelSmall?.copyWith(
                                   color: effectiveTextColor.withValues(
                                     alpha: 0.7,

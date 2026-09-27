@@ -560,6 +560,7 @@ impl DeepseekProvider {
         provider_ready_history: &[PromptTurn],
         tools_json: Option<&str>,
         preserve_think_in_history: bool,
+        update_state: bool,
     ) -> i64 {
         let comparableHistory = provider_ready_history
             .iter()
@@ -586,10 +587,12 @@ impl DeepseekProvider {
             let tokenCount = state.tokenCacheManager.calculate_input_tokens(
                 &comparableHistory,
                 tools_json,
-                true,
+                update_state,
             );
-            state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
-            state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
+            if update_state {
+                state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
+                state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
+            }
             tokenCount
         } else {
             0
@@ -1222,7 +1225,7 @@ impl AIService for DeepseekProvider {
                         ),
                     );
                     provider.apply_token_counts(TokenCounts {
-                        input: parent.input_token_count(),
+                        input: (parent.input_token_count() - parent.cached_input_token_count()).max(0),
                         cached_input: parent.cached_input_token_count(),
                         output: parent.output_token_count(),
                     });
@@ -1370,6 +1373,7 @@ impl AIService for DeepseekProvider {
                 &providerReadyHistory,
                 toolsJson.as_deref(),
                 true,
+                false,
             ),
         )
     }
@@ -1438,6 +1442,9 @@ fn parse_usage_counts(usage: &Value) -> TokenCounts {
     let cached_tokens = usage
         .pointer("/prompt_tokens_details/cached_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
+        .or_else(|| usage.get("cache_read_input_tokens"))
+        .or_else(|| usage.get("cached_tokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0) as i64;
     let completion_tokens = usage

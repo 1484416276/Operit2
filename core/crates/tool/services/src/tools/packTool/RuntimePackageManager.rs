@@ -5032,6 +5032,10 @@ fn buildConditionCapabilitiesSnapshot(
             ConditionValue::Bool(platformName == "macos"),
         ),
         (
+            "platform.ios".to_string(),
+            ConditionValue::Bool(platformName == "ios"),
+        ),
+        (
             "platform.web".to_string(),
             ConditionValue::Bool(platformName == "web"),
         ),

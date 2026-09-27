@@ -191,6 +191,68 @@ type PersistedTerminalOutput = {
             ]
         },
         {
+            "id": "macos",
+            "condition": "platform.macos",
+            "inheritTools": true,
+            "tools": [
+                {
+                    "name": "bash",
+                    "description": { "zh": "在 macOS Bash 终端会话中执行命令并收集输出结果。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in a macOS Bash terminal session and collect output. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "parameters": [
+                        {
+                            "name": "command",
+                            "description": { "zh": "要执行的 Bash 命令", "en": "Bash command to execute." },
+                            "type": "string",
+                            "required": true
+                        },
+                        {
+                            "name": "background",
+                            "description": { "zh": "是否在后台运行命令,\"true\" 表示后台执行并立即返回,适合启动服务器等长时间运行的任务（AI 不会收到该命令的输出结果），\"false\" 或未提供则前台执行并等待并返回命令结果", "en": "Run command in background. 'true' runs in background and returns immediately (good for long-running tasks like servers; AI will not receive output). 'false' or omitted runs in foreground and returns the command result." },
+                            "type": "string",
+                            "required": false
+                        },
+                        {
+                            "name": "timeoutMs",
+                            "description": { "zh": "可选超时（毫秒，最低3000ms）。强烈建议显式传入；未传时前台默认15000ms，background=true时不使用默认超时。", "en": "Optional timeout (ms, minimum 3000ms). Strongly recommended to pass explicitly; if omitted, foreground defaults to 15000ms, and background=true does not use the default timeout." },
+                            "type": "string",
+                            "required": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "ios",
+            "condition": "platform.ios",
+            "inheritTools": true,
+            "tools": [
+                {
+                    "name": "shell",
+                    "description": { "zh": "在 iOS Shell 终端会话中执行命令并收集输出结果。默认使用 iSH Alpine Linux Shell；在具备相应权限时也可使用系统 Shell。会话按当前对话维护，上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。前台未传 timeoutMs 时默认15秒；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an iOS shell terminal session and collect output. The default backend is the iSH Alpine Linux shell; a system shell may also be available on privileged hosts. The session is maintained per chat and preserves context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Foreground mode defaults to 15s timeout when timeoutMs is omitted; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+                    "parameters": [
+                        {
+                            "name": "command",
+                            "description": { "zh": "要执行的 Shell 命令", "en": "Shell command to execute." },
+                            "type": "string",
+                            "required": true
+                        },
+                        {
+                            "name": "background",
+                            "description": { "zh": "是否在后台运行命令,\"true\" 表示后台执行并立即返回,适合启动服务器等长时间运行的任务（AI 不会收到该命令的输出结果），\"false\" 或未提供则前台执行并等待并返回命令结果", "en": "Run command in background. 'true' runs in background and returns immediately (good for long-running tasks like servers; AI will not receive output). 'false' or omitted runs in foreground and returns the command result." },
+                            "type": "string",
+                            "required": false
+                        },
+                        {
+                            "name": "timeoutMs",
+                            "description": { "zh": "可选超时（毫秒，最低3000ms）。强烈建议显式传入；未传时前台默认15000ms，background=true时不使用默认超时。", "en": "Optional timeout (ms, minimum 3000ms). Strongly recommended to pass explicitly; if omitted, foreground defaults to 15000ms, and background=true does not use the default timeout." },
+                            "type": "string",
+                            "required": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
             "id": "android",
             "condition": "platform.android",
             "inheritTools": true,

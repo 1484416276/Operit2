@@ -51,7 +51,7 @@ gboolean PointerEvent(GSignalInvocationHint*, guint, const GValue* values, gpoin
   auto* host = static_cast<WidgetHost*>(data);
   auto* source = GTK_WIDGET(g_value_get_object(values));
   if (source != GTK_WIDGET(host->view) &&
-      gtk_widget_get_ancestor(source, FL_TYPE_VIEW) != GTK_WIDGET(host->view)) return TRUE;
+      gtk_widget_get_ancestor(source, fl_view_get_type()) != GTK_WIDGET(host->view)) return TRUE;
   auto* event = static_cast<GdkEvent*>(g_value_get_boxed(values + 1));
   if (event->type == GDK_BUTTON_PRESS) {
     host->pointer_down = true;

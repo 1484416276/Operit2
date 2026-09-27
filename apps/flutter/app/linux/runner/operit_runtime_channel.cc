@@ -509,16 +509,6 @@ const gchar* string_map_value(FlValue* map, const char* key) {
   return fl_value_get_string(value);
 }
 
-/// Copies a Flutter uint8 list into an owned byte vector.
-bool bytes_value(FlValue* value, std::vector<uint8_t>* output) {
-  if (value == nullptr || output == nullptr ||
-      fl_value_get_type(value) != FL_VALUE_TYPE_UINT8_LIST) {
-    return false;
-  }
-  const uint8_t* bytes = fl_value_get_uint8_list(value);
-  output->assign(bytes, bytes + fl_value_get_length(value));
-  return true;
-}
 
 void operit_runtime_method_call_cb(FlMethodChannel* channel,
                                    FlMethodCall* method_call,

@@ -110,6 +110,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 dependency_overrides:
+  dynamic_color:
+    path: ../thirdparty/dynamic_color
   webview_flutter_wkwebview:
     path: ../thirdparty/webview_flutter_wkwebview
   webview_platform_interface:

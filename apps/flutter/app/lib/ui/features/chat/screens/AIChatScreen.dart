@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
@@ -1095,8 +1096,23 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     return _handleSpecialAttachment('package_attach:$packageName');
   }
 
-  void _handleTakePhoto() {
-    _showLocalToast(AppLocalizations.of(context)!.attachmentCameraUnavailable);
+  Future<void> _handleTakePhoto() async {
+    final unavailableMessage =
+        AppLocalizations.of(context)!.attachmentCameraUnavailable;
+    try {
+      final file = await ImagePickerPlatform.instance.getImageFromSource(
+        source: ImageSource.camera,
+      );
+      if (file != null && file.path.isNotEmpty) {
+        await _handleAttachmentPaths(<String>[file.path]);
+      }
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      _showLocalToast(error.message ?? unavailableMessage);
+    } catch (_) {
+      if (!mounted) return;
+      _showLocalToast(unavailableMessage);
+    }
   }
 
   void _handleAttachMemory() {

@@ -1961,5 +1961,166 @@
       }
     }
   },
-  "edgePairingCodeHint": "Read the six-digit code shown by the device."
+  "edgePairingCodeHint": "Read the six-digit code shown by the device.",
+  "chatMessageResponse": "Response",
+  "chatMessagePrompt": "Prompt",
+  "chatMessagePromptBy": "Prompt by {sender}",
+  "@chatMessagePromptBy": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensTooltip": "Tokens: ↑{input} · ↓{output}",
+  "@chatMessageTokensTooltip": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensCachedTooltip": "Tokens: ↑{input} (cached: {cached}) · ↓{output}",
+  "@chatMessageTokensCachedTooltip": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "cached": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimingTooltip": "Timing: {wait} wait · {output} output",
+  "@chatMessageTimingTooltip": {
+    "placeholders": {
+      "wait": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimeTooltip": "Time: {time}",
+  "@chatMessageTimeTooltip": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageInfoDialogTitle": "Message Details",
+  "chatMessageDeleteConfirmTitle": "Confirm delete",
+  "chatMessageDeleteConfirmMessage": "Delete this message?",
+  "chatMessageSender": "Sender: {sender}",
+  "@chatMessageSender": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimestamp": "Timestamp: {timestamp}",
+  "@chatMessageTimestamp": {
+    "placeholders": {
+      "timestamp": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageRole": "Role: {roleName}",
+  "@chatMessageRole": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageModel": "Model: {modelName}",
+  "@chatMessageModel": {
+    "placeholders": {
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageProvider": "Provider: {provider}",
+  "@chatMessageProvider": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensInput": "Input tokens: {count}",
+  "@chatMessageTokensInput": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensCached": "Cached input tokens: {count}",
+  "@chatMessageTokensCached": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensOutput": "Output tokens: {count}",
+  "@chatMessageTokensOutput": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageWaitDuration": "Wait duration: {duration}",
+  "@chatMessageWaitDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageOutputDuration": "Output duration: {duration}",
+  "@chatMessageOutputDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokenSpeed": "Token speed: {speed}",
+  "@chatMessageTokenSpeed": {
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageCacheShort": "cache {count}",
+  "@chatMessageCacheShort": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageCacheHitRate": "Cache hit rate: {rate}",
+  "@chatMessageCacheHitRate": {
+    "placeholders": {
+      "rate": {
+        "type": "String"
+      }
+    }
+  }
 }

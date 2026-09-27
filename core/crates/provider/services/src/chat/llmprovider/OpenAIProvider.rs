@@ -590,7 +590,18 @@ impl OpenAIProvider {
             }
             state.inputTokenCount = state.tokenCacheManager.total_input_token_count();
             state.cachedInputTokenCount = state.tokenCacheManager.cached_input_token_count();
-            state.outputTokenCount = token_counts.output;
+            state.outputTokenCount = state.tokenCacheManager.output_token_count();
+        }
+    }
+
+    fn set_estimated_output_tokens(&self, text: &str) {
+        let estimated = ChatUtils::estimate_token_count(text);
+        if estimated <= 0 {
+            return;
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.tokenCacheManager.set_output_tokens(estimated);
+            state.outputTokenCount = state.tokenCacheManager.output_token_count();
         }
     }
 
@@ -1149,6 +1160,7 @@ impl OpenAIProvider {
                 ));
             }
 
+            self.set_estimated_output_tokens(&emitter.received_content);
             self.apply_token_counts(state.usage.clone());
             AppLogger::i(
                 PROVIDER_TRANSPORT_LOG_TAG,
@@ -2314,11 +2326,19 @@ impl AIService for OpenAIProvider {
         } else {
             Some(StructuredToolCallBridge::buildToolsArray(Some(available_tools)).to_string())
         };
-        let token_count = self.calculate_and_store_input_tokens(
+        let comparable_history = self.build_comparable_history(
             &provider_ready_history,
-            tools_json.as_deref(),
-            false,
+            self.preserve_reasoning_content,
         );
+        let token_count = if let Ok(mut state) = self.state.lock() {
+            state.tokenCacheManager.calculate_input_tokens(
+                &comparable_history,
+                tools_json.as_deref(),
+                false,
+            )
+        } else {
+            0
+        };
         let _ = (history_chars, tool_chars);
         Ok(token_count)
     }
@@ -2540,8 +2560,6 @@ impl OpenAIProvider {
                 cached_input: 0,
                 output: 0,
             });
-        self.apply_token_counts(token_counts.clone());
-
         let mut chunks = Vec::new();
         let nativeToolCallChunks = extract_tool_calls_xml_chunks(&json_response);
         if let Some(reasoning) = extract_reasoning_chunk(&json_response) {
@@ -2555,6 +2573,8 @@ impl OpenAIProvider {
             }
         }
         chunks.extend(nativeToolCallChunks);
+        self.set_estimated_output_tokens(&chunks.concat());
+        self.apply_token_counts(token_counts);
         Ok(chunks)
     }
 }
@@ -2597,6 +2617,9 @@ fn parse_usage_counts(usage: &Value) -> TokenCounts {
     let cached_tokens = usage
         .pointer("/prompt_tokens_details/cached_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
+        .or_else(|| usage.get("cache_read_input_tokens"))
+        .or_else(|| usage.get("cached_tokens"))
         .and_then(Value::as_i64)
         .unwrap_or(0) as i64;
     let completion_tokens = usage

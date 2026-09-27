@@ -90,8 +90,6 @@ operit2-cli-linux-aarch64.tar.gz
 operit2-cli-macos-x86_64.tar.gz
 operit2-cli-macos-aarch64.tar.gz
 operit2-app-android-arm64-v8a.apk
-operit2-app-android-armeabi-v7a.apk
-operit2-app-android-x86_64.apk
 operit2-app-ohos-arm64.hap
 operit2-app-windows-x86_64.zip
 operit2-app-linux-x86_64.tar.gz

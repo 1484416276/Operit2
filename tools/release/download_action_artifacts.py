@@ -21,7 +21,7 @@ RELEASE_ASSET_RE = re.compile(
     r"macos-(?:x86_64|aarch64)\.tar\.gz"
     r")|"
     r"app-(?:"
-    r"android-(?:arm64-v8a|armeabi-v7a|x86_64)\.apk|"
+    r"android-arm64-v8a\.apk|"
     r"ohos-arm64\.hap|"
     r"windows-x86_64\.zip|"
     r"linux-x86_64\.tar\.gz|"

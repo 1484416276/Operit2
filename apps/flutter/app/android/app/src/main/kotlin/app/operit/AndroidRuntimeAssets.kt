@@ -23,7 +23,7 @@ data class AndroidRuntimePaths(
 )
 
 object AndroidRuntimeAssets {
-    private val packagedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    private val packagedAbis = setOf("arm64-v8a")
     private const val perUserRange = 100000
     private const val TAG = "OperitRuntimeAssets"
 

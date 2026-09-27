@@ -81,7 +81,16 @@ def main() -> int:
         flutter_pub_get()
         if args.enforce_lockfile:
             flutter_pub_get(enforce_lockfile=True)
-        command = [flutter, "build", "apk", "--release", "--no-pub", "--split-per-abi"]
+        command = [
+            flutter,
+            "build",
+            "apk",
+            "--release",
+            "--no-pub",
+            "--split-per-abi",
+            "--target-platform",
+            "android-arm64",
+        ]
         if args.build_name:
             command.extend(["--build-name", args.build_name])
         if args.build_number:
@@ -89,13 +98,10 @@ def main() -> int:
         run(command, cwd=FLUTTER_APP_DIR)
 
     apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
-    outputs = {
-        "arm64-v8a": "app-arm64-v8a-release.apk",
-        "armeabi-v7a": "app-armeabi-v7a-release.apk",
-        "x86_64": "app-x86_64-release.apk",
-    }
-    for abi, filename in outputs.items():
-        copy_required_file(apk_dir / filename, args.dist_dir / f"operit2-app-android-{abi}.apk")
+    copy_required_file(
+        apk_dir / "app-arm64-v8a-release.apk",
+        args.dist_dir / "operit2-app-android-arm64-v8a.apk",
+    )
     return 0
 
 

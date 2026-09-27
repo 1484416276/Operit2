@@ -187,7 +187,7 @@ EOF
 if [ -n "${OPERIT_ANDROID_RUNTIME_ABIS:-}" ]; then
     read -r -a abis <<< "$OPERIT_ANDROID_RUNTIME_ABIS"
 else
-    abis=(arm64-v8a armeabi-v7a x86_64)
+    abis=(arm64-v8a)
 fi
 
 if [ -n "${OPERIT_ANDROID_RUNTIME_COMPONENTS:-}" ]; then

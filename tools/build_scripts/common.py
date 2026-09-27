@@ -418,6 +418,10 @@ def node_bin_command(root: Path, name: str) -> Path:
     return root / "node_modules" / ".bin" / f"{name}{suffix}"
 
 
+def unescape_java_properties_value(value: str) -> str:
+    return value.replace("\\\\", "\\").replace("\\:", ":").replace("\\=", "=").replace("\\n", "\n")
+
+
 def read_properties(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -429,7 +433,7 @@ def read_properties(path: Path) -> dict[str, str]:
         key, separator, value = stripped.partition("=")
         if not separator:
             continue
-        values[key.strip()] = value.strip()
+        values[key.strip()] = unescape_java_properties_value(value.strip())
     return values
 
 

@@ -56,12 +56,12 @@ jobs:
         with:
           name: operit2-android-runtime-${{ github.sha }}
           path: |
-            apps/flutter/app/android/app/src/main/jniLibs/*/libbash.so
-            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_busybox.so
-            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_loader.so
-            apps/flutter/app/android/app/src/main/jniLibs/*/liboperit_proot.so
-            apps/flutter/app/android/app/src/main/assets/android-runtime/*/rootfs.tar.gz.bin
-            apps/flutter/app/android/app/src/main/assets/android-runtime/*/rootfs.tar.gz.bin.sha256
+            apps/flutter/app/android/app/src/main/jniLibs/arm64-v8a/libbash.so
+            apps/flutter/app/android/app/src/main/jniLibs/arm64-v8a/liboperit_busybox.so
+            apps/flutter/app/android/app/src/main/jniLibs/arm64-v8a/liboperit_loader.so
+            apps/flutter/app/android/app/src/main/jniLibs/arm64-v8a/liboperit_proot.so
+            apps/flutter/app/android/app/src/main/assets/android-runtime/arm64-v8a/rootfs.tar.gz.bin
+            apps/flutter/app/android/app/src/main/assets/android-runtime/arm64-v8a/rootfs.tar.gz.bin.sha256
           if-no-files-found: error
           retention-days: 1
 
@@ -121,7 +121,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,wasm32-unknown-unknown
+          targets: aarch64-linux-android,wasm32-unknown-unknown
 
       - name: Prepare Android bindgen libclang
         shell: pwsh
@@ -189,6 +189,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-android-${{ github.sha }}
-          path: tools/release/dist/operit2-app-android-*.apk
+          path: tools/release/dist/operit2-app-android-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 14

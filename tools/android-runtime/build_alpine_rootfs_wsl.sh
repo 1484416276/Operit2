@@ -25,8 +25,6 @@ packages=(
 
 abis=(
     arm64-v8a
-    armeabi-v7a
-    x86_64
 )
 
 alpine_arch_for_abi() {

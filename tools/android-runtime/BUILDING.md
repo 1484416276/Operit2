@@ -8,7 +8,7 @@ Docker is not used.
 - BusyBox 1.38.0
 - Termux PRoot v5.1.107.78
 - talloc 2.4.3
-- Bash 5.3
+- Bash 5.2.37
 - Android NDK r29-beta4
 - Alpine latest-stable minirootfs
 
@@ -32,6 +32,30 @@ patch does not exist yet, the script creates the editable tree from clean Termux
 PRoot and then writes a new patch. The PRoot build then copies the editable
 tree into the WSL build directory and compiles that copy.
 
+## Exact Source Pins
+
+The Android runtime build was validated on September 27, 2026. The fetch script
+records the upstream URL and SHA-256 for each fixed source archive:
+
+| Component | Version | Upstream source | Fetch definition |
+| --- | --- | --- | --- |
+| BusyBox | 1.38.0 | `https://busybox.net/downloads/busybox-1.38.0.tar.bz2` | `fetch_sources.ps1` |
+| Termux PRoot | v5.1.107.78 | `https://github.com/termux/proot` tag `v5.1.107.78` | `fetch_sources.ps1` |
+| talloc | 2.4.3 | `https://www.samba.org/ftp/talloc/talloc-2.4.3.tar.gz` | `fetch_sources.ps1` |
+| Bash | 5.2.37 | `https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz` | `fetch_sources.ps1` |
+| Android NDK | r29-beta4 | `https://dl.google.com/android/repository/android-ndk-r29-beta4-linux.zip` | `fetch_ndk_wsl.sh` |
+| Fedora WSL | 43 | FedoraLinux-43 distribution | commands in this document |
+
+`fetch_sources.ps1` is the source of truth for the fixed archive checksums.
+The Alpine rootfs script uses the `latest-stable` branch at
+`https://dl-cdn.alpinelinux.org/alpine` and reads the release version, archive
+name, and SHA-256 from that branch's `latest-releases.yaml` for each target
+architecture. Record the resolved Alpine release in build logs when producing
+an artifact.
+
+The dependency lockfiles are checked in with the runtime sources. Do not
+regenerate them with a different package mirror or toolchain and commit the
+result as part of an unrelated runtime change.
 ## One-Shot Build
 
 Run from Windows PowerShell:

@@ -40,6 +40,7 @@ build_signature="$configuration:$sdk_version:$platform_name:$architectures:$sour
 # Reuses a verified static-library set restored by the CI cache.
 verify_cached_build_products() {
     local library_name
+    local architecture
     local cached_libraries=(
         liblinux.a
         libiSHLinux.a
@@ -61,6 +62,11 @@ verify_cached_build_products() {
         if [[ ! -f "$build_products_dir/$library_name" ]]; then
             return 1
         fi
+        for architecture in $architectures; do
+            if ! lipo -verify_arch "$architecture" "$build_products_dir/$library_name" >/dev/null 2>&1; then
+                return 1
+            fi
+        done
     done
     if ! xcrun --sdk "$sdk_name" nm -gU "$build_products_dir/libiSHLinux.a" \
         | awk '$NF == "_linux_mount_app_directory" { found = 1 } END { exit !found }'; then
@@ -90,19 +96,45 @@ build_target() {
     local target="$2"
     local target_configuration="$3"
     local meson_build_dir="$4"
+    local architecture
+    local arch_products_dir
+    local arch_meson_build_dir
+    local arch_output
+    local archive_dir="$build_products_dir/.operit-archives"
+    local -a architecture_libraries=()
 
-    xcodebuild \
-        -project "$project" \
-        -target "$target" \
-        -configuration "$target_configuration" \
-        -sdk "$sdk_name" \
-        ARCHS="$architectures" \
-        IPHONEOS_DEPLOYMENT_TARGET=16.4 \
-        CONFIGURATION_BUILD_DIR="$build_products_dir" \
-        MESON_BUILD_DIR="$meson_build_dir" \
-        CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO \
-        build
+    # The iSH Xcode project contains Meson custom targets.  Passing multiple
+    # ARCHS to that project does not produce a universal archive: the last
+    # architecture silently wins. Build each slice in an isolated products
+    # and Meson directory, then combine the slices explicitly with lipo.
+    mkdir -p "$archive_dir"
+    for architecture in $architectures; do
+        arch_products_dir="$build_products_dir/.operit-$architecture"
+        arch_meson_build_dir="$build_products_dir/meson-linux-$architecture"
+        xcodebuild \
+            -project "$project" \
+            -target "$target" \
+            -configuration "$target_configuration" \
+            -sdk "$sdk_name" \
+            ARCHS="$architecture" \
+            IPHONEOS_DEPLOYMENT_TARGET=16.4 \
+            CONFIGURATION_BUILD_DIR="$arch_products_dir" \
+            OBJROOT="$build_products_dir/.obj-$target-$architecture" \
+            SYMROOT="$arch_products_dir" \
+            MESON_BUILD_DIR="$arch_meson_build_dir" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+        arch_output="$arch_products_dir/$target.a"
+        if [[ ! -f "$arch_output" ]]; then
+            arch_output="$arch_meson_build_dir/$target.a"
+        fi
+        test -f "$arch_output"
+        cp -Lf "$arch_output" "$archive_dir/$target-$architecture.a"
+        architecture_libraries+=("$archive_dir/$target-$architecture.a")
+    done
+    xcrun --sdk "$sdk_name" lipo -create "${architecture_libraries[@]}" \
+        -output "$build_products_dir/$target.a"
 }
 
 # Verifies that one static library required by the Runner linker was produced.

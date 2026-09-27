@@ -65,6 +65,67 @@ GITHUB_TOKEN
 GITHUB_API_URL
 ```
 
+## Pinned Build Inputs and Source of Truth
+
+The following values are the repository build contract validated on September 27,
+2026. Keep these values synchronized with the referenced source files and CI
+workflows when changing a build dependency.
+
+| Input | Version or pin | Source of truth |
+| --- | --- | --- |
+| Flutter SDK | 3.41.9 | `apps/flutter/app/.fvmrc`, installed through FVM |
+| FVM | 4.1.2 | `FVM_VERSION` in the Flutter CI workflows; Dart pub global package |
+| Dart SDK | `^3.10.8` | `apps/flutter/app/pubspec.yaml`; supplied by the pinned Flutter SDK |
+| Rust toolchain | 1.95.0 | `RUST_TOOLCHAIN_VERSION` in `.github/workflows/`; rustup |
+| Node.js | 22 | `actions/setup-node` in the CI workflows |
+| Java | Temurin 17 | `actions/setup-java` in `.github/workflows/android-flutter-build.yml` |
+| Gradle | 8.14 | `apps/flutter/app/android/gradle/wrapper/gradle-wrapper.properties` |
+| Workflow package manager | pnpm 10.7.0 | `plugins/packages/buildin/workflow/package.json` |
+| Apple scientific-runtime host Python | 3.13 | `tools/ios-runtime/native/build_scientific.py` and `tools/ios-runtime/prepare.py` |
+
+Dependency source rules:
+
+- Dart dependency versions and hosted-package checksums are recorded in
+  `apps/flutter/app/pubspec.lock`. Hosted packages use `https://pub.dev`.
+- Local Dart packages are resolved from `apps/flutter/thirdparty`; Git Dart
+  packages use the repository URL and commit recorded in `pubspec.yaml` and
+  `pubspec.lock`.
+- Workflow JavaScript dependencies are pinned by `package.json` and resolved by
+  `plugins/packages/buildin/workflow/pnpm-lock.yaml`. The generated license
+  inventory is `resources/THIRD_PARTY_NOTICES.txt` and must be regenerated from
+  that lockfile, not edited by hand.
+- Native runtime source archives are declared by their fetch/build scripts with
+  an upstream URL and SHA-256 value. The script and its checksum are the source
+  of truth for the downloaded artifact.
+- CI runner images are part of the build environment: `ubuntu-24.04`,
+  `windows-2025`, and `macos-15` as declared by `.github/workflows/`.
+
+When a dependency or toolchain changes, update its lockfile or pinned source
+entry in the same change as this documentation. Merge conflicts in generated
+lockfiles must preserve both the dependency graph change and the repository's
+source policy.
+
+## iOS Runtime Source Pins
+
+The iOS runtime source set is reproducible from the pins in
+`tools/ios-runtime/ish/fetch_sources.py` and
+`tools/ios-runtime/ish/build_alpine_rootfs_linux.sh`:
+
+| Component | Pin | Source and integrity |
+| --- | --- | --- |
+| iSH | `7864dd601e615d0fc09b888a93d327f458b25a1d` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
+| iSH libapps | `b8cacae35e5b11d64bb736a053921c16ca7faf9e` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
+| iSH Linux | `8ec9bf17f89c6dba818f3ed2427de4223e78644a` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
+| libarchive | `fc6563f5130d8a7ee1fc27c0e55baef35119f26c` | GitHub archive; SHA-256 is recorded in `fetch_sources.py` |
+| iSH Alpine rootfs | `g00712ff0a54b2839c5aa1a8ed758003ca65357dc` | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
+| iSH Alpine repository | Alpine v3.19, x86 | `https://dl-cdn.alpinelinux.org/alpine/v3.19` |
+| uv | 0.12.1, i686 musl | GitHub release archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
+| pnpm in iSH rootfs | 10.12.1 | npm registry archive; SHA-256 is recorded in `build_alpine_rootfs_linux.sh` |
+
+The iOS workflow runs on `macos-15` and records the installed Xcode SDK,
+Clang, Meson, and Ninja versions in its cache key. Keep those runner and source
+pins synchronized with `.github/workflows/ios-flutter-build.yml` and
+`.github/workflows/ios-app-package-build.yml`.
 ## Built-In Workflow Plugin
 
 The workflow plugin is a pnpm project. Its `package.json` pins the package

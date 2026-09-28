@@ -238,3 +238,4 @@ lv_font_t operit_font_digits_28 = {
 
 
 #endif /*#if OPERIT_FONT_DIGITS_28*/
+

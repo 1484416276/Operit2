@@ -456,7 +456,7 @@ export async function setupEditor(ui: EditorRuntime, log: (message: string) => v
       } else if (isIconText) {
         options = ['face', 'wifi', 'settings', 'home', 'play', 'folder'];
       } else if (key === 'binding') {
-        options = ['', 'clock', 'connection', 'expression'];
+        options = ['', 'clock', 'connection', 'expression', 'theme', 'pairing', 'space', 'chat'];
       } else if (key === 'fontSize') {
         options = ['14', '48'];
       } else {

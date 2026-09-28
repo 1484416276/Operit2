@@ -33,11 +33,18 @@ unsafe extern "C" {
     fn operit_lvgl_set_touch(x: u16, y: u16, pressed: bool);
     fn operit_lvgl_navigate_home();
     fn operit_lvgl_set_connection(wifi_ready: bool, edge_ready: bool);
+    fn operit_lvgl_set_paired(paired: bool);
     fn operit_lvgl_set_expression(expression: *const c_char);
     fn operit_lvgl_set_pairing_code(code: *const c_char);
     fn operit_lvgl_set_space_state(state: *const c_char);
     fn operit_lvgl_set_chat_preview(preview: *const c_char);
     fn operit_lvgl_set_chat_screen(text: *const c_char);
+    fn operit_lvgl_set_chat_identity(id: *const c_char, character: *const c_char);
+    fn operit_lvgl_set_message(index: u32, user: bool, text: *const c_char);
+    fn operit_lvgl_finish_messages(count: u32);
+    fn operit_lvgl_set_conversation(index: u32, id: *const c_char, title: *const c_char, character: *const c_char, selected: bool);
+    fn operit_lvgl_finish_conversations(count: u32);
+    fn operit_lvgl_action_error(error: *const c_char);
     fn operit_lvgl_set_chat_task(text: *const c_char);
     fn operit_lvgl_chat_send_result(ok: bool, error: *const c_char);
     fn operit_lvgl_chat_draft() -> *const c_char;
@@ -116,6 +123,10 @@ impl Esp32Lvgl {
         unsafe { operit_lvgl_set_connection(wifiReady, edgeReady) };
     }
 
+    pub fn setPaired(&mut self, paired: bool) {
+        unsafe { operit_lvgl_set_paired(paired) };
+    }
+
     /// Updates the face app's expression label.
     pub fn setExpression(&mut self, expression: &str) {
         let mut bytes = expression.as_bytes().to_vec();
@@ -136,6 +147,31 @@ impl Esp32Lvgl {
     pub fn setChatScreen(&mut self, text: &str) {
         setText(text, operit_lvgl_set_chat_screen);
     }
+    pub fn actionError(&mut self, error: &str) { setText(error, operit_lvgl_action_error); }
+
+    pub fn setChatState(&mut self, state: &serde_json::Value) {
+        let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
+        let id = state["chatId"].as_str().unwrap_or("");
+        let name = crate::edge_chat::preview();
+        unsafe { operit_lvgl_set_chat_identity(string(id).as_ptr(), string(&name).as_ptr()); }
+        let rows = state["messages"].as_array().into_iter().flatten()
+            .filter(|row| row["text"].as_str().is_some_and(|text| !text.trim().is_empty())).collect::<Vec<_>>();
+        let rows = &rows[rows.len().saturating_sub(12)..];
+        for (index, row) in rows.iter().enumerate() {
+            unsafe { operit_lvgl_set_message(index as u32, row["sender"] == "user",
+                string(row["text"].as_str().unwrap_or("")).as_ptr()); }
+        }
+        unsafe { operit_lvgl_finish_messages(rows.len() as u32); }
+        let rows = state["conversations"].as_array().into_iter().flatten().take(24).collect::<Vec<_>>();
+        for (index, row) in rows.iter().enumerate() {
+            unsafe { operit_lvgl_set_conversation(index as u32,
+                string(row["id"].as_str().unwrap_or("")).as_ptr(),
+                string(row["title"].as_str().unwrap_or("")).as_ptr(),
+                string(row["characterCardName"].as_str().unwrap_or("")).as_ptr(), row["id"] == id); }
+        }
+        unsafe { operit_lvgl_finish_conversations(rows.len() as u32); }
+    }
+
     pub fn setChatTask(&mut self, text: &str) {
         setText(text, operit_lvgl_set_chat_task);
     }
@@ -219,11 +255,12 @@ unsafe extern "C" fn actionCallback(action: *const c_char, userData: *mut c_void
 }
 
 /// Keeps status-to-LVGL updates in one place for the firmware loop.
-pub fn updateStatus(runtime: &mut Esp32Lvgl, status: &FirmwareStatus, edgeReady: bool) {
+pub fn updateStatus(runtime: &mut Esp32Lvgl, status: &FirmwareStatus, edgeReady: bool, paired: bool) {
     let snapshot = status.snapshot();
     // `edgeReady` is the live authenticated Space route state. It must not be
     // derived from the TCP listener, which is enabled even before pairing.
     runtime.setConnection(!snapshot.ipv4.is_empty(), edgeReady);
+    runtime.setPaired(paired);
     runtime.setExpression(&snapshot.expression);
     runtime.setPairingCode(&snapshot.pairingCode);
     runtime.setSpaceState(if edgeReady {

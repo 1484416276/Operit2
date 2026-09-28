@@ -5,8 +5,6 @@ mod edge_chat;
 #[cfg(target_os = "espidf")]
 mod edge_link;
 #[cfg(target_os = "espidf")]
-mod edge_screen;
-#[cfg(target_os = "espidf")]
 mod edge_serial;
 mod edge_session;
 #[cfg(target_os = "espidf")]
@@ -20,8 +18,6 @@ mod ui;
 #[cfg(target_os = "espidf")]
 mod ui_deploy;
 
-#[cfg(target_os = "espidf")]
-mod web;
 #[cfg(target_os = "espidf")]
 mod wifi;
 
@@ -46,12 +42,10 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     use std::sync::Arc;
 
     use crate::config::Esp32FirmwareConfig;
-    use crate::edge_screen::Esp32ScreenService;
     use crate::edge_store::Esp32EdgePairingStore;
     use crate::lvgl::{updateStatus, Esp32Lvgl};
     use crate::settings::{Esp32SettingsStore, Esp32SetupServer};
     use crate::status::FirmwareStatus;
-    use crate::web::Esp32WebHome;
     use crate::wifi::Esp32Wifi;
     use esp_idf_hal::delay::FreeRtos;
     use esp_idf_hal::peripherals::Peripherals;
@@ -95,13 +89,11 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     )?;
     let faceHost = board.robotFaceHost();
     board.activateLvgl();
+    // The physical TFT is the only display sink in the firmware. Release the
+    // optional diagnostic framebuffer so pairing and chat retain heap headroom.
+    board.screenMirror().disablePixelMirror();
     let mut lvgl = Esp32Lvgl::new(&board)?;
     let hostManager = board.installIntoHostManager();
-    let screenMirror = board.screenMirror();
-    // Station preview is disabled below. Release its 76,800-byte copy too;
-    // leaving it allocated starves the authenticated Link task of stack/heap.
-    screenMirror.disablePixelMirror();
-    let screenService = Arc::new(Esp32ScreenService::new(Arc::clone(&screenMirror)));
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let setExpression = |expression: &str| -> operit_host_api::HostResult<()> {
         let state = faceHost.setExpression(operit_host_api::RobotFaceExpressionRequest {
@@ -165,46 +157,23 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     )?;
     log::info!("Edge Link listener enabled: {}", edgeLink.is_some());
     logRuntimeHealth("edge-thread-started");
-    // The optional station preview stays disabled with its pixel mirror.
     // Core discovery and pairing use mDNS + TCP 8765.
-    let _home: Option<Esp32WebHome> = None;
-    logRuntimeHealth("http-start-complete");
+    logRuntimeHealth("network-start-complete");
 
     // The listener being enabled is not the same as having a live Space
     // route. The display must start offline until Core has admitted the Edge.
-    updateStatus(&mut lvgl, &status, crate::edge_chat::isConnected());
+    let paired = edgeLink.as_ref().is_some_and(|link| link.hasPairings());
+    updateStatus(&mut lvgl, &status, crate::edge_chat::isConnected(), paired);
     lvgl.pump(1);
     let mut lastExpression = status.snapshot().expression;
+    let mut lastStatusRevision = status.revision();
+    let mut lastEdgeReady = crate::edge_chat::isConnected();
+    let mut lastPaired = paired;
     logRuntimeHealth("ready");
     let mut nextHealth = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut nextChatUi = std::time::Instant::now();
+    let mut lastChatRevision = u32::MAX;
+    let mut lastChatConnected = false;
     loop {
-        for input in screenService.drainInputs() {
-            match input.action.as_str() {
-                "down" => {
-                    lvgl.setTouch(Some((input.x, input.y)));
-                }
-                "up" => {
-                    lvgl.setTouch(None);
-                }
-                "tap" => {
-                    lvgl.setTouch(Some((input.x, input.y)));
-                    lvgl.pump(1);
-                    lvgl.setTouch(None);
-                }
-                "swipe" => {
-                    if let (Some(endX), Some(endY)) = (input.endX, input.endY) {
-                        lvgl.setTouch(Some((input.x, input.y)));
-                        lvgl.pump(1);
-                        lvgl.setTouch(Some((endX, endY)));
-                        lvgl.pump(1);
-                        lvgl.setTouch(None);
-                    }
-                }
-                _ => {}
-            }
-            log::debug!("operit-esp32 remote screen input: {}", input.action);
-        }
         let point = match board.pollTouch() {
             Ok(point) => point,
             Err(error) => {
@@ -233,15 +202,22 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 "edge_pair" => setExpression("listening")?,
                 "edge_unpair" => {
                     if let Some(edgeLink) = edgeLink.as_ref() {
-                        edgeLink
-                            .clearPairings()
-                            .map_err(|error| HostError::new(format!("clear Edge pairing: {error}")))?;
+                        if let Err(error) = edgeLink.clearPairings() {
+                            log::warn!("clear Edge pairing failed: {error}");
+                            lvgl.actionError(&format!("取消配对失败：{error}"));
+                            lvgl.setPaired(true);
+                            continue;
+                        }
                     }
                     crate::edge_chat::clear();
                     status.setPairingCode("");
                     setExpression("neutral")?;
                 }
                 "edge_chat" => {}
+                "edge_new" => { if let Err(error) = crate::edge_chat::newChat() { lvgl.actionError(&error); } }
+                action if action.starts_with("edge_select:") => {
+                    if let Err(error) = crate::edge_chat::selectChat(&action[12..]) { lvgl.actionError(&error); }
+                }
                 "edge_send" => {
                     let draft = lvgl.chatDraft();
                     if let Err(error) = crate::edge_chat::send(draft) {
@@ -266,13 +242,24 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         if let Some(edgeLink) = edgeLink.as_mut() {
             edgeLink.poll();
         }
-        updateStatus(&mut lvgl, &status, crate::edge_chat::isConnected());
+        let edgeReady = crate::edge_chat::isConnected();
+        let paired = edgeLink.as_ref().is_some_and(|link| link.hasPairings());
+        let statusRevision = status.revision();
+        if statusRevision != lastStatusRevision || edgeReady != lastEdgeReady || paired != lastPaired {
+            updateStatus(&mut lvgl, &status, edgeReady, paired);
+            lastStatusRevision = statusRevision;
+            lastEdgeReady = edgeReady;
+            lastPaired = paired;
+        }
         let now = std::time::Instant::now();
-        if now >= nextChatUi {
-            lvgl.setChatPreview(&crate::edge_chat::preview());
+        let chatRevision = crate::edge_chat::revision();
+        let chatConnected = crate::edge_chat::isConnected();
+        if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
+            lvgl.setChatState(&crate::edge_chat::snapshot());
             lvgl.setChatScreen(&crate::edge_chat::screenText());
             lvgl.setChatTask(&crate::edge_chat::taskStatus());
-            nextChatUi = now + std::time::Duration::from_millis(250);
+            lastChatRevision = chatRevision;
+            lastChatConnected = chatConnected;
         }
         if now >= nextHealth {
             logRuntimeHealth("running");

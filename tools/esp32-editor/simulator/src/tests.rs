@@ -65,9 +65,23 @@ async fn firmware_pairs_routes_chat_and_reconnects_with_persisted_identity() {
         assert_eq!(watch.request.routeKind, RoutedCoreRequestKind::SpaceBinding);
         assert_eq!(watch.request.payload.propertyName, "chatMessagesFlow");
         response(&authenticated, frame.messageId, PeerFramePayload::Response(PeerResponse::Operation(Ok(())))).await;
+        let frame = peerFrame(&authenticated).await;
+        let PeerFramePayload::Request(PeerRequest::WatchOpen(histories)) = frame.payload else { panic!("expected histories watch") };
+        assert_eq!(histories.request.payload.propertyName, "routedChatListFlow");
+        response(&authenticated, frame.messageId, PeerFramePayload::Response(PeerResponse::Operation(Ok(())))).await;
+        response(&authenticated, "histories".into(), PeerFramePayload::WatchEvent(PeerWatchEvent {
+            subscriptionId: histories.subscriptionId,
+            event: CoreEvent { requestId: None, target: CORE_INTERNAL_TARGET.into(),
+                propertyName: "routedChatListFlow".into(), kind: CoreEventKind::Snapshot,
+                value: toCoreValue(serde_json::json!([
+                    {"id":"edge-chat-test-edge", "title":"First", "characterCardName":"Assistant"},
+                    {"id":"second-chat", "title":"Second", "characterCardName":"Assistant"}
+                ])).unwrap(),
+            },
+        })).await;
         response(&authenticated, "messages".into(), PeerFramePayload::WatchEvent(PeerWatchEvent {
             subscriptionId: watch.subscriptionId,
-            event: CoreEvent { requestId: None, targetObjectId: CORE_INTERNAL_ROUTE_OBJECT_ID,
+            event: CoreEvent { requestId: None, target: CORE_INTERNAL_TARGET.into(),
                 propertyName: "chatMessagesFlow".into(), kind: CoreEventKind::Snapshot,
                 value: toCoreValue(serde_json::json!([{"sender":"ai","parts":[{"kind":"markdown","content":"routed reply"}]}])).unwrap(),
             },

@@ -2,8 +2,8 @@
 
 The ESP32 advertises `_operit-edge._tcp` over mDNS. Use the Core application's
 device scan to discover it, start pairing, and enter the code displayed on the
-ESP32. The ESP32's own **Search Space** action is currently a placeholder, not
-an mDNS Core browser. Core and Edge must be on the same reachable LAN.
+ESP32. Core and Edge must be on the same reachable LAN. Opening the browser
+editor automatically starts a separately identified `esp32-edge-simulator`.
 
 ## Local configuration
 
@@ -25,8 +25,8 @@ when updating only the application image.
 
 - The firmware's Edge worker uses a 32 KiB stack; the previous 6 KiB stack
   overflowed while processing pairing requests.
-- The station HTTP preview and its optional RGB332 pixel mirror are disabled
-  to leave heap space for pairing. The physical TFT remains enabled.
+- The optional RGB332 diagnostic mirror is disabled to leave heap space for
+  pairing. The physical TFT remains enabled.
 - Native Core requests share a process-lifetime Tokio executor so the saved
   pairing socket and background receivers survive between commands. The Rust
   DLL requires a native rebuild and application restart, not Dart hot reload.
@@ -39,9 +39,18 @@ ESP32-2432S028, three consecutive PairStart requests completed after flashing
 the stack/mirror fix without rebooting. This is **not** verification of complete
 correct-code pairing, Space admission, reconnect, or chat.
 
-The ESP32 local unpair action remains incomplete: the server returns an error
-and the current UI handler propagates it. Do not use it as a supported reset
-flow; this remains a known issue for follow-up testing and implementation.
+The drawer requests confirmation before clearing pairing credentials. Only a
+successful storage update revokes the session and opens pairing; failures keep
+the current page and show an error. A paired device stays in chat while offline.
+
+The shared LVGL view displays up to 12 recent messages (2 KiB of UTF-8 per row)
+and 24 conversation list items. Core owns the complete history. Conversations
+are grouped by their character metadata, and selecting or creating a chat opens
+its routed message subscription without changing the desktop's selection.
+
+After `npm run build` in `tools/esp32-editor`, run
+`node --test tests/ui-runtime.test.mjs` for the shared framebuffer/interaction
+regression. Hardware flashing and touch validation remain separate checks.
 
 ## Third-party font
 
@@ -50,3 +59,11 @@ Regular, covering GB2312 first-level characters and punctuation. The source
 project is <https://github.com/notofonts/noto-cjk>. The generation options are
 recorded in the generated C header. Adobe's copyright and the SIL Open Font
 License 1.1 are retained in the file and `lvgl_port/OFL.txt`.
+
+`operit_font_emoji_16.c` adds monochrome Noto Emoji glyphs for the Unicode
+symbol, pictograph and emoticon ranges, including 🥺. The source is
+<https://github.com/google/fonts/tree/main/ofl/notoemoji>; see `OFL-emoji.txt`.
+Formatting selectors have zero width; complex joined emoji are displayed as
+their constituent glyphs. Color emoji and full Unicode shaping are not provided.
+`tools/esp32-editor/generate-fonts.py` regenerates this font and pairing digits
+from supplied OFL font files. Uncompressed bitmaps match the firmware LVGL build.

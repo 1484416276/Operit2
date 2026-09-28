@@ -42,11 +42,19 @@ const exports = [
   '_operit_lvgl_navigate_home',
   '_operit_lvgl_navigate_apps',
   '_operit_lvgl_set_connection',
+  '_operit_lvgl_set_paired',
   '_operit_lvgl_set_expression',
   '_operit_lvgl_set_pairing_code',
   '_operit_lvgl_set_space_state',
   '_operit_lvgl_set_chat_preview',
   '_operit_lvgl_set_chat_screen',
+  '_operit_lvgl_set_chat_identity',
+  '_operit_lvgl_set_message',
+  '_operit_lvgl_finish_messages',
+  '_operit_lvgl_set_conversation',
+  '_operit_lvgl_finish_conversations',
+  '_operit_lvgl_action_error',
+
   '_operit_lvgl_set_chat_task',
   '_operit_lvgl_chat_draft',
   '_operit_lvgl_set_chat_draft',
@@ -113,6 +121,7 @@ async function sharedHash(): Promise<string> {
   return hashFiles([
     ...await filesWithSuffix(ui, '.c'),
     ...await filesWithSuffix(ui, '.h'),
+    ...await filesWithSuffix(ui, '.inc'),
     path.join(root, 'apps/esp32/ui/layout.json'),
   ]);
 }
@@ -257,7 +266,7 @@ for (const name of await readdir(objdir)) {
   await unlink(path.join(objdir, name));
 }
 
-const headers = await filesWithSuffix(ui, '.h');
+const headers = [...await filesWithSuffix(ui, '.h'), ...await filesWithSuffix(ui, '.inc')];
 const timerHeader = await readFile(path.join(here, 'wasm/esp_timer.h'));
 
 /** Compiles one C translation unit when its stamp no longer matches. */
@@ -303,6 +312,7 @@ if (linked.code !== 0) throw new Error('emcc link failed');
 const runtimeFiles = [
   ...await filesWithSuffix(ui, '.c'),
   ...(await filesWithSuffix(ui, '.h')).filter((file) => path.basename(file) !== 'layout.generated.h'),
+  ...await filesWithSuffix(ui, '.inc'),
   ...await filesWithSuffix(path.join(root, 'apps/esp32/src'), '.rs'),
   path.join(root, 'apps/esp32/partitions.csv'),
 ];
@@ -321,7 +331,7 @@ if (firmware) {
   const newest = Math.max(
     ...(await Promise.all(
       (await readdir(ui))
-        .filter((name) => ['.c', '.h', '.txt'].includes(path.extname(name)))
+        .filter((name) => ['.c', '.h', '.inc', '.txt'].includes(path.extname(name)))
         .map(async (name) => (await stat(path.join(ui, name))).mtimeMs),
     )),
   );

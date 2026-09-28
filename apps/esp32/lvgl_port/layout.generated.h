@@ -3,7 +3,7 @@
 #define OPERIT_LAYOUT_ENTRY "home"
 static const operit_layout_node_t layout_page_0[] = {
  {1,-1,182,172,118,24,0x53dfc5,0,0,"OPERIT / EDGE","","","",14},
- {1,-1,226,20,74,24,0xf4f8ff,0,0,"Aurora","","","",14},
+ {1,-1,226,20,74,24,0xf4f8ff,0,0,"Aurora","","","theme",14},
  {0,-1,18,48,284,111,0x172a3d,22,0,"","","","",14},
  {1,-1,31,56,262,58,0xf4f8ff,0,0,"00:00","","","clock",48},
  {1,-1,73,119,230,24,0xf4f8ff,0,0,"DEVICE TIME","","","",14},

@@ -7,13 +7,37 @@
 #include <stdio.h>
 #include <time.h>
 #include "operit_font_zh_14.h"
+LV_FONT_DECLARE(operit_font_digits_28);
 
 /* A shared palette and geometry keep every component aligned at 320x240. */
-typedef struct { uint32_t bg, surface, accent, muted; const char *name; } theme_t;
+enum {
+    OPERIT_SCREEN_WIDTH = 320,
+    OPERIT_SCREEN_HEIGHT = 240,
+    OPERIT_HEADER_HEIGHT = 40,
+    OPERIT_COMPOSER_HEIGHT = 34,
+    OPERIT_DRAWER_WIDTH = 240,
+    OPERIT_DRAWER_VIEWPORT_HEIGHT = 119,
+    OPERIT_DRAWER_FOOTER_HEIGHT = 44,
+    OPERIT_KEYBOARD_WIDTH = 304,
+    OPERIT_KEYBOARD_HEIGHT = 124,
+    OPERIT_KEYBOARD_GAP = 10,
+    OPERIT_DRAWER_ANIMATION_MS = 120,
+    OPERIT_DRAWER_CLOSE_MS = 96,
+};
+
+typedef struct {
+    uint32_t background, surface, surface_inset, selection;
+    uint32_t header;
+    uint32_t accent, on_accent, text, text_secondary, border, scrim, disabled;
+    const char *name;
+} theme_t;
 static const theme_t themes[] = {
-    {0x091420, 0x172a3d, 0x53dfc5, 0x96abbc, "Aurora"},
-    {0x20121d, 0x382436, 0xffb575, 0xc4a2b3, "Ember"},
-    {0x111827, 0x253149, 0x94b8ff, 0x9daecb, "Orbit"}
+    {0x14211c, 0x20332c, 0x182920, 0x304c3e, 0x172522, 0x8bd3b7, 0x14291f,
+     0xe4eeeb, 0x91a99f, 0x2b3d37, 0x08120d, 0x71877e, "Aurora"},
+    {0x20121d, 0x382436, 0x30202d, 0x5a3546, 0x2c1c28, 0xffb575, 0x2b1720,
+     0xfff5eb, 0xc4a2b3, 0x553747, 0x160b13, 0x9b788c, "Ember"},
+    {0x111827, 0x253149, 0x1d273b, 0x3c5278, 0x192335, 0x94b8ff, 0x18253c,
+     0xf4f7ff, 0x9daecb, 0x34435e, 0x090e18, 0x7183a5, "Orbit"}
 };
 typedef struct {
     int type, parent, x, y, w, h;
@@ -27,24 +51,33 @@ typedef struct { const char *id; uint32_t background; const operit_layout_node_t
 static void document_home(void);
 static bool document_page(const char *id);
 static void execute_route(const char *action);
-static char pending_route[32], active_page[24], swipe_left[24], swipe_right[24];
+static char pending_route[128], active_page[24], swipe_left[24], swipe_right[24];
 static lv_indev_t *pointer_input;
-static void queue_route(const char *action) { if(!*pending_route && action) { strncpy(pending_route,action,31);pending_route[31]=0; } }
+static size_t copy_utf8(char *, size_t, const char *);
+static void queue_route(const char *action) { if(!*pending_route && action) { copy_utf8(pending_route, sizeof(pending_route), action); } }
 static unsigned theme_index;
 static char page_name[32] = "Chat";
 static const char *current_page = page_name;
 static bool round_icons;
 static lv_display_t *display;
-static lv_obj_t *root, *tiles, *clock_label, *connection_label, *face_label;
+static lv_obj_t *root, *page_host, *overlay_host, *tiles, *clock_label, *connection_label, *face_label;
 static lv_obj_t *pairing_label, *space_label, *chat_label, *chat_task_label;
-static lv_obj_t *chat_input, *chat_keyboard, *chat_keyboard_close, *chat_send_button;
-static lv_obj_t *sidebar_panel, *sidebar_scrim, *chat_content, *sidebar_preview_label;
+static lv_obj_t *chat_page, *chat_header, *chat_title_label, *message_viewport, *composer_host, *composer_row;
+static lv_obj_t *chat_input, *chat_keyboard, *keyboard_window, *keyboard_header;
+static lv_obj_t *keyboard_drag_handle, *keyboard_close, *chat_send_button;
+static lv_obj_t *chat_voice_button;
+static lv_obj_t *drawer_layer, *drawer_panel, *drawer_scrim, *character_viewport;
+static lv_obj_t *sidebar_preview_label;
+static lv_obj_t *message_list, *dialog_layer;
+static void reset_message_nodes(void);
 static char chat_draft[512] = "";
 static char submitted_draft[512] = "";
 static bool chat_send_pending;
 static lv_obj_t *chat_scroll, *wifi_label, *pairing_hint;
 static uint16_t touch_x, touch_y;
 static bool touch_pressed, wifi_ready, edge_ready;
+static bool paired;
+static bool unpair_requested;
 static char expression[24] = "neutral";
 static char pairing_code[20] = "";
 static char space_state[40] = "等待连接 Operit";
@@ -52,9 +85,12 @@ static char chat_preview[96] = "尚未连接对话";
 static char chat_screen[8192] = "尚未连接对话";
 static char chat_task[192] = "离线";
 static bool sidebar_open;
-static int sidebar_width = 213; /* 66.6% default, as requested. */
+static int sidebar_width = OPERIT_DRAWER_WIDTH;
 static bool last_touch_pressed;
 static uint16_t touch_start_x, touch_start_y;
+static bool keyboard_dragging;
+static int keyboard_saved_scroll;
+static int keyboard_drag_offset_x, keyboard_drag_offset_y;
 static operit_lvgl_flush_cb_t flush_cb;
 static operit_lvgl_action_cb_t action_cb;
 static void *context;
@@ -66,6 +102,15 @@ static void page(const char *name);
 static size_t copy_utf8(char *destination, size_t capacity, const char *source);
 static const theme_t *theme(void) { return &themes[theme_index]; }
 
+static const char *const UI_NEW_CHAT = "新建对话";
+static const char *const UI_ROLE_CARD = "角色卡";
+static const char *const UI_CHAT_GROUP = "对话";
+static const char *const UI_PLUGINS = "插件";
+static const char *const UI_SETTINGS = "设置";
+static const char *const UI_PAIR = "配对";
+static const char *const UI_UNPAIR = "取消配对";
+static const char *const UI_VOICE = "语音";
+
 /*
  * A small accessibility-like registry is deliberately kept next to the
  * shared LVGL implementation instead of being inferred from the browser
@@ -73,12 +118,18 @@ static const theme_t *theme(void) { return &themes[theme_index]; }
  * and in the WebAssembly editor.  Nodes are metadata only; LVGL remains the
  * source of truth for geometry, visibility and text.
  */
-#define OPERIT_DEBUG_NODE_LIMIT 128
+#ifdef __EMSCRIPTEN__
+#define OPERIT_DEBUG_NODE_LIMIT 384
+#define OPERIT_DEBUG_JSON_SIZE 65536
+#else
+/* Hardware diagnostics must leave DRAM available to pairing and chat. */
+#define OPERIT_DEBUG_NODE_LIMIT 192
+#define OPERIT_DEBUG_JSON_SIZE 16384
+#endif
 #define OPERIT_DEBUG_ID_SIZE 48
 #define OPERIT_DEBUG_ROLE_SIZE 20
 #define OPERIT_DEBUG_ACTION_SIZE 40
 #define OPERIT_DEBUG_TEXT_SIZE 256
-#define OPERIT_DEBUG_JSON_SIZE 65536
 typedef struct {
     lv_obj_t *object;
     char id[OPERIT_DEBUG_ID_SIZE];
@@ -110,6 +161,11 @@ static const char *debug_action_id(const char *action) {
     return action;
 }
 
+static void debug_deleted(lv_event_t *event) {
+    int index = debug_find_object(lv_event_get_target(event));
+    if (index >= 0) debug_nodes[index].object = NULL;
+}
+
 static int debug_register(lv_obj_t *object, const char *role, const char *id,
                           const char *action) {
     if (!object) return -1;
@@ -123,8 +179,11 @@ static int debug_register(lv_obj_t *object, const char *role, const char *id,
                                           sizeof(debug_nodes[existing].action), action);
         return existing;
     }
-    if (debug_count >= OPERIT_DEBUG_NODE_LIMIT) return -1;
-    unsigned index = debug_count++;
+    unsigned index = 0;
+    while (index < debug_count && debug_nodes[index].object) ++index;
+    if (index == OPERIT_DEBUG_NODE_LIMIT) return -1;
+    if (index == debug_count) ++debug_count;
+    lv_obj_add_event_cb(object, debug_deleted, LV_EVENT_DELETE, NULL);
     operit_debug_node_t *node = &debug_nodes[index];
     memset(node, 0, sizeof(*node));
     node->object = object;
@@ -241,8 +300,11 @@ static const char *debug_build_json(bool snapshot) {
         debug_json_string(&offset, chat_screen);
     }
     debug_json_char(&offset, ','); debug_json_string(&offset, "nodes"); debug_json_char(&offset, ':'); debug_json_char(&offset, '[');
+    bool first = true;
     for (unsigned i = 0; i < debug_count; ++i) {
-        if (i) debug_json_char(&offset, ',');
+        if (!debug_nodes[i].object) continue;
+        if (!first) debug_json_char(&offset, ',');
+        first = false;
         debug_append_node(&offset, i);
     }
     debug_json_char(&offset, ']'); debug_json_char(&offset, '}');
@@ -250,10 +312,12 @@ static const char *debug_build_json(bool snapshot) {
 }
 /* Default palette tokens follow the selected theme; custom colors stay literal. */
 static uint32_t document_color(uint32_t color) {
-    if(color==0x091420)return theme()->bg;
+    if(color==0x091420)return theme()->background;
     if(color==0x172a3d)return theme()->surface;
     if(color==0x53dfc5)return theme()->accent;
-    if(color==0x216c73)return theme_index==0?color:theme()->surface;
+    if(color==0x96abbc)return theme()->text_secondary;
+    if(color==0xf4f8ff)return theme()->text;
+    if(color==0x216c73)return theme()->accent;
     return color;
 }
 
@@ -280,13 +344,15 @@ static lv_obj_t *label(lv_obj_t *p, const char *text, int x, int y, int w, uint3
 }
 static void clicked(lv_event_t *e) {
     const char *name = lv_event_get_user_data(e);
-    if (!strcmp(name,"Home")) queue_route("home");
+    if (!strncmp(name,"edge_",5) || !strncmp(name,"dialog_",7)) queue_route(name);
+    else if (!strcmp(name,"Home")) queue_route("home");
     else if (!strcmp(name,"Palette")) queue_route("theme_next");
     else if (!strcmp(name,"Shape")) queue_route("shape_toggle");
     else if (!strcmp(name,"Online")) queue_route("face_online");
     else if (!strcmp(name,"Run")) queue_route("run_node");
     else if (!strcmp(name,"edge_search") || !strcmp(name,"edge_pair") || !strcmp(name,"edge_chat") || !strcmp(name,"edge_send") ||
-             !strcmp(name,"edge_new") || !strcmp(name,"sidebar_toggle") || !strcmp(name,"sidebar_open") ||
+             !strcmp(name,"edge_new") || !strcmp(name,"edge_unpair") || !strcmp(name,"voice_placeholder") ||
+             !strcmp(name,"sidebar_toggle") || !strcmp(name,"sidebar_open") ||
              !strcmp(name,"sidebar_close") || !strcmp(name,"chat_keyboard_close") || !strcmp(name,"sidebar_width_cycle")) queue_route(name);
     else if (!strncmp(name, "builtin:", 8) || !strncmp(name, "go:", 3) || !strncmp(name, "page:", 5)) queue_route(name);
     else { char route[32];snprintf(route,sizeof(route),"builtin:%s",name);queue_route(route); }
@@ -297,7 +363,7 @@ static lv_obj_t *button(lv_obj_t *p, const char *text, const char *action, int x
     lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(o, lv_color_hex(theme()->accent), LV_STATE_PRESSED);
     lv_obj_add_event_cb(o, clicked, LV_EVENT_CLICKED, (void *)action);
-    lv_obj_t *t = label(o, text, 0, 0, w - 8, 0xf4f8ff);
+    lv_obj_t *t = label(o, text, 0, 0, w - 8, theme()->text);
     lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0); lv_obj_center(t);
     return o;
 }
@@ -305,12 +371,18 @@ static void clear(void) {
     active_page[0]=0;
     swipe_left[0]=swipe_right[0]=0;
     clock_label = connection_label = face_label = tiles = NULL;
+    page_host = overlay_host = NULL;
     pairing_label = space_label = chat_label = chat_task_label = NULL;
-    chat_input = chat_keyboard = chat_keyboard_close = chat_send_button = NULL;
+    chat_page = chat_header = chat_title_label = message_viewport = composer_host = composer_row = NULL;
+    chat_input = chat_keyboard = keyboard_window = keyboard_header = NULL;
+    keyboard_drag_handle = keyboard_close = chat_send_button = chat_voice_button = NULL;
     chat_scroll = wifi_label = pairing_hint = NULL;
-    sidebar_panel = sidebar_scrim = chat_content = sidebar_preview_label = NULL;
+    drawer_layer = drawer_panel = drawer_scrim = character_viewport = NULL;
+    sidebar_preview_label = NULL;
+    message_list = dialog_layer = NULL;
+    reset_message_nodes();
     lv_obj_clean(root);
-    lv_obj_set_style_bg_color(root, lv_color_hex(theme()->bg), 0);
+    lv_obj_set_style_bg_color(root, lv_color_hex(theme()->background), 0);
     debug_reset();
 }
 static void tick_clock(lv_timer_t *timer) {
@@ -322,17 +394,11 @@ static void tick_clock(lv_timer_t *timer) {
     else snprintf(text, sizeof(text), "--:--");
     lv_label_set_text(clock_label, text);
 }
-static void icon(lv_obj_t *p, const char *symbol, const char *name, int x, int y, uint32_t color) {
-    lv_obj_t *o = button(p, symbol, name, x, y, 52, 52);
-    lv_obj_set_style_bg_color(o, lv_color_hex(color), 0);
-    lv_obj_set_style_radius(o, round_icons ? LV_RADIUS_CIRCLE : 15, 0);
-    lv_obj_t *t = label(p, name, x - 7, y + 57, 66, 0xf4f8ff);
-    lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
-}
 static void builtin_home(void) {
-    /* Chat is the only primary app. All secondary tools live in its drawer. */
+    /* An unpaired device opens the real pairing guide; an authenticated device
+     * keeps the chat entry point even when the Core is temporarily offline. */
     sidebar_open = false;
-    page("Chat");
+    page(paired ? "Chat" : "Pairing");
 }
 /* Copy whole UTF-8 code points so a bounded display buffer never ends in a broken glyph. */
 static size_t copy_utf8(char *destination, size_t capacity, const char *source) {
@@ -362,150 +428,116 @@ static void remember_chat_draft(void) {
     copy_utf8(chat_draft, sizeof(chat_draft), lv_textarea_get_text(chat_input));
 }
 
+
+/* The active UI follows the structure in docs/esp32-ui/esp32-ui-structure.md.
+ * Page content and overlays are siblings under separate hosts so scrolling a
+ * message list never moves a drawer or floating keyboard. */
+static lv_obj_t *ui_box(lv_obj_t *parent, int x, int y, int w, int h,
+                        uint32_t color, int radius) {
+    lv_obj_t *object = box(parent, x, y, w, h, color, radius);
+    return object;
+}
+
+static lv_obj_t *ui_action(lv_obj_t *parent, const char *text, const char *action,
+                           int x, int y, int w, int h, uint32_t background,
+                           uint32_t foreground) {
+    lv_obj_t *object = ui_box(parent, x, y, w, h, background, 8);
+    debug_register(object, "button", debug_action_id(action), action);
+    lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(object, lv_color_hex(theme()->selection), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(object, clicked, LV_EVENT_CLICKED, (void *)action);
+    lv_obj_t *caption = label(object, text, 4, 0, w - 8, foreground);
+    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(caption);
+    return object;
+}
+
+static void ui_hosts(void) {
+    page_host = ui_box(root, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_SCREEN_HEIGHT,
+                       theme()->background, 0);
+    debug_set_id(page_host, "page_host");
+    overlay_host = ui_box(root, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_SCREEN_HEIGHT,
+                          theme()->background, 0);
+    debug_set_id(overlay_host, "overlay_host");
+    lv_obj_set_style_bg_opa(overlay_host, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(overlay_host, LV_OBJ_FLAG_CLICKABLE);
+}
+
+#include "operit_chat_view.inc"
+
+static void layout_chat_keyboard(void) {
+    if (!chat_page || !composer_host || !message_viewport) return;
+    int composer_y = OPERIT_SCREEN_HEIGHT - OPERIT_COMPOSER_HEIGHT - 8;
+    if (keyboard_window && !lv_obj_has_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN)) {
+        int keyboard_y = lv_obj_get_y(keyboard_window);
+        composer_y = keyboard_y - OPERIT_KEYBOARD_GAP - OPERIT_COMPOSER_HEIGHT;
+    }
+    if (composer_y < OPERIT_HEADER_HEIGHT + 8) composer_y = OPERIT_HEADER_HEIGHT + 8;
+    lv_obj_set_pos(composer_host, 0, composer_y);
+    lv_obj_set_size(composer_host, OPERIT_SCREEN_WIDTH, OPERIT_COMPOSER_HEIGHT);
+    int viewport_bottom = composer_y - OPERIT_KEYBOARD_GAP;
+    int viewport_height = viewport_bottom - (OPERIT_HEADER_HEIGHT + 6);
+    if (viewport_height < 8) viewport_height = 8;
+    lv_obj_set_pos(message_viewport, 8, OPERIT_HEADER_HEIGHT + 6);
+    lv_obj_set_size(message_viewport, OPERIT_SCREEN_WIDTH - 16, viewport_height);
+}
+
+static int keyboard_y_for_touch(int y) {
+    int next = y - keyboard_drag_offset_y;
+    int min_y = OPERIT_HEADER_HEIGHT + OPERIT_COMPOSER_HEIGHT + OPERIT_KEYBOARD_GAP;
+    int max_y = OPERIT_SCREEN_HEIGHT - OPERIT_KEYBOARD_HEIGHT - 2;
+    if (min_y > max_y) min_y = max_y;
+    if (next < min_y) next = min_y;
+    if (next > max_y) next = max_y;
+    return next;
+}
+
+static int keyboard_x_for_touch(int x) {
+    int next = x - keyboard_drag_offset_x;
+    int max_x = OPERIT_SCREEN_WIDTH - OPERIT_KEYBOARD_WIDTH - 4;
+    if (next < 4) next = 4;
+    if (next > max_x) next = max_x;
+    return next;
+}
+
+static void keyboard_handle_event(lv_event_t *event) {
+    lv_event_code_t code = lv_event_get_code(event);
+    if (code == LV_EVENT_PRESSED) {
+        keyboard_dragging = true;
+        keyboard_drag_offset_x = (int)touch_x - lv_obj_get_x(keyboard_window);
+        keyboard_drag_offset_y = (int)touch_y - lv_obj_get_y(keyboard_window);
+    } else if (code == LV_EVENT_PRESSING && keyboard_dragging) {
+        lv_obj_set_x(keyboard_window, keyboard_x_for_touch((int)touch_x));
+        lv_obj_set_y(keyboard_window, keyboard_y_for_touch((int)touch_y));
+        layout_chat_keyboard();
+    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        keyboard_dragging = false;
+    }
+}
+
 static void hide_chat_keyboard(void) {
+    bool was_open = keyboard_window && !lv_obj_has_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN);
     if (chat_keyboard) {
-        lv_obj_add_flag(chat_keyboard, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN);
         lv_keyboard_set_textarea(chat_keyboard, NULL);
     }
-    if (chat_keyboard_close) lv_obj_add_flag(chat_keyboard_close, LV_OBJ_FLAG_HIDDEN);
-    if (chat_send_button) lv_obj_clear_flag(chat_send_button, LV_OBJ_FLAG_HIDDEN);
-    if (chat_input) {
-        lv_obj_set_y(chat_input, 181);
-        lv_obj_clear_state(chat_input, LV_STATE_FOCUSED);
+    if (chat_input) lv_obj_clear_state(chat_input, LV_STATE_FOCUSED);
+    keyboard_dragging = false;
+    layout_chat_keyboard();
+    if (was_open && message_viewport) {
+        lv_obj_update_layout(message_viewport);
+        lv_obj_scroll_to_y(message_viewport, keyboard_saved_scroll, LV_ANIM_OFF);
     }
 }
 
 static void show_chat_keyboard(void) {
-    if (!chat_keyboard || !chat_input) return;
+    if (!chat_keyboard || !chat_input || !keyboard_window) return;
+    if (lv_obj_has_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN))
+        keyboard_saved_scroll = lv_obj_get_scroll_y(message_viewport);
     lv_keyboard_set_textarea(chat_keyboard, chat_input);
-    lv_obj_set_style_text_font(chat_keyboard, &operit_font_zh_14, 0);
-    lv_obj_set_y(chat_input, 48);
-    if (chat_send_button) lv_obj_add_flag(chat_send_button, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(chat_keyboard, LV_OBJ_FLAG_HIDDEN);
-    if (chat_keyboard_close) lv_obj_clear_flag(chat_keyboard_close, LV_OBJ_FLAG_HIDDEN);
-}
-
-static const char *sidebar_width_name(void) {
-    if (sidebar_width <= 180) return "50%";
-    if (sidebar_width >= 240) return "80%";
-    return "67%";
-}
-
-static void cycle_sidebar_width(void) {
-    if (sidebar_width <= 180) sidebar_width = 213;
-    else if (sidebar_width <= 240) sidebar_width = 256;
-    else sidebar_width = 160;
-}
-
-static lv_obj_t *sidebar_button(lv_obj_t *parent, const char *text, const char *action, int y, bool active) {
-    int width = sidebar_width - 20;
-    lv_obj_t *o = button(parent, text, action, 10, y, width, 30);
-    lv_obj_set_style_radius(o, 10, 0);
-    lv_obj_set_style_bg_color(o, lv_color_hex(active ? theme()->accent : theme()->surface), 0);
-    return o;
-}
-
-static void sidebar_anim_exec(void *object, int32_t x) {
-    lv_obj_set_x((lv_obj_t *)object, x);
-}
-
-static void sidebar_close_ready(lv_anim_t *animation) {
-    (void)animation;
-    if (!sidebar_open) {
-        if (sidebar_panel) lv_obj_add_flag(sidebar_panel, LV_OBJ_FLAG_HIDDEN);
-        if (sidebar_scrim) lv_obj_add_flag(sidebar_scrim, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-static void animate_drawer_object(lv_obj_t *object, int32_t from, int32_t to, uint32_t time,
-                                  lv_anim_ready_cb_t ready_cb) {
-    if (!object) return;
-    (void)from;
-    lv_anim_delete(object, sidebar_anim_exec);
-    lv_obj_update_layout(object);
-    from = lv_obj_get_x(object);
-    lv_anim_t animation;
-    lv_anim_init(&animation);
-    lv_anim_set_var(&animation, object);
-    lv_anim_set_values(&animation, from, to);
-    lv_anim_set_time(&animation, time);
-    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&animation, sidebar_anim_exec);
-    if (ready_cb) lv_anim_set_ready_cb(&animation, ready_cb);
-    lv_anim_start(&animation);
-}
-
-static void draw_sidebar(void) {
-    sidebar_scrim = box(root, sidebar_width, 0, 320 - sidebar_width, 240, 0x000000, 0);
-    debug_set_id(sidebar_scrim, "sidebar_scrim");
-    lv_obj_set_style_bg_opa(sidebar_scrim, LV_OPA_50, 0);
-    lv_obj_add_flag(sidebar_scrim, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(sidebar_scrim, clicked, LV_EVENT_CLICKED, (void *)"sidebar_close");
-
-    sidebar_panel = box(root, 0, 0, sidebar_width, 240, theme()->surface, 0);
-    debug_set_id(sidebar_panel, "sidebar");
-    lv_obj_add_flag(sidebar_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(sidebar_panel, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_dir(sidebar_panel, LV_DIR_VER);
-    label(sidebar_panel, "聊天", 16, 6, sidebar_width - 32, theme()->accent);
-    sidebar_button(sidebar_panel, "清空草稿", "edge_new", 28, false);
-    label(sidebar_panel, "对话记录", 16, 64, sidebar_width - 32, theme()->muted);
-    sidebar_button(sidebar_panel, "当前对话", "sidebar_close", 78, true);
-    sidebar_preview_label = label(sidebar_panel, chat_preview, 20, 112, sidebar_width - 36, theme()->muted);
-    debug_set_id(sidebar_preview_label, "chat_preview");
-    lv_label_set_long_mode(sidebar_preview_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_height(sidebar_preview_label, 30);
-    sidebar_button(sidebar_panel, "配对设备", "builtin:Pairing", 144, false);
-    sidebar_button(sidebar_panel, "任务", "builtin:Tasks", 176, false);
-    sidebar_button(sidebar_panel, "设置", "builtin:Settings", 208, false);
-
-    if (sidebar_open) {
-        lv_obj_set_x(chat_content, sidebar_width);
-        lv_obj_set_x(sidebar_panel, 0);
-        lv_obj_set_x(sidebar_scrim, sidebar_width);
-    } else {
-        lv_obj_set_x(chat_content, 0);
-        lv_obj_set_x(sidebar_panel, -sidebar_width);
-        lv_obj_set_x(sidebar_scrim, 320);
-        lv_obj_add_flag(sidebar_panel, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(sidebar_scrim, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-static void set_sidebar_open(bool open, bool animate) {
-    sidebar_open = open;
-    if (!chat_content || !sidebar_panel || !sidebar_scrim) {
-        page("Chat");
-        return;
-    }
-    if (!animate) {
-        if (open) {
-            lv_obj_clear_flag(sidebar_panel, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(sidebar_scrim, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_x(chat_content, sidebar_width);
-            lv_obj_set_x(sidebar_panel, 0);
-            lv_obj_set_x(sidebar_scrim, sidebar_width);
-        } else {
-            lv_obj_set_x(chat_content, 0);
-            lv_obj_set_x(sidebar_panel, -sidebar_width);
-            lv_obj_set_x(sidebar_scrim, 320);
-            lv_obj_add_flag(sidebar_panel, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(sidebar_scrim, LV_OBJ_FLAG_HIDDEN);
-        }
-        return;
-    }
-    if (open) {
-        hide_chat_keyboard();
-        lv_obj_clear_flag(sidebar_panel, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(sidebar_scrim, LV_OBJ_FLAG_HIDDEN);
-        animate_drawer_object(chat_content, 0, sidebar_width, 220, NULL);
-        animate_drawer_object(sidebar_panel, -sidebar_width, 0, 220, NULL);
-        animate_drawer_object(sidebar_scrim, 320, sidebar_width, 220, NULL);
-    } else {
-        animate_drawer_object(chat_content, sidebar_width, 0, 180, NULL);
-        animate_drawer_object(sidebar_panel, 0, -sidebar_width, 180, sidebar_close_ready);
-        animate_drawer_object(sidebar_scrim, sidebar_width, 320, 180, NULL);
-    }
+    lv_obj_clear_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(keyboard_window, 8, OPERIT_SCREEN_HEIGHT - OPERIT_KEYBOARD_HEIGHT - 2);
+    layout_chat_keyboard();
 }
 
 static void chat_keyboard_event(lv_event_t *event) {
@@ -513,7 +545,6 @@ static void chat_keyboard_event(lv_event_t *event) {
     if (code == LV_EVENT_READY) {
         remember_chat_draft();
         hide_chat_keyboard();
-        queue_route("edge_send");
     } else if (code == LV_EVENT_CANCEL) {
         hide_chat_keyboard();
     }
@@ -521,61 +552,281 @@ static void chat_keyboard_event(lv_event_t *event) {
 
 static void chat_input_event(lv_event_t *event) {
     lv_event_code_t code = lv_event_get_code(event);
-    if (code == LV_EVENT_FOCUSED) show_chat_keyboard();
-    else if (code == LV_EVENT_DEFOCUSED) hide_chat_keyboard();
+    if (code == LV_EVENT_FOCUSED || code == LV_EVENT_CLICKED) show_chat_keyboard();
+    /* Tapping the floating header changes focus, but must not close the window. */
+}
+
+#include "operit_keyboard.inc"
+
+static void drawer_anim_exec(void *object, int32_t x) {
+    lv_obj_set_x((lv_obj_t *)object, x);
+}
+
+static void drawer_close_ready(lv_anim_t *animation) {
+    (void)animation;
+    if (!sidebar_open && drawer_layer) lv_obj_add_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void animate_drawer(lv_obj_t *object, int32_t to, uint32_t duration,
+                           lv_anim_ready_cb_t ready_cb) {
+    if (!object) return;
+    lv_anim_delete(object, drawer_anim_exec);
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, object);
+    lv_anim_set_values(&animation, lv_obj_get_x(object), to);
+    lv_anim_set_time(&animation, duration);
+    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+    lv_anim_set_exec_cb(&animation, drawer_anim_exec);
+    if (ready_cb) lv_anim_set_ready_cb(&animation, ready_cb);
+    lv_anim_start(&animation);
+}
+
+static lv_obj_t *drawer_footer_button(lv_obj_t *parent, const char *icon,
+                                      const char *text, const char *action, int x) {
+    lv_obj_t *object = ui_box(parent, x, 0, 108, 29, theme()->surface, 7);
+    debug_register(object, "button", debug_action_id(action), action);
+    lv_obj_add_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(object, clicked, LV_EVENT_CLICKED, (void *)action);
+    lv_obj_t *icon_label = label(object, icon, 10, 5, 18, theme()->text_secondary);
+    lv_obj_set_style_text_align(icon_label, LV_TEXT_ALIGN_CENTER, 0);
+    label(object, text, 34, 5, 66, theme()->text);
+    return object;
+}
+
+static void draw_drawer(void) {
+    drawer_layer = ui_box(overlay_host, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_SCREEN_HEIGHT,
+                          theme()->background, 0);
+    debug_set_id(drawer_layer, "drawer_layer");
+    lv_obj_set_style_bg_opa(drawer_layer, LV_OPA_TRANSP, 0);
+    drawer_scrim = ui_box(drawer_layer, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_SCREEN_HEIGHT,
+                          theme()->scrim, 0);
+    debug_set_id(drawer_scrim, "drawer_scrim");
+    lv_obj_set_style_bg_opa(drawer_scrim, LV_OPA_50, 0);
+    lv_obj_add_flag(drawer_scrim, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(drawer_scrim, clicked, LV_EVENT_CLICKED, (void *)"sidebar_close");
+
+    drawer_panel = ui_box(drawer_layer, -sidebar_width, 0, sidebar_width,
+                           OPERIT_SCREEN_HEIGHT, theme()->surface, 0);
+    debug_set_id(drawer_panel, "drawer_panel");
+    lv_obj_clear_flag(drawer_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *drawer_close = ui_action(drawer_scrim, LV_SYMBOL_CLOSE, "sidebar_close",
+                                        sidebar_width + 24, 8, 32, 26,
+                                        theme()->scrim, theme()->text_secondary);
+    debug_set_id(drawer_close, "drawer_close_button");
+
+    lv_obj_t *header = ui_box(drawer_panel, 0, 0, sidebar_width, 64, theme()->surface, 0);
+    debug_set_id(header, "drawer_header");
+    lv_obj_t *header_row = ui_box(header, 0, 0, sidebar_width, 34, theme()->surface, 0);
+    debug_set_id(header_row, "drawer_header_row");
+    label(header_row, "对话", 12, 9, 120, theme()->text);
+    ui_action(header_row, UI_UNPAIR, "edge_unpair", sidebar_width - 82, 5, 74, 28,
+              theme()->surface, theme()->text_secondary);
+    lv_obj_t *new_chat = ui_action(header, UI_NEW_CHAT, "edge_new", 8, 36,
+                                   sidebar_width - 16, 28, theme()->accent, theme()->on_accent);
+    lv_obj_t *caption = lv_obj_get_child(new_chat, 0);
+    lv_obj_set_width(caption, sidebar_width - 60);
+    lv_obj_set_align(caption, LV_ALIGN_TOP_LEFT);
+    lv_obj_set_pos(caption, 12, 4);
+    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_LEFT, 0);
+    label(new_chat, LV_SYMBOL_PLUS, sidebar_width - 42, 6, 20, theme()->on_accent);
+    character_viewport = ui_box(drawer_panel, 8, 69, sidebar_width - 16,
+                                 OPERIT_DRAWER_VIEWPORT_HEIGHT, theme()->surface, 0);
+    debug_set_id(character_viewport, "character_viewport");
+    lv_obj_add_flag(character_viewport, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(character_viewport, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(character_viewport, LV_SCROLLBAR_MODE_AUTO);
+    render_conversations();
+    ui_box(drawer_panel, 8, 196, sidebar_width - 16, 1, theme()->border, 0);
+    lv_obj_t *footer = ui_box(drawer_panel, 0, 203, sidebar_width, 29, theme()->surface, 0);
+    debug_set_id(footer, "drawer_footer");
+    drawer_footer_button(footer, LV_SYMBOL_DIRECTORY, UI_PLUGINS, "builtin:Plugins", 8);
+    drawer_footer_button(footer, LV_SYMBOL_SETTINGS, UI_SETTINGS, "builtin:Settings", 124);
+
+    if (sidebar_open) {
+        lv_obj_set_x(drawer_panel, 0);
+    } else {
+        lv_obj_add_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void set_sidebar_open(bool open, bool animate) {
+    sidebar_open = open;
+    if (!drawer_layer || !drawer_panel || !drawer_scrim) {
+        page("Chat");
+        return;
+    }
+    hide_chat_keyboard();
+    if (!animate) {
+        if (open) {
+            lv_obj_clear_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_x(drawer_panel, 0);
+        } else {
+            lv_obj_set_x(drawer_panel, -sidebar_width);
+            lv_obj_add_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    if (open) {
+        lv_obj_clear_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN);
+        animate_drawer(drawer_panel, 0, OPERIT_DRAWER_ANIMATION_MS, NULL);
+    } else {
+        animate_drawer(drawer_panel, -sidebar_width, OPERIT_DRAWER_CLOSE_MS, drawer_close_ready);
+    }
 }
 
 static void draw_chat(void) {
-    chat_content = lv_obj_create(root);
-    lv_obj_remove_style_all(chat_content);
-    lv_obj_set_size(chat_content, 320, 240);
-    lv_obj_clear_flag(chat_content, LV_OBJ_FLAG_SCROLLABLE);
-    debug_register(chat_content, "screen", "chat", NULL);
-    box(chat_content, 0, 0, 320, 42, theme()->surface, 0);
-    button(chat_content, LV_SYMBOL_LIST, "sidebar_toggle", 8, 7, 32, 28);
-    label(chat_content, "聊天", 50, 10, 130, 0xf4f8ff);
-    connection_label = label(chat_content, edge_ready ? "已连接" : "离线", 224, 12, 82, edge_ready ? theme()->accent : theme()->muted);
+    chat_page = ui_box(page_host, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_SCREEN_HEIGHT,
+                       theme()->background, 0);
+    debug_register(chat_page, "screen", "chat_page", NULL);
+    chat_header = ui_box(chat_page, 0, 0, OPERIT_SCREEN_WIDTH, OPERIT_HEADER_HEIGHT,
+                         theme()->header, 0);
+    debug_set_id(chat_header, "chat_header");
+    lv_obj_t *menu = button(chat_header, "", "sidebar_toggle", 8, 6, 30, 28);
+    for (int y = 7; y <= 19; y += 6) {
+        lv_obj_t *line = box(menu, 6, y, 18, 2, theme()->text, 1);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+    }
+    chat_title_label = label(chat_header, chat_preview[0] ? chat_preview : "Operit",
+                             48, 10, 150, theme()->text);
+    debug_set_id(chat_title_label, "active_character_label");
+    lv_label_set_long_mode(chat_title_label, LV_LABEL_LONG_DOT);
+    connection_label = label(chat_header, edge_ready ? "● 已连接" : "● 离线",
+                             214, 11, 98, edge_ready ? theme()->accent : theme()->text_secondary);
     debug_set_id(connection_label, "connection_status");
     lv_obj_set_style_text_align(connection_label, LV_TEXT_ALIGN_RIGHT, 0);
 
-    /* The ESP32 is intentionally a tiny message terminal, not a full AI chat UI:
-     * one plain text output area, one input field, and one send button. */
-    box(chat_content, 10, 50, 300, 124, theme()->surface, 16);
-    chat_scroll = box(chat_content, 18, 58, 284, 110, theme()->surface, 0);
-    debug_set_id(chat_scroll, "chat_text");
-    lv_obj_add_flag(chat_scroll, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(chat_scroll, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(chat_scroll, LV_SCROLLBAR_MODE_AUTO);
-    chat_label = label(chat_scroll, chat_screen, 2, 0, 272, 0xf4f8ff);
-    debug_set_id(chat_label, "chat_screen");
-    lv_label_set_long_mode(chat_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_line_space(chat_label, 2, 0);
+    message_viewport = ui_box(chat_page, 8, 46, 304, 146, theme()->background, 0);
+    chat_scroll = message_viewport;
+    debug_set_id(message_viewport, "message_viewport");
+    lv_obj_add_flag(message_viewport, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(message_viewport, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(message_viewport, LV_SCROLLBAR_MODE_AUTO);
+    message_list = ui_box(message_viewport, 0, 0, 304, 1, theme()->background, 0);
+    debug_set_id(message_list, "message_list");
+    render_messages();
 
-    chat_input = lv_textarea_create(chat_content);
-    debug_register(chat_input, "textbox", "chat_input", NULL);
-    lv_obj_set_pos(chat_input, 10, 181); lv_obj_set_size(chat_input, 252, 38);
+    composer_host = ui_box(chat_page, 0, 200, OPERIT_SCREEN_WIDTH, OPERIT_COMPOSER_HEIGHT,
+                           theme()->background, 0);
+    debug_set_id(composer_host, "composer_host");
+    composer_row = ui_box(composer_host, 8, 0, 304, OPERIT_COMPOSER_HEIGHT,
+                          theme()->background, 0);
+    debug_set_id(composer_row, "composer_row");
+    chat_input = lv_textarea_create(composer_row);
+    debug_register(chat_input, "textbox", "message_input", NULL);
+    lv_obj_set_pos(chat_input, 0, 0); lv_obj_set_size(chat_input, 220, OPERIT_COMPOSER_HEIGHT);
     lv_textarea_set_one_line(chat_input, true);
     lv_textarea_set_max_length(chat_input, 120);
     lv_textarea_set_placeholder_text(chat_input, "输入消息…");
     lv_textarea_set_text(chat_input, chat_draft);
     lv_obj_set_style_bg_color(chat_input, lv_color_hex(theme()->surface), 0);
-    lv_obj_set_style_text_color(chat_input, lv_color_hex(0xf4f8ff), 0);
+    lv_obj_set_style_text_color(chat_input, lv_color_hex(theme()->text), 0);
     lv_obj_set_style_text_font(chat_input, &operit_font_zh_14, 0);
+    lv_obj_set_style_radius(chat_input, 9, 0);
+    lv_obj_set_style_border_width(chat_input, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(chat_input, lv_color_hex(theme()->border), LV_PART_MAIN);
+    lv_obj_set_style_border_color(chat_input, lv_color_hex(theme()->accent), LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(chat_input, 0, LV_STATE_FOCUSED);
+    lv_obj_set_style_pad_hor(chat_input, 10, 0);
+    lv_obj_set_style_pad_top(chat_input, 7, 0);
+    lv_obj_set_style_pad_bottom(chat_input, 6, 0);
+    lv_obj_set_style_text_color(chat_input, lv_color_hex(theme()->text_secondary), LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_border_color(chat_input, lv_color_hex(theme()->accent), LV_PART_CURSOR);
     lv_obj_add_event_cb(chat_input, chat_input_event, LV_EVENT_ALL, NULL);
-    chat_send_button = button(chat_content, "发送", "edge_send", 270, 181, 40, 38);
+    chat_send_button = ui_action(composer_row, "↑", "edge_send", 226, 0, 34,
+                                 OPERIT_COMPOSER_HEIGHT, theme()->accent, theme()->on_accent);
+    debug_set_id(chat_send_button, "send_button");
+    chat_voice_button = ui_action(composer_row, "", "voice_placeholder", 266, 0, 38,
+                                  OPERIT_COMPOSER_HEIGHT, theme()->surface, theme()->disabled);
+    debug_set_id(chat_voice_button, "voice_button");
+    lv_obj_add_state(chat_voice_button, LV_STATE_DISABLED);
+    lv_obj_clear_flag(chat_voice_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *mic = box(chat_voice_button, 16, 7, 6, 12, theme()->disabled, 3);
+    lv_obj_clear_flag(mic, LV_OBJ_FLAG_CLICKABLE);
+    mic = box(chat_voice_button, 12, 13, 14, 10, theme()->surface, 6);
+    lv_obj_set_style_bg_opa(mic, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mic, 1, 0);
+    lv_obj_set_style_border_color(mic, lv_color_hex(theme()->disabled), 0);
+    lv_obj_clear_flag(mic, LV_OBJ_FLAG_CLICKABLE);
+    mic = box(chat_voice_button, 18, 23, 2, 4, theme()->disabled, 0);
+    lv_obj_clear_flag(mic, LV_OBJ_FLAG_CLICKABLE);
 
-    chat_keyboard = lv_keyboard_create(chat_content);
-    debug_register(chat_keyboard, "keyboard", "chat_keyboard", NULL);
+    keyboard_window = ui_box(overlay_host, 8, OPERIT_SCREEN_HEIGHT - OPERIT_KEYBOARD_HEIGHT - 2,
+                             OPERIT_KEYBOARD_WIDTH, OPERIT_KEYBOARD_HEIGHT, theme()->surface, 10);
+    debug_set_id(keyboard_window, "keyboard_window");
+    keyboard_header = ui_box(keyboard_window, 0, 0, OPERIT_KEYBOARD_WIDTH, 24,
+                             theme()->surface, 10);
+    debug_set_id(keyboard_header, "keyboard_header");
+    label(keyboard_header, "拖动", 12, 3, 40, theme()->text_secondary);
+    keyboard_drag_handle = ui_box(keyboard_header, 133, 7, 38, 4, theme()->text_secondary, 2);
+    debug_set_id(keyboard_drag_handle, "keyboard_drag_handle");
+    lv_obj_clear_flag(keyboard_drag_handle, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(keyboard_header, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(keyboard_header, keyboard_handle_event, LV_EVENT_ALL, NULL);
+    keyboard_close = ui_action(keyboard_header, LV_SYMBOL_CLOSE, "chat_keyboard_close",
+                               278, 0, 26, 24, theme()->surface, theme()->text_secondary);
+    debug_set_id(keyboard_close, "keyboard_close");
+    chat_keyboard = lv_keyboard_create(keyboard_window);
+    lv_obj_remove_event_cb(chat_keyboard, lv_keyboard_def_event_cb);
+    lv_keyboard_set_map(chat_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, keyboard_lower, keyboard_controls);
+    lv_keyboard_set_map(chat_keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, keyboard_upper, keyboard_controls);
+    lv_keyboard_set_map(chat_keyboard, LV_KEYBOARD_MODE_SPECIAL, keyboard_numbers, keyboard_controls);
+    lv_obj_add_event_cb(chat_keyboard, keyboard_value_changed, LV_EVENT_VALUE_CHANGED, NULL);
+    debug_register(chat_keyboard, "keyboard", "key_area", NULL);
     lv_keyboard_set_textarea(chat_keyboard, chat_input);
-    lv_obj_set_style_text_font(chat_keyboard, &operit_font_zh_14, 0);
     lv_keyboard_set_popovers(chat_keyboard, false);
-    lv_obj_set_pos(chat_keyboard, 6, 88); lv_obj_set_size(chat_keyboard, 308, 147);
-    lv_obj_add_flag(chat_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_align(chat_keyboard, LV_ALIGN_TOP_LEFT);
+    lv_obj_set_pos(chat_keyboard, 0, 24);
+    lv_obj_set_size(chat_keyboard, OPERIT_KEYBOARD_WIDTH, OPERIT_KEYBOARD_HEIGHT - 24);
+    lv_obj_set_style_text_font(chat_keyboard, &operit_font_zh_14, 0);
+    lv_obj_set_style_bg_color(chat_keyboard, lv_color_hex(theme()->surface), 0);
+    lv_obj_set_style_pad_all(chat_keyboard, 4, 0);
+    lv_obj_set_style_pad_row(chat_keyboard, 3, 0);
+    lv_obj_set_style_pad_column(chat_keyboard, 3, 0);
+    lv_obj_set_style_bg_color(chat_keyboard, lv_color_hex(theme()->selection), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(chat_keyboard, lv_color_hex(theme()->text), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(chat_keyboard, lv_color_hex(theme()->accent), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(chat_keyboard, lv_color_hex(theme()->on_accent), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_width(chat_keyboard, 0, LV_PART_ITEMS);
+    lv_obj_set_style_shadow_width(chat_keyboard, 0, LV_PART_ITEMS);
+    lv_obj_set_style_radius(chat_keyboard, 4, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(chat_keyboard, lv_color_hex(theme()->accent), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(chat_keyboard, lv_color_hex(theme()->on_accent), LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_add_event_cb(chat_keyboard, chat_keyboard_event, LV_EVENT_ALL, NULL);
-    chat_keyboard_close = button(chat_content, "X", "chat_keyboard_close", 270, 48, 40, 32);
-    lv_obj_add_flag(chat_keyboard_close, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN);
+    draw_drawer();
+    layout_chat_keyboard();
+}
 
-    draw_sidebar();
+static void draw_pairing(void) {
+    lv_obj_t *pairing_page = ui_box(page_host, 0, 0, OPERIT_SCREEN_WIDTH,
+                                    OPERIT_SCREEN_HEIGHT, theme()->background, 0);
+    debug_register(pairing_page, "screen", "pairing_page", NULL);
+    lv_obj_t *header = ui_box(pairing_page, 0, 0, 320, 40, theme()->header, 0);
+    debug_set_id(header, "pairing_header");
+    label(header, "连接 Operit", 12, 10, 180, theme()->text);
+    label(header, LV_SYMBOL_WIFI, 272, 10, 24, wifi_ready ? theme()->accent : theme()->text_secondary);
+    lv_obj_t *content = ui_box(pairing_page, 0, 40, 320, 156, theme()->background, 0);
+    debug_set_id(content, "pairing_content");
+    label(content, "在 Operit 中添加此设备", 12, 14, 296, theme()->text);
+    label(content, "设备 → 添加边缘设备", 12, 36, 296, theme()->text_secondary);
+    lv_obj_t *code_card = ui_box(content, 12, 61, 296, 67, theme()->surface, 10);
+    debug_set_id(code_card, "pairing_code_card");
+    lv_obj_t *caption = label(code_card, "配对码", 0, 6, 296, theme()->text_secondary);
+    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+    pairing_label = label(code_card, pairing_code[0] ? pairing_code : "等待配对码",
+                          0, 28, 296, theme()->accent);
+    debug_set_id(pairing_label, "pairing_code");
+    if (pairing_code[0]) lv_obj_set_style_text_font(pairing_label, &operit_font_digits_28, 0);
+    lv_obj_set_style_text_align(pairing_label, LV_TEXT_ALIGN_CENTER, 0);
+    pairing_hint = label(content, pairing_code[0] ? "请在 Operit 中确认配对" : "等待 Core 发起配对…",
+                         30, 136, 260, theme()->text_secondary);
+    debug_set_id(pairing_hint, "pairing_status");
+    lv_obj_t *status_dot = ui_box(content, 12, 141, 6, 6,
+                                  pairing_code[0] ? theme()->accent : theme()->text_secondary, 3);
+    debug_set_id(status_dot, "pairing_status_dot");
+    ui_action(pairing_page, "连接帮助", "dialog_help", 12, 204, 296, 28,
+              theme()->surface, theme()->text_secondary);
 }
 
 static void page(const char *name) {
@@ -585,66 +836,27 @@ static void page(const char *name) {
     if (strcmp(name, "Chat")) sidebar_open = false;
     if (chat_input) remember_chat_draft();
     clear();
+    ui_hosts();
     if (!strcmp(name, "Chat")) {
         draw_chat();
-    } else if (!strcmp(name, "Settings")) {
-        button(root, LV_SYMBOL_LEFT, "edge_chat", 10, 8, 32, 30);
-        label(root, "设置", 52, 14, 190, 0xf4f8ff);
-        label(root, "连接状态", 18, 55, 280, theme()->muted);
-        wifi_label = label(root, wifi_ready ? "Wi-Fi 已连接" : "需要设置 Wi-Fi", 18, 76, 280, 0xf4f8ff);
-        space_label = label(root, edge_ready ? space_state : "等待 Core 连接", 18, 98, 280, theme()->muted);
-        label(root, "侧栏宽度", 18, 132, 280, theme()->muted);
-        char width_text[48]; snprintf(width_text, sizeof(width_text), "侧栏宽度：%s", sidebar_width_name());
-        button(root, width_text, "sidebar_width_cycle", 18, 153, 284, 38);
-        label(root, "从左侧边缘向右滑动打开", 18, 204, 284, theme()->muted);
     } else if (!strcmp(name, "Pairing")) {
-        button(root, LV_SYMBOL_LEFT, "edge_chat", 10, 8, 32, 30);
-        label(root, "配对设备", 52, 14, 190, 0xf4f8ff);
-        wifi_label = label(root, wifi_ready ? "Wi-Fi 已连接" : "Wi-Fi 不可用", 18, 55, 284, theme()->muted);
-        debug_set_id(wifi_label, "wifi_status");
-        space_label = label(root, edge_ready ? "已连接 Operit" : "等待 Core 连接", 18, 82, 284, edge_ready ? theme()->accent : theme()->muted);
-        debug_set_id(space_label, "space_state");
-        pairing_label = label(root, pairing_code[0] ? pairing_code : "------", 18, 112, 284, theme()->accent);
-        debug_set_id(pairing_label, "pairing_code");
-        pairing_hint = label(root, pairing_code[0] ? "请在 Operit 中输入此配对码" : "打开 Operit > 设备 > 添加边缘设备", 18, 142, 284, theme()->muted);
-        debug_set_id(pairing_hint, "pairing_hint");
-        button(root, "刷新", "edge_pair", 18, 187, 92, 36);
-        button(root, "解除配对", "edge_unpair", 116, 187, 92, 36);
-        button(root, "返回", "edge_chat", 212, 187, 90, 36);
+        draw_pairing();
+    } else if (!strcmp(name, "Settings")) {
+        label(page_host, "设置", 18, 14, 200, theme()->text);
+        label(page_host, "连接状态", 18, 55, 280, theme()->text_secondary);
+        wifi_label = label(page_host, wifi_ready ? "Wi-Fi 已连接" : "Wi-Fi 不可用", 18, 76, 280, theme()->text);
+        space_label = label(page_host, edge_ready ? space_state : "等待 Core 连接", 18, 98, 280, theme()->text_secondary);
+        button(page_host, "切换主题", "Palette", 18, 144, 284, 38);
+        button(page_host, "返回聊天", "edge_chat", 18, 204, 284, 28);
     } else if (!strcmp(name, "Tasks")) {
-        button(root, LV_SYMBOL_LEFT, "edge_chat", 10, 8, 32, 30);
-        label(root, "任务", 52, 14, 190, 0xf4f8ff);
-        label(root, "当前任务", 18, 58, 284, theme()->muted);
-        chat_task_label = label(root, chat_task, 18, 82, 284, theme()->accent);
-        label(root, "任务状态也会显示在聊天页面。", 18, 119, 284, theme()->muted);
-        button(root, "返回聊天", "edge_chat", 18, 181, 284, 36);
+        label(page_host, "任务", 18, 14, 200, theme()->text);
+        label(page_host, "当前任务", 18, 58, 284, theme()->text_secondary);
+        chat_task_label = label(page_host, chat_task, 18, 82, 284, theme()->accent);
+        button(page_host, "返回聊天", "edge_chat", 18, 181, 284, 36);
     } else {
-        button(root, LV_SYMBOL_LEFT, "edge_chat", 12, 10, 32, 32);
-        label(root, name, 56, 17, 246, theme()->accent);
-        if (!strcmp(name, "Theme")) {
-            label(root, "颜色主题", 20, 58, 250, theme()->muted);
-            button(root, theme()->name, "Palette", 20, 84, 280, 44);
-            label(root, "图标形状", 20, 144, 250, theme()->muted);
-            button(root, round_icons ? "圆形" : "圆角方形", "Shape", 20, 170, 280, 44);
-        } else if (!strcmp(name, "Face")) {
-            lv_obj_t *eyes = label(root, "o   o", 20, 65, 280, theme()->accent);
-            lv_obj_set_style_text_font(eyes, &lv_font_montserrat_48, 0);
-            lv_obj_set_style_text_align(eyes, LV_TEXT_ALIGN_CENTER, 0);
-            face_label = label(root, expression, 20, 136, 280, theme()->muted);
-            lv_obj_set_style_text_align(face_label, LV_TEXT_ALIGN_CENTER, 0);
-            button(root, "在线", "Online", 90, 180, 140, 40);
-        } else if (!strcmp(name, "Network")) {
-            wifi_label = label(root, wifi_ready ? "Wi-Fi 已连接" : "需要设置 Wi-Fi", 20, 66, 280, 0xf4f8ff);
-            space_label = label(root, edge_ready ? space_state : "等待 Core 连接", 20, 98, 280, theme()->muted);
-            pairing_label = label(root, pairing_code[0] ? pairing_code : "等待配对码", 20, 126, 280, theme()->accent);
-            button(root, "搜索 Space", "edge_search", 20, 180, 88, 40);
-            button(root, "配对", "edge_pair", 116, 180, 88, 40);
-            button(root, "聊天", "edge_chat", 212, 180, 88, 40);
-        } else if (!strcmp(name, "Terminal")) {
-            label(root, "> Operit Edge 已就绪", 20, 70, 280, theme()->accent);
-            label(root, "本地屏幕 · Wi-Fi", 20, 106, 280, theme()->muted);
-            button(root, "运行节点", "Run", 20, 180, 280, 40);
-        } else { label(root, "暂无已安装插件", 20, 92, 280, theme()->muted); }
+        label(page_host, name, 18, 14, 250, theme()->accent);
+        label(page_host, "暂无已安装内容", 20, 92, 280, theme()->text_secondary);
+        button(page_host, "返回聊天", "edge_chat", 18, 181, 284, 36);
     }
 }
 
@@ -676,7 +888,7 @@ void operit_lvgl_pump(uint32_t elapsed_ms) {
     (void)elapsed_ms; int64_t now=esp_timer_get_time();
     uint32_t ms=(uint32_t)((now-last_tick)/1000); last_tick+=(int64_t)ms*1000;
     lv_tick_inc(ms); lv_timer_handler();
-    if(*pending_route) { char action[32];memcpy(action,pending_route,32);pending_route[0]=0;lv_indev_reset(pointer_input,NULL);lv_indev_wait_release(pointer_input);execute_route(action); }
+    if(*pending_route) { char action[sizeof(pending_route)];memcpy(action,pending_route,sizeof(action));pending_route[0]=0;lv_indev_reset(pointer_input,NULL);lv_indev_wait_release(pointer_input);execute_route(action); }
 }
 void operit_lvgl_set_touch(uint16_t x,uint16_t y,bool pressed) {
     if (pressed && !last_touch_pressed) {
@@ -698,17 +910,28 @@ void operit_lvgl_set_connection(bool wifi,bool edge) {
     wifi_ready=wifi; edge_ready=edge;
     if(connection_label) {
         lv_label_set_text(connection_label, edge ? "已连接" : "离线");
-        lv_obj_set_style_text_color(connection_label, lv_color_hex(edge ? theme()->accent : theme()->muted), 0);
+        lv_obj_set_style_text_color(connection_label, lv_color_hex(edge ? theme()->accent : theme()->text_secondary), 0);
     }
     if(wifi_label) lv_label_set_text(wifi_label, wifi ? "Wi-Fi 已连接" : "Wi-Fi 不可用");
     if(space_label) lv_label_set_text(space_label, edge ? space_state : "等待 Core 连接");
+}
+void operit_lvgl_set_paired(bool value) {
+    if (paired == value && !unpair_requested) return;
+    paired = value;
+    unpair_requested = false;
+    if (!paired) clear_chat_cache();
+    if (paired && !strcmp(current_page, "Pairing")) page("Chat");
+    else if (!paired && strcmp(current_page, "Pairing")) page("Pairing");
 }
 void operit_lvgl_set_pairing_code(const char *code) {
     const char *value = code ? code : "";
     if (!strcmp(pairing_code, value)) return;
     copy_utf8(pairing_code, sizeof(pairing_code), value);
-    if (pairing_label) lv_label_set_text(pairing_label, pairing_code[0] ? pairing_code : "等待配对码");
-    if (pairing_hint) lv_label_set_text(pairing_hint, pairing_code[0] ? "请在 Operit 中输入此配对码" : "打开 Operit > 设备 > 添加边缘设备");
+    if (pairing_label) {
+        lv_label_set_text(pairing_label, pairing_code[0] ? pairing_code : "等待配对码");
+        lv_obj_set_style_text_font(pairing_label, pairing_code[0] ? &operit_font_digits_28 : &operit_font_zh_14, 0);
+    }
+    if (pairing_hint) lv_label_set_text(pairing_hint, pairing_code[0] ? "请在 Operit 中确认配对" : "等待 Core 发起配对…");
 }
 void operit_lvgl_set_space_state(const char *state) {
     const char *value = state ? state : "等待连接 Operit";
@@ -721,6 +944,7 @@ void operit_lvgl_set_chat_preview(const char *preview) {
     if (!strcmp(chat_preview, value)) return;
     copy_utf8(chat_preview, sizeof(chat_preview), value);
     if (sidebar_preview_label) lv_label_set_text(sidebar_preview_label, chat_preview);
+    if (chat_title_label) lv_label_set_text(chat_title_label, chat_preview[0] ? chat_preview : "Operit");
 }
 void operit_lvgl_set_expression(const char *value) {
     if(!value || !strcmp(expression,value)) return;
@@ -733,11 +957,8 @@ void operit_lvgl_set_chat_screen(const char *text) {
     if (!text || !strcmp(chat_screen, text)) return;
     bool at_bottom = !chat_scroll || lv_obj_get_scroll_bottom(chat_scroll) <= 4;
     copy_utf8(chat_screen, sizeof(chat_screen), text);
-    if (chat_label) {
-        lv_label_set_text(chat_label, chat_screen);
-        lv_obj_update_layout(chat_scroll);
-        if (at_bottom) lv_obj_scroll_to_y(chat_scroll, LV_COORD_MAX, LV_ANIM_OFF);
-    }
+    (void)at_bottom;
+    render_messages();
 }
 void operit_lvgl_set_chat_task(const char *text) {
     if (!text || !strcmp(chat_task, text)) return;
@@ -755,13 +976,14 @@ void operit_lvgl_chat_send_result(bool ok, const char *error) {
     chat_send_pending = false;
     remember_chat_draft();
     if (ok && !strcmp(chat_draft, submitted_draft)) operit_lvgl_set_chat_draft("");
-    if (!ok) operit_lvgl_set_chat_task(error && *error ? error : "发送失败，请重试");
+    if (chat_send_button) lv_obj_clear_state(chat_send_button, LV_STATE_DISABLED);
+    if (!ok) show_dialog(error && *error ? error : "发送失败，请重试", false);
 }
 
 void operit_lvgl_set_theme(unsigned index, bool circular) {
     theme_index = index % (sizeof(themes) / sizeof(themes[0]));
     round_icons = circular;
-    home();
+    page(current_page);
 }
 void operit_lvgl_navigate_apps(void) {
     sidebar_open = true;
@@ -792,15 +1014,17 @@ bool operit_lvgl_debug_tap(const char *id) {
     if (!id || !*id) return false;
     for (unsigned i = 0; i < debug_count; ++i) {
         operit_debug_node_t *node = &debug_nodes[i];
-        if (strcmp(node->id, id) || !debug_visible(node) ||
+        if (strcmp(node->id, id) || !node->object || !debug_visible(node->object) ||
             !lv_obj_has_flag(node->object, LV_OBJ_FLAG_CLICKABLE)) continue;
         lv_area_t area;
         lv_obj_get_coords(node->object, &area);
         uint16_t x = (uint16_t)((area.x1 + area.x2) / 2);
         uint16_t y = (uint16_t)((area.y1 + area.y2) / 2);
         operit_lvgl_set_touch(x, y, true);
+        lv_indev_read(pointer_input);
         operit_lvgl_pump(0);
         operit_lvgl_set_touch(x, y, false);
+        lv_indev_read(pointer_input);
         operit_lvgl_pump(0);
         /* A route is intentionally consumed by the next pump so callbacks
          * and page transitions follow the exact same path as a real tap. */
@@ -932,6 +1156,7 @@ void operit_lvgl_layout_style(int index,const char *binding,int font_size) {
     if(!strcmp(binding,"clock")){clock_label=obj;tick_clock(NULL);}
     else if(!strcmp(binding,"connection")){connection_label=obj;lv_label_set_text(obj,wifi_ready?"WIFI CONNECTED":"WIFI STARTING");}
     else if(!strcmp(binding,"expression")){face_label=obj;lv_label_set_text(obj,expression);}
+    else if(!strcmp(binding,"theme")){lv_label_set_text(obj,theme()->name);}
     else if(!strcmp(binding,"pairing")){pairing_label=obj;lv_label_set_text(obj,pairing_code[0]?pairing_code:"等待配对码");}
     else if(!strcmp(binding,"space")){space_label=obj;lv_label_set_text(obj,space_state);}
     else if(!strcmp(binding,"chat")){chat_label=obj;lv_label_set_text(obj,chat_preview);}
@@ -968,38 +1193,47 @@ static void navigate_document(const char *id) {
 }
 static void execute_route(const char *action) {
     if(!strncmp(action,"go:",3)) navigate_document(action+3);
-    else if(!strcmp(action,"home")) page("Chat");
+    else if(!strcmp(action,"home")) builtin_home();
     else if(!strcmp(action,"apps")) { sidebar_open = true; page("Chat"); }
     else if(!strncmp(action,"page:",5)) navigate_document(action+5);
     else if(!strcmp(action,"theme_next") || !strcmp(action,"shape_toggle")) {
         if(!strcmp(action,"theme_next")) theme_index=(theme_index+1)%3; else round_icons=!round_icons;
-        page("Chat");
+        page(current_page);
     }
-    else if(!strncmp(action,"builtin:",8)) page(action+8);
+    else if(!strncmp(action,"builtin:",8)) {
+        page(action+8);
+        if(!strcmp(action+8,"Pairing") && !edge_ready && action_cb) action_cb("edge_pair",context);
+    }
     else if(!strcmp(action,"sidebar_open")) set_sidebar_open(true, true);
     else if(!strcmp(action,"sidebar_close")) set_sidebar_open(false, true);
     else if(!strcmp(action,"sidebar_toggle")) set_sidebar_open(!sidebar_open, true);
-    else if(!strcmp(action,"sidebar_width_cycle")) {
-        cycle_sidebar_width();
-        if(!strcmp(current_page,"Settings")) page("Settings");
-        else { bool was_open = sidebar_open; page("Chat"); if (was_open) set_sidebar_open(true, false); }
-    }
     else if(!strcmp(action,"chat_keyboard_close")) hide_chat_keyboard();
-    else if(!strcmp(action,"edge_new")) {
-        chat_draft[0]=0;
-        if(chat_input) lv_textarea_set_text(chat_input, "");
-        sidebar_open=false;
-        page("Chat");
-        if(action_cb) action_cb("edge_new",context);
+    else if(!strcmp(action,"edge_new") || !strncmp(action,"edge_select:",12)) {
+        if (!edge_ready) { show_dialog("设备已离线，请等待重新连接", false); return; }
+        if(action_cb) action_cb(action,context);
     }
     else if(!strcmp(action,"edge_chat")) { sidebar_open=false; page("Chat"); if(action_cb) action_cb(action,context); }
-    else if(!strcmp(action,"edge_search") || !strcmp(action,"edge_pair")) { sidebar_open=false; page("Pairing"); if(action_cb) action_cb(action,context); }
+    else if(!strcmp(action,"edge_search") || !strcmp(action,"edge_pair")) {
+        sidebar_open=false;
+        page("Pairing");
+        if(action_cb) action_cb(action,context);
+    }
+    else if(!strcmp(action,"edge_unpair")) show_dialog("取消配对后，需要重新连接此设备。确定继续？", true);
+    else if(!strcmp(action,"dialog_close")) close_dialog();
+    else if(!strcmp(action,"dialog_confirm")) {
+        close_dialog();
+        unpair_requested = true;
+        if(action_cb) action_cb("edge_unpair",context);
+    }
+    else if(!strcmp(action,"dialog_help")) show_dialog("打开 Operit 的设备设置，添加边缘设备。确保设备在同一网络，然后选择此设备并输入屏幕上的配对码。", false);
     else if(!strcmp(action,"edge_send")) {
         if (chat_send_pending) return;
         remember_chat_draft();
-        if (!chat_draft[0]) { operit_lvgl_set_chat_task("消息不能为空"); return; }
+        if (!chat_draft[0]) { show_dialog("请输入消息", false); return; }
+        if (!edge_ready) { show_dialog("设备已离线，草稿已保留", false); return; }
         copy_utf8(submitted_draft, sizeof(submitted_draft), chat_draft);
         chat_send_pending = true;
+        if (chat_send_button) lv_obj_add_state(chat_send_button, LV_STATE_DISABLED);
         hide_chat_keyboard();
         operit_lvgl_set_chat_task("发送中");
         if(action_cb) action_cb(action,context);
@@ -1007,4 +1241,4 @@ static void execute_route(const char *action) {
     }
     else if((!strcmp(action,"face_online") || !strcmp(action,"run_node")) && action_cb) action_cb(action,context);
 }
-static void document_home(void) { page("Chat"); }
+static void document_home(void) { builtin_home(); }

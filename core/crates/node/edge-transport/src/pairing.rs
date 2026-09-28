@@ -220,6 +220,16 @@ impl EdgePairingAuthority {
         })
     }
 
+    /// Reports whether this Edge has a completed pairing, including restored sessions.
+    pub fn hasPairings(&self) -> bool {
+        self.sessions.lock().map(|sessions| !sessions.is_empty()).unwrap_or(false)
+    }
+
+    /// Reports whether one active carrier is still authorized after a local reset.
+    pub fn hasSession(&self, sessionId: &str) -> bool {
+        self.sessions.lock().map(|sessions| sessions.contains_key(sessionId)).unwrap_or(false)
+    }
+
     /// Completes the exact two-step Link pairing flow over a raw carrier.
     pub async fn pair(&self, channel: Arc<dyn LinkChannel>) -> Result<EdgeSession, String> {
         let start = match channel
@@ -369,15 +379,17 @@ impl EdgePairingAuthority {
     ///
     /// This does not erase the device token, Wi-Fi settings, or identity key.
     pub fn clearPairings(&self) -> Result<(), String> {
-        self.pending
-            .lock()
-            .map_err(|error| error.to_string())?
-            .clear();
-        self.sessions
-            .lock()
-            .map_err(|error| error.to_string())?
-            .clear();
-        self.persistSessions()
+        let mut pending = self.pending.lock().map_err(|error| error.to_string())?;
+        let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+        if let Some(store) = &self.store {
+            store.save(&EdgePairingPersistentState {
+                keySecret: self.keySecret.to_bytes().to_vec(), sessions: Vec::new(),
+            })?;
+        }
+        pending.clear();
+        sessions.clear();
+        (self.onPairingCode)(String::new());
+        Ok(())
     }
 
     /// Validates the first authenticated frame of a reconnecting Core and

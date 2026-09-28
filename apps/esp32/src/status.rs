@@ -1,10 +1,11 @@
 #![allow(non_snake_case)]
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use operit_board_esp32::ESP32_2432S028_BOARD_ID;
 
-/// Snapshot published by the firmware HTTP home page.
+/// Snapshot published by the firmware status endpoint.
 #[derive(Clone, Debug)]
 pub struct FirmwareStatusSnapshot {
     pub boardId: String,
@@ -14,9 +15,10 @@ pub struct FirmwareStatusSnapshot {
     pub pairingCode: String,
 }
 
-/// Shared firmware status consumed by the local HTTP home page.
+/// Shared firmware status consumed by the setup and status endpoints.
 pub struct FirmwareStatus {
     boardId: String,
+    revision: AtomicU32,
     expression: Mutex<String>,
     ipv4: Mutex<String>,
     wifiSsid: Mutex<String>,
@@ -28,6 +30,7 @@ impl FirmwareStatus {
     pub fn new(expression: impl Into<String>) -> Self {
         Self {
             boardId: ESP32_2432S028_BOARD_ID.to_string(),
+            revision: AtomicU32::new(0),
             expression: Mutex::new(expression.into()),
             ipv4: Mutex::new(String::new()),
             wifiSsid: Mutex::new(String::new()),
@@ -39,6 +42,7 @@ impl FirmwareStatus {
     pub fn setExpression(&self, expression: impl Into<String>) {
         if let Ok(mut current) = self.expression.lock() {
             *current = expression.into();
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -46,6 +50,7 @@ impl FirmwareStatus {
     pub fn setIpv4(&self, ipv4: impl Into<String>) {
         if let Ok(mut current) = self.ipv4.lock() {
             *current = ipv4.into();
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -53,6 +58,7 @@ impl FirmwareStatus {
     pub fn setWifiSsid(&self, ssid: impl Into<String>) {
         if let Ok(mut current) = self.wifiSsid.lock() {
             *current = ssid.into();
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -60,7 +66,13 @@ impl FirmwareStatus {
     pub fn setPairingCode(&self, code: impl Into<String>) {
         if let Ok(mut current) = self.pairingCode.lock() {
             *current = code.into();
+            self.revision.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Returns a monotonic version for consumers that only need to repaint on change.
+    pub fn revision(&self) -> u32 {
+        self.revision.load(Ordering::Relaxed)
     }
 
     /// Returns a copy of the values shown on the firmware home page.
@@ -91,41 +103,6 @@ impl FirmwareStatus {
     }
 }
 
-/// Renders the firmware home page HTML for one status snapshot.
-pub fn renderHomePage(snapshot: &FirmwareStatusSnapshot) -> String {
-    let ip = if snapshot.ipv4.is_empty() {
-        "unavailable"
-    } else {
-        snapshot.ipv4.as_str()
-    };
-    let ssid = if snapshot.wifiSsid.is_empty() {
-        "unconfigured"
-    } else {
-        snapshot.wifiSsid.as_str()
-    };
-    format!(
-        "<!DOCTYPE html>\
-<html lang=\"zh-CN\">\
-<head><meta charset=\"utf-8\"><title>Operit2 ESP32</title></head>\
-<body>\
-<h1>Operit2 Edge</h1>\
-<p>Board: {board}</p>\
-<p>Expression: {expression}</p>\
-<p>Wi-Fi: {ssid}</p>\
-<p>IP: {ip}</p>\
-<p>Pairing code: {pairing}</p>\
-<p><a href=\"/screen\">打开屏幕实时预览</a></p>\
-<p>This node is an Edge capability device, not a full CoreNode.</p>\
-</body>\
-</html>",
-        board = htmlEscape(&snapshot.boardId),
-        expression = htmlEscape(&snapshot.expression),
-        ssid = htmlEscape(ssid),
-        ip = htmlEscape(ip),
-        pairing = htmlEscape(&snapshot.pairingCode),
-    )
-}
-
 /// Renders firmware status as JSON for machine clients.
 pub fn renderStatusJson(snapshot: &FirmwareStatusSnapshot) -> String {
     format!(
@@ -138,34 +115,7 @@ pub fn renderStatusJson(snapshot: &FirmwareStatusSnapshot) -> String {
     )
 }
 
-/// Escapes HTML text content.
-fn htmlEscape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 /// Escapes a JSON string value.
 fn jsonEscape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies the home page includes board identity and expression.
-    #[test]
-    fn homePageIncludesBoardState() {
-        let status = FirmwareStatus::new("booting");
-        status.setWifiSsid("test-net");
-        status.setIpv4("192.168.1.104");
-        let html = renderHomePage(&status.snapshot());
-        assert!(html.contains("ESP32-2432S028"));
-        assert!(html.contains("booting"));
-        assert!(html.contains("192.168.1.104"));
-        assert!(!html.contains("password"));
-    }
 }

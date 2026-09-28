@@ -4,6 +4,8 @@ exports.replaceManifestTemplates = replaceManifestTemplates;
 exports.dispatch = dispatch;
 exports.receive = receive;
 exports.trigger = trigger;
+exports.publicTransaction = publicTransaction;
+exports.publicRun = publicRun;
 const model_1 = require("./model");
 const engine_1 = require("./engine");
 const schedule_1 = require("./schedule");
@@ -134,7 +136,7 @@ async function runWorkflow(workflowId, triggerId, extras, observer, reserved = f
     const control = { cancelled: false };
     active.set(workflowId, control);
     try {
-        await (0, engine_1.execute)(workflow, triggerId, extras, {
+        return await (0, engine_1.execute)(workflow, triggerId, extras, {
             /** Invokes host tools with their existing permission and error contracts. */
             call: async (name, params) => output(await toolCall(name, params)),
             /** Executes explicitly authored JavaScript with async host tool access. */
@@ -289,4 +291,19 @@ async function trigger(kind, topic = "", extras = {}) {
             }
         }
     }
+}
+/** Applies a public API mutation to a copied graph set before committing it to plugin storage. */
+async function publicTransaction(mutate, workflowId) {
+    const db = await load();
+    if (workflowId !== undefined)
+        editable(workflowId);
+    const workflows = (0, model_1.copy)(db.workflows);
+    const result = mutate(workflows);
+    db.workflows = workflows;
+    await persist(db);
+    return result;
+}
+/** Returns the exact run requested by a public caller without selecting a history entry by time. */
+async function publicRun(workflowId) {
+    return runWorkflow(workflowId, null, {});
 }

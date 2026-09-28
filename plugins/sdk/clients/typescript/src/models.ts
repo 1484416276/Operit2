@@ -561,6 +561,8 @@ export interface ToolPkgContainerRuntime {
   readonly description: LocalizedText;
   readonly version: string;
   readonly apiVersion: string;
+  readonly publicApi: string | null;
+  readonly publicApis: Array<ToolPkgRegisteredFunctionHook>;
   readonly requires: Array<ToolPkgManifestRequirement>;
   readonly dependencyIssues: Array<ToolPkgDependencyIssue>;
   readonly manifestExtensions: Record<string, unknown>;
@@ -612,6 +614,8 @@ export function decodeToolPkgContainerRuntime(value: unknown): ToolPkgContainerR
     description: decodeLocalizedText(input['description']) as LocalizedText,
     version: input['version'] as string,
     apiVersion: input['apiVersion'] as string,
+    publicApi: input['publicApi'] == null ? null : input['publicApi'] as string | null,
+    publicApis: (input['publicApis'] as unknown[]).map((item) => decodeToolPkgRegisteredFunctionHook(item)) as Array<ToolPkgRegisteredFunctionHook>,
     requires: (input['requires'] as unknown[]).map((item) => decodeToolPkgManifestRequirement(item)) as Array<ToolPkgManifestRequirement>,
     dependencyIssues: (input['dependencyIssues'] as unknown[]).map((item) => decodeToolPkgDependencyIssue(item)) as Array<ToolPkgDependencyIssue>,
     manifestExtensions: input['manifestExtensions'] as Record<string, unknown>,
@@ -664,6 +668,8 @@ export function encodeToolPkgContainerRuntime(value: ToolPkgContainerRuntime): R
     'description': encodeLocalizedText(value.description),
     'version': value.version,
     'apiVersion': value.apiVersion,
+    'publicApi': value.publicApi === null ? null : value.publicApi,
+    'publicApis': value.publicApis.map(item => encodeToolPkgRegisteredFunctionHook(item)),
     'requires': value.requires.map(item => encodeToolPkgManifestRequirement(item)),
     'dependencyIssues': value.dependencyIssues.map(item => encodeToolPkgDependencyIssue(item)),
     'manifestExtensions': Object.fromEntries(Object.entries(value.manifestExtensions).map(([key, item]) => [key, item])),
@@ -981,6 +987,30 @@ export function encodeToolPkgNavigationEntryRuntime(value: ToolPkgNavigationEntr
     'action': value.action === null ? null : encodeToolPkgNavigationActionHookRuntime(value.action),
     'icon': value.icon === null ? null : value.icon,
     'order': value.order,
+  };
+}
+
+export interface ToolPkgRegisteredFunctionHook {
+  readonly id: string;
+  readonly function: string;
+  readonly functionSource: string | null;
+}
+
+export function decodeToolPkgRegisteredFunctionHook(value: unknown): ToolPkgRegisteredFunctionHook {
+  const input = value as Record<string, unknown>;
+  return {
+    id: input['id'] as string,
+    function: input['function'] as string,
+    functionSource: input['functionSource'] == null ? null : input['functionSource'] as string | null,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeToolPkgRegisteredFunctionHook(value: ToolPkgRegisteredFunctionHook): Record<string, unknown> {
+  return {
+    'id': value.id,
+    'function': value.function,
+    'functionSource': value.functionSource === null ? null : value.functionSource,
   };
 }
 

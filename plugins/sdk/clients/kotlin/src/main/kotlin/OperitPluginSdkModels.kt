@@ -545,6 +545,8 @@ data class ToolPkgContainerRuntime(
     val description: LocalizedText,
     val version: String,
     val apiVersion: String,
+    val publicApi: String?,
+    val publicApis: List<ToolPkgRegisteredFunctionHook>,
     val requires: List<ToolPkgManifestRequirement>,
     val dependencyIssues: List<ToolPkgDependencyIssue>,
     val manifestExtensions: Map<String, Any?>,
@@ -596,6 +598,8 @@ fun decodeToolPkgContainerRuntime(value: Any?): ToolPkgContainerRuntime {
         description = decodeLocalizedText(input["description"]) as LocalizedText,
         version = input["version"] as String as String,
         apiVersion = input["apiVersion"] as String as String,
+        publicApi = input["publicApi"]?.let { it as String } as String?,
+        publicApis = (input["publicApis"] as List<*>).map { item -> decodeToolPkgRegisteredFunctionHook(item) } as List<ToolPkgRegisteredFunctionHook>,
         requires = (input["requires"] as List<*>).map { item -> decodeToolPkgManifestRequirement(item) } as List<ToolPkgManifestRequirement>,
         dependencyIssues = (input["dependencyIssues"] as List<*>).map { item -> decodeToolPkgDependencyIssue(item) } as List<ToolPkgDependencyIssue>,
         manifestExtensions = (input["manifestExtensions"] as Map<*, *>).entries.associate { entry -> entry.key as String to entry.value } as Map<String, Any?>,
@@ -647,6 +651,8 @@ fun ToolPkgContainerRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "description" to this.description.toMessagePackValue(),
     "version" to this.version,
     "apiVersion" to this.apiVersion,
+    "publicApi" to this.publicApi?.let { it },
+    "publicApis" to this.publicApis.map { item -> item.toMessagePackValue() },
     "requires" to this.requires.map { item -> item.toMessagePackValue() },
     "dependencyIssues" to this.dependencyIssues.map { item -> item.toMessagePackValue() },
     "manifestExtensions" to this.manifestExtensions.entries.associate { entry -> entry.key to entry.value },
@@ -946,6 +952,28 @@ fun ToolPkgNavigationEntryRuntime.toMessagePackValue(): Map<String, Any?> = mapO
     "action" to this.action?.let { it.toMessagePackValue() },
     "icon" to this.icon?.let { it },
     "order" to this.order,
+)
+
+data class ToolPkgRegisteredFunctionHook(
+    val id: String,
+    val function: String,
+    val functionSource: String?
+)
+
+fun decodeToolPkgRegisteredFunctionHook(value: Any?): ToolPkgRegisteredFunctionHook {
+    val input = value as Map<*, *>
+    return ToolPkgRegisteredFunctionHook(
+        id = input["id"] as String as String,
+        function = input["function"] as String as String,
+        functionSource = input["functionSource"]?.let { it as String } as String?,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ToolPkgRegisteredFunctionHook.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "id" to this.id,
+    "function" to this.function,
+    "functionSource" to this.functionSource?.let { it },
 )
 
 data class ToolPkgRegisteredManifestExtension(

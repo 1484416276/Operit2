@@ -3,12 +3,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.EVENT_TOPICS = exports.ROUTE = void 0;
+exports.EVENT_TOPICS = exports.ROUTE = exports.triggerWorkflow = exports.deleteWorkflow = exports.setEnabled = exports.patchWorkflow = exports.updateWorkflow = exports.get = exports.create = exports.getAll = void 0;
 exports.registerToolPkg = registerToolPkg;
 exports.onManifestExtension = onManifestExtension;
 exports.onClock = onClock;
 exports.onOpen = onOpen;
 exports.onEvent = onEvent;
+const public_api_1 = require("./public-api");
+var public_api_2 = require("./public-api");
+Object.defineProperty(exports, "getAll", { enumerable: true, get: function () { return public_api_2.getAll; } });
+Object.defineProperty(exports, "create", { enumerable: true, get: function () { return public_api_2.create; } });
+Object.defineProperty(exports, "get", { enumerable: true, get: function () { return public_api_2.get; } });
+Object.defineProperty(exports, "updateWorkflow", { enumerable: true, get: function () { return public_api_2.updateWorkflow; } });
+Object.defineProperty(exports, "patchWorkflow", { enumerable: true, get: function () { return public_api_2.patchWorkflow; } });
+Object.defineProperty(exports, "setEnabled", { enumerable: true, get: function () { return public_api_2.setEnabled; } });
+Object.defineProperty(exports, "deleteWorkflow", { enumerable: true, get: function () { return public_api_2.deleteWorkflow; } });
+Object.defineProperty(exports, "triggerWorkflow", { enumerable: true, get: function () { return public_api_2.triggerWorkflow; } });
 const web_1 = __importDefault(require("./ui/web"));
 const service_1 = require("./service");
 const validation_1 = require("./validation");
@@ -19,6 +29,14 @@ ToolPkg.ipc.on("workflow.service", service_1.receive);
 ToolPkg.ipc.on("workflow.web", (request, meta) => (0, service_1.receive)(request, meta));
 /** Registers the plugin UI, public service and host-owned trigger sources. */
 function registerToolPkg() {
+    ToolPkg.registerApi({ name: "getAll", function: public_api_1.getAll });
+    ToolPkg.registerApi({ name: "create", function: public_api_1.create });
+    ToolPkg.registerApi({ name: "get", function: public_api_1.get });
+    ToolPkg.registerApi({ name: "update", function: public_api_1.updateWorkflow });
+    ToolPkg.registerApi({ name: "patch", function: public_api_1.patchWorkflow });
+    ToolPkg.registerApi({ name: "setEnabled", function: public_api_1.setEnabled });
+    ToolPkg.registerApi({ name: "delete", function: public_api_1.deleteWorkflow });
+    ToolPkg.registerApi({ name: "trigger", function: public_api_1.triggerWorkflow });
     ToolPkg.registerUiRoute({ id: "workflow", route: exports.ROUTE, screen: web_1.default, runtime: "compose_dsl", keepAlive: true, title: { zh: "工作流", en: "Workflow" } });
     ToolPkg.registerNavigationEntry({ id: "workflow_sidebar", route: exports.ROUTE, surface: "main_sidebar_plugins", title: { zh: "工作流", en: "Workflow" }, icon: "AccountTree", order: 140 });
     ToolPkg.registerNavigationEntry({ id: "workflow_toolbox", route: exports.ROUTE, surface: "toolbox", title: { zh: "工作流", en: "Workflow" }, icon: "AccountTree", order: 140 });

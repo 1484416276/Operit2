@@ -302,6 +302,10 @@ pub struct SdkToolPkgContainerRuntime {
     pub version: String,
     #[serde(rename = "apiVersion")]
     pub apiVersion: String,
+    #[serde(rename = "publicApi")]
+    pub publicApi: Option<String>,
+    #[serde(rename = "publicApis")]
+    pub publicApis: Vec<SdkToolPkgRegisteredFunctionHook>,
     #[serde(rename = "requires")]
     pub requires: Vec<SdkToolPkgManifestRequirement>,
     #[serde(rename = "dependencyIssues")]
@@ -523,6 +527,17 @@ pub struct SdkToolPkgNavigationEntryRuntime {
     pub icon: Option<String>,
     #[serde(rename = "order")]
     pub order: i32,
+}
+
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgRegisteredFunctionHook {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "function")]
+    pub function: String,
+    #[serde(rename = "functionSource")]
+    pub functionSource: Option<String>,
 }
 
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredManifestExtension`.

@@ -4,6 +4,7 @@ pub mod codec;
 mod core_stream;
 pub mod protocol;
 pub mod route_runtime;
+mod value_codec;
 
 pub const LINK_VERSION: &str = env!("CARGO_PKG_VERSION");
 

@@ -722,6 +722,9 @@ impl CoreCallResponse {
     }
 }
 
+/// Marks a watch request that accepts generic incremental value updates.
+pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
+
 /// Identifies a request emitted by an annotation wrapper rather than a Dart proxy.
 pub const CORE_INTERNAL_TARGET: &str = "$core.internal";
 

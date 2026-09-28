@@ -665,6 +665,8 @@ class ToolPkgContainerRuntime {
     required this.description,
     required this.version,
     required this.apiVersion,
+    required this.publicApi,
+    required this.publicApis,
     required this.requires,
     required this.dependencyIssues,
     required this.manifestExtensions,
@@ -715,6 +717,8 @@ class ToolPkgContainerRuntime {
     description: LocalizedText.fromMessagePackValue(value['description'] as Map<String, Object?>),
     version: value['version'] as String,
     apiVersion: value['apiVersion'] as String,
+    publicApi: value['publicApi'] == null ? null : value['publicApi'] as String,
+    publicApis: (value['publicApis'] as List<Object?>).map((item) => ToolPkgRegisteredFunctionHook.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     requires: (value['requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     dependencyIssues: (value['dependencyIssues'] as List<Object?>).map((item) => ToolPkgDependencyIssue.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     manifestExtensions: (value['manifestExtensions'] as Map).map((key, item) => MapEntry(key as String, item)),
@@ -765,6 +769,8 @@ class ToolPkgContainerRuntime {
     'description': description.toMessagePackValue(),
     'version': version,
     'apiVersion': apiVersion,
+    'publicApi': publicApi == null ? null : publicApi!,
+    'publicApis': publicApis.map((item) => item.toMessagePackValue()).toList(growable: false),
     'requires': requires.map((item) => item.toMessagePackValue()).toList(growable: false),
     'dependencyIssues': dependencyIssues.map((item) => item.toMessagePackValue()).toList(growable: false),
     'manifestExtensions': manifestExtensions.map((key, item) => MapEntry(key, item)),
@@ -813,6 +819,8 @@ class ToolPkgContainerRuntime {
   final LocalizedText description;
   final String version;
   final String apiVersion;
+  final String? publicApi;
+  final List<ToolPkgRegisteredFunctionHook> publicApis;
   final List<ToolPkgManifestRequirement> requires;
   final List<ToolPkgDependencyIssue> dependencyIssues;
   final Map<String, Object?> manifestExtensions;
@@ -1177,6 +1185,33 @@ class ToolPkgNavigationEntryRuntime {
   final ToolPkgNavigationActionHookRuntime? action;
   final String? icon;
   final int order;
+}
+
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook`.
+class ToolPkgRegisteredFunctionHook {
+  const ToolPkgRegisteredFunctionHook({
+    required this.id,
+    required this.function,
+    required this.functionSource,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook` from a MessagePack value map.
+  factory ToolPkgRegisteredFunctionHook.fromMessagePackValue(Map<String, Object?> value) => ToolPkgRegisteredFunctionHook(
+    id: value['id'] as String,
+    function: value['function'] as String,
+    functionSource: value['functionSource'] == null ? null : value['functionSource'] as String,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'function': function,
+    'functionSource': functionSource == null ? null : functionSource!,
+  };
+
+  final String id;
+  final String function;
+  final String? functionSource;
 }
 
 /// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredManifestExtension`.

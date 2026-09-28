@@ -48,6 +48,22 @@ class CoreLinkEventValueDecoder {
     return decode(completeValueBytes(event));
   }
 
+  /// Decodes one complete event with the typed Link reader API.
+  ///
+  /// Kept for callers that predate the byte-oriented [decode] callback.
+  T decodeValue<T>(
+    CoreEvent event, {
+    required T Function(CoreLinkValueReader reader) decode,
+    CoreEmbeddedStreamFactory? embeddedStreamFactory,
+  }) {
+    return decodeCoreLink<T>(
+      completeValueBytes(event),
+      decode: decode,
+      target: event.target,
+      embeddedStreamFactory: embeddedStreamFactory,
+    );
+  }
+
   /// Returns complete MessagePack bytes for one ordered Core watch event.
   Uint8List completeValueBytes(CoreEvent event) {
     final currentValue = _readEventValue(event);

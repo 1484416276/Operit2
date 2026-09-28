@@ -2145,6 +2145,26 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.chatHistoryListItemsFlow()
     }
 
+    /// Lists conversation metadata at the executor of the requesting chat.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn routedChatListFlow(&self, chatId: String) -> StateFlow<Vec<ChatHistoryListItem>> {
+        let _ = chatId;
+        self.chatHistoryDelegate.chatHistoryListItemsFlow()
+    }
+
+    /// Creates a conversation without changing another device's UI selection.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
+    pub async fn createRoutedChat(
+        &mut self, chatId: String, characterCardName: Option<String>,
+        group: Option<String>, characterGroupId: Option<String>,
+    ) -> Result<String, String> {
+        let _ = chatId;
+        self.chatHistoryDelegate.chatHistoryManager
+            .createNewChat(None, group, characterCardName, characterGroupId)
+            .map(|chat| chat.id)
+            .map_err(|error| error.to_string())
+    }
+
     /// Returns messages from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]

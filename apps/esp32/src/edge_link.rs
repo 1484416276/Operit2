@@ -20,6 +20,7 @@ use crate::status::FirmwareStatus;
 pub struct Esp32EdgeLinkServer {
     _runtimeThread: Option<std::thread::JoinHandle<()>>,
     _mdns: Option<EspMdns>,
+    authority: Arc<EdgePairingAuthority>,
 }
 
 impl Esp32EdgeLinkServer {
@@ -117,6 +118,7 @@ impl Esp32EdgeLinkServer {
             }
         };
         crate::logRuntimeHealth("edge-after-mdns");
+        let workerAuthority = Arc::clone(&authority);
         let runtimeThread = std::thread::Builder::new()
             .name("operit-edge-link".to_string())
             // Link MessagePack decoding and X25519 exceed a 6 KiB stack on
@@ -137,7 +139,7 @@ impl Esp32EdgeLinkServer {
                         if !serialStarted {
                             serialStarted = true;
                             if let Some(channel) = serialChannel.clone() {
-                                let authority = Arc::clone(&authority);
+                                let authority = Arc::clone(&workerAuthority);
                                 tokio::spawn(async move {
                                     loop {
                                         match handleChannel(Arc::clone(&authority), channel.clone()).await {
@@ -158,7 +160,7 @@ impl Esp32EdgeLinkServer {
                                 log::info!("Edge Link connection from {peer}");
                                 match Esp32TcpLinkChannel::fromStream(stream) {
                                     Ok(channel) => {
-                                        let authority = Arc::clone(&authority);
+                                        let authority = Arc::clone(&workerAuthority);
                                         tokio::spawn(async move {
                                             if let Err(error) = handleChannel(authority, channel).await {
                                                 log::warn!("Edge Link session: {error}");
@@ -179,12 +181,17 @@ impl Esp32EdgeLinkServer {
         Ok(Some(Self {
             _runtimeThread: Some(runtimeThread),
             _mdns: mdns,
+            authority,
         }))
+    }
+
+    pub fn hasPairings(&self) -> bool {
+        self.authority.hasPairings()
     }
 
     /// Clears all persisted Edge pairings without changing Wi-Fi or the token.
     pub fn clearPairings(&self) -> Result<(), String> {
-        Err("Edge pairing reset requires restarting the device".to_string())
+        self.authority.clearPairings()
     }
 
     /// The listener is continuously driven by the dedicated runtime thread.

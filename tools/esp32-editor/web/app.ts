@@ -42,11 +42,14 @@ let lastFrame = 0;
 let pressed = false;
 let sourceHash = '';
 interface DeviceState {
-  running?: boolean; connected?: boolean; pairingCode?: string; spaceState?: string;
+  running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
   chatPreview?: string; chatScreen?: string; chatTask?: string;
+  chat?: {chatId?: string; messages?: {sender: string; text: string}[];
+    conversations?: {id: string; title: string; characterCardName?: string}[]; error?: string};
   chatSendResult?: {ok: boolean; error?: string} | null;
 }
 let deviceRunning = false;
+let latestDeviceState: DeviceState | null = null;
 const composer = document.createElement('form');
 composer.className = 'host-composer';
 composer.innerHTML = '<label>电脑键盘输入（支持中文输入法）<input name="message" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><output aria-live="polite"></output>';
@@ -63,6 +66,7 @@ composer.addEventListener('submit', event => {
 });
 window.addEventListener('operit-simulator-state', event => {
   const state = (event as CustomEvent<DeviceState>).detail;
+  latestDeviceState = state;
   wifiInput.disabled = !!state.running;
   edgeInput.disabled = !!state.running;
   if (state.running) {
@@ -136,9 +140,22 @@ function applyControls(): void {
 
 function setDeviceState(state: DeviceState): void {
   if (!runtime) return;
+  if (state.paired !== undefined) runtime._operit_lvgl_set_paired(state.paired);
   runtime.ccall('operit_lvgl_set_pairing_code', null, ['string'], [state.pairingCode ?? '']);
   runtime.ccall('operit_lvgl_set_space_state', null, ['string'], [state.spaceState ?? '等待连接 Operit']);
-  runtime.ccall('operit_lvgl_set_chat_preview', null, ['string'], [state.chatPreview ?? '尚未连接对话']);
+  const chat = state.chat;
+  if (chat) {
+    runtime.ccall('operit_lvgl_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', state.chatPreview ?? 'Operit']);
+    const messages = (chat.messages ?? []).filter(message => message.text?.trim()).slice(-12);
+    messages.forEach((message, index) => runtime!.ccall('operit_lvgl_set_message', null,
+      ['number', 'number', 'string'], [index, message.sender === 'user' ? 1 : 0, message.text]));
+    runtime.ccall('operit_lvgl_finish_messages', null, ['number'], [messages.length]);
+    const conversations = (chat.conversations ?? []).slice(0, 24);
+    conversations.forEach((item, index) => runtime!.ccall('operit_lvgl_set_conversation', null,
+      ['number', 'string', 'string', 'string', 'number'],
+      [index, item.id, item.title, item.characterCardName ?? '', item.id === chat.chatId ? 1 : 0]));
+    runtime.ccall('operit_lvgl_finish_conversations', null, ['number'], [conversations.length]);
+  }
   runtime.ccall('operit_lvgl_set_chat_screen', null, ['string'], [state.chatScreen ?? '连接 Operit 后开始聊天']);
   runtime.ccall('operit_lvgl_set_chat_task', null, ['string'], [state.chatTask ?? '离线']);
   if (state.chatSendResult) finishSend(state.chatSendResult.ok, state.chatSendResult.error);
@@ -238,8 +255,14 @@ function handleRuntimeAction(value: string): void {
     void fetch('/api/simulator/action', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action: value}),
-    }).then(response => { if (!response.ok) throw new Error(`设备 action 失败 (${response.status})`); })
-      .catch(error => log('设备 action 错误: ' + errorMessage(error)));
+    }).then(async response => { if (!response.ok) {
+      const detail = await response.json() as {error?: string};
+      throw new Error(detail.error ?? `操作失败 (${response.status})`);
+    } })
+      .catch(error => {
+        log('设备 action 错误: ' + errorMessage(error));
+        runtime?.ccall('operit_lvgl_action_error', null, ['string'], [errorMessage(error)]);
+      });
   }
   pageLabel.textContent = value;
   if (value === 'face_online' || value === 'run_node') {
@@ -306,7 +329,7 @@ async function initialize(): Promise<void> {
   runtime.onAction = handleRuntimeAction;
   if (!runtime._simulator_init()) throw new Error('LVGL 初始化失败');
   applyControls();
-  setDeviceState({});
+  setDeviceState(latestDeviceState ?? {});
   syncTheme();
   sourceLabel.textContent = `共用源码：${manifest.source ?? 'apps/esp32/lvgl_port/operit_lvgl.c'} / LVGL ${manifest.lvgl ?? '未知'}`;
   log('真实 LVGL WebAssembly 已启动');
@@ -373,3 +396,32 @@ initialize().catch((error: unknown) => {
 });
 void updateBuildStatus();
 window.setInterval(() => void updateBuildStatus(), 2000);
+
+
+// Developer automation reads and operates the actual shared renderer.
+let debugPolling = false;
+window.setInterval(async () => {
+  if (!runtime || debugPolling || window.operitEditor?.isEditing()) return;
+  debugPolling = true;
+  try {
+    const response = await fetch('/api/simulator/debug/commands');
+    if (!response.ok) return;
+    const commands = await response.json() as {id: number; command: string; input: {id?: string; direction?: string}}[];
+    for (const command of commands) {
+      let error: string | undefined;
+      let value: unknown;
+      try {
+        if (command.command === 'tap' || command.command === 'swipe') {
+          const argument = command.command === 'tap' ? command.input.id : command.input.direction;
+          const accepted = runtime.ccall('operit_lvgl_debug_' + command.command, 'number', ['string'], [argument ?? '']);
+          if (!accepted) throw new Error('控件不可操作或手势无效');
+          await new Promise(resolve => window.setTimeout(resolve, 160));
+        }
+        value = JSON.parse(runtime.ccall('operit_lvgl_debug_' + (command.command === 'tree' ? 'tree' : 'snapshot'), 'string', [], []) as string);
+      } catch (cause) { error = errorMessage(cause); }
+      await fetch('/api/simulator/debug/result', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: command.id, value, error})});
+    }
+  } catch { /* The editor server can restart while this page stays open. */ }
+  finally { debugPolling = false; }
+}, 1000);

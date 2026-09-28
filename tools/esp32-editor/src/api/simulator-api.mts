@@ -1,3 +1,4 @@
+import {requestUi, takeUiCommands, completeUiCommand} from './ui-debug.mts';
 import {spawn} from 'node:child_process';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import {createInterface} from 'node:readline';
@@ -165,10 +166,20 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
-    } else if (url.pathname === '/api/simulator/debug/tree' && req.method === 'GET') {
-      reply(200, await rpc('debug_tree'));
+    } else if (url.pathname === '/api/simulator/debug/commands' && req.method === 'GET') {
+      reply(200, takeUiCommands());
+    } else if (url.pathname === '/api/simulator/debug/result' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) {
+        body += String(chunk);
+        if (Buffer.byteLength(body) > 131072) throw new Error('UI snapshot too large');
+      }
+      const result = JSON.parse(body) as {id: number; value?: unknown; error?: string};
+      completeUiCommand(result.id, result.value, result.error); reply(200, {ok: true});
+    } else if (url.pathname === '/api/simulator/debug/tree'  && req.method === 'GET') {
+      reply(200, await requestUi('tree'));
     } else if (url.pathname === '/api/simulator/debug/snapshot' && req.method === 'GET') {
-      reply(200, await rpc('debug_snapshot'));
+      reply(200, await requestUi('snapshot'));
     } else if (['/api/simulator/debug/tap', '/api/simulator/debug/swipe'].includes(url.pathname) && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) {
@@ -178,10 +189,10 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
       const input = JSON.parse(body) as {id?: unknown; direction?: unknown};
       if (url.pathname.endsWith('/tap')) {
         if (typeof input.id !== 'string' || !input.id) throw new Error('缺少控件 id');
-        reply(200, await rpc('debug_tap', {nodeId: input.id}));
+        reply(200, await requestUi('tap', {id: input.id}));
       } else {
         if (typeof input.direction !== 'string' || !input.direction) throw new Error('缺少滑动方向');
-        reply(200, await rpc('debug_swipe', {direction: input.direction}));
+        reply(200, await requestUi('swipe', {direction: input.direction}));
       }
     } else if (['/api/simulator/action', '/api/simulator/send'].includes(url.pathname) && req.method === 'POST') {
       let body = '';

@@ -129,6 +129,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       }
       _pairedRemoteStates = nextStates;
     });
+    unawaited(_refreshCurrentDeviceSpace());
   }
 
   /// Reads the synchronized device space projection from the current device.
@@ -1199,8 +1200,7 @@ class _PairedDeviceTile extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          outboundBaseUrl ??
-                              l10n.settingsRuntimeConnectionInitiatedByOtherDevice,
+                          outboundBaseUrl ?? device.deviceId,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: textTheme.bodySmall?.copyWith(

@@ -1422,6 +1422,16 @@ impl RuntimeRemoteLinkService {
                 },
             })
             .await?;
+        // A successful socket write does not prove the stored pairing is still
+        // accepted by Edge. Require an authenticated PeerLink frame before
+        // publishing this carrier as online, then dispatch that first frame.
+        let first = tokio::time::timeout(std::time::Duration::from_secs(3), authenticated.receive())
+            .await.map_err(|_| "Edge admission acknowledgement timed out".to_string())??
+            .ok_or_else(|| "Edge closed before accepting Space admission".to_string())?;
+        let LinkFramePayload::PeerFrame(firstPeerFrame) = first.payload else {
+            authenticated.close().await;
+            return Err("Edge admission returned a non-PeerLink frame".into());
+        };
         let attached = attachPeerLinkCarrier(
             self.nodeRouter.localNodeId(),
             record.edgeDeviceId,
@@ -1439,6 +1449,10 @@ impl RuntimeRemoteLinkService {
         let receiver = authenticated;
         let receiverAttached = attached.clone();
         tokio::spawn(async move {
+            if let Err(error) = receiverAttached.receiveFrame(firstPeerFrame).await {
+                receiverAttached.close(format!("Edge PeerLink admission dispatch failed: {error}"));
+                return;
+            }
             loop {
                 let frame = match receiver.receive().await {
                     Ok(Some(frame)) => frame,

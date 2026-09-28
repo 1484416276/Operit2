@@ -5,11 +5,13 @@ use operit_link::{
     CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
 };
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 struct ChatSession {
     client: EdgeSpaceRouteClient,
+    histories: Mutex<CoreValue>,
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     chatId: String,
     runtime: tokio::runtime::Handle,
     messages: Mutex<CoreValue>,
@@ -153,10 +155,14 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
                             .get_mut(&descriptor.streamId)
                         {
                             text.apply(&serde_json::to_value(event.value).unwrap_or_default());
+                            UI_REVISION.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
-                Err(error) => *session.error.lock().unwrap() = Some(error.to_string()),
+                Err(error) => {
+                    *session.error.lock().unwrap() = Some(error.to_string());
+                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+                }
             }
             if let Some(text) = session
                 .streams
@@ -171,13 +177,24 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
     }
 }
 
+static UI_REVISION: AtomicU32 = AtomicU32::new(1);
 static SESSION: OnceLock<Mutex<Option<Arc<ChatSession>>>> = OnceLock::new();
+
+/// A transient carrier reconnect preserves the conversation selected on Edge.
+pub fn reconnect(client: EdgeSpaceRouteClient, provisionedChatId: String) {
+    let chatId = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap()
+        .as_ref().map(|session| session.chatId.clone()).unwrap_or(provisionedChatId);
+    install(client, chatId);
+}
 
 /// Called on the authenticated Link runtime after Space provisions the chat.
 pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
+    clear();
     let session = Arc::new(ChatSession {
         client,
         chatId,
+        histories: Mutex::new(CoreValue::List(Vec::new())),
+        tasks: Mutex::new(Vec::new()),
         runtime: tokio::runtime::Handle::current(),
         messages: Mutex::new(CoreValue::List(Vec::new())),
         error: Mutex::new(None),
@@ -187,7 +204,9 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
         streamTasks: Mutex::new(BTreeMap::new()),
     });
     *SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(session.clone());
-    tokio::spawn(async move {
+    let owner = session.clone();
+    let historySession = session.clone();
+    let task = tokio::spawn(async move {
         let args = operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap();
         let result = session
             .client
@@ -210,6 +229,7 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
                             Ok(value) => *messages = value,
                             Err(error) => {
                                 *session.error.lock().unwrap() = Some(error);
+                                UI_REVISION.fetch_add(1, Ordering::Relaxed);
                                 break;
                             }
                         }
@@ -217,15 +237,47 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
                         *messages = event.value;
                     }
                     openMessageStreams(&session, &messages);
+                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
                 }
                 *session.error.lock().unwrap() = Some("聊天连接已断开，请等待重新连接".into());
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
                 for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) {
                     task.abort();
                 }
             }
-            Err(error) => *session.error.lock().unwrap() = Some(error.to_string()),
+            Err(error) => {
+                *session.error.lock().unwrap() = Some(error.to_string());
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+            }
         }
     });
+    owner.tasks.lock().unwrap().push(task);
+    let task = tokio::spawn(async move {
+        let session = historySession;
+        let result = session.client.watchRouted(CoreWatchRequest::new(
+            operit_link::nextCoreRouteRequestId("routedChatListFlow"),
+            CORE_INTERNAL_TARGET, "routedChatListFlow",
+            operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+        )).await;
+        match result {
+            Ok(mut stream) => while let Some(event) = stream.recv().await {
+                if event.kind == CoreEventKind::Completed { break; }
+                let mut histories = session.histories.lock().unwrap();
+                if event.kind == CoreEventKind::Delta {
+                    match histories.applyIncrementalDelta(&event.value) {
+                        Ok(value) => *histories = value,
+                        Err(error) => { *session.error.lock().unwrap() = Some(error); break; }
+                    }
+                } else { *histories = event.value; }
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+            },
+            Err(error) => {
+                *session.error.lock().unwrap() = Some(format!("对话列表加载失败：{}", error));
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+    owner.tasks.lock().unwrap().push(task);
 }
 
 /// Returns the live Space route state, rather than whether the pairing
@@ -239,15 +291,22 @@ pub fn isConnected() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns a monotonic version for display consumers that repaint on change.
+pub fn revision() -> u32 {
+    UI_REVISION.load(Ordering::Relaxed)
+}
+
 /// Drops the local chat route and display state. Pairing credentials are
 /// cleared separately by the Edge pairing authority.
 pub fn clear() {
+    UI_REVISION.fetch_add(1, Ordering::Relaxed);
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
         .and_then(|mut session| session.take());
     if let Some(session) = session {
+        for task in std::mem::take(&mut *session.tasks.lock().unwrap()) { task.abort(); }
         for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) {
             task.abort();
         }
@@ -263,6 +322,7 @@ pub fn snapshot() -> serde_json::Value {
     match session {
         Some(session) => serde_json::json!({
             "connected": session.client.isConnected(), "chatId": session.chatId,
+            "conversations": *session.histories.lock().unwrap(),
             "sending": session.sending.load(Ordering::Acquire),
             "messages": displayMessages(&session.messages.lock().unwrap(), &session.streams.lock().unwrap()), "error": *session.error.lock().unwrap(),
         }),
@@ -272,22 +332,63 @@ pub fn snapshot() -> serde_json::Value {
     }
 }
 
-/// Small bounded summary for the physical display; full messages remain in Space.
+/// The title comes from conversation metadata, never from a response body.
 pub fn preview() -> String {
-    let snapshot = snapshot();
-    if let Some(error) = snapshot.get("error").and_then(|v| v.as_str()) {
-        return error.chars().take(72).collect();
+    let value = snapshot();
+    activeConversation(&value).and_then(|chat| chat["characterCardName"].as_str())
+        .filter(|name| !name.is_empty()).unwrap_or("Operit").to_string()
+}
+
+fn activeConversation(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    value["conversations"].as_array()?.iter().find(|chat| chat["id"] == value["chatId"])
+}
+
+/// Changes only this device's view; the full Core continues owning the chat.
+pub fn selectChat(id: &str) -> Result<(), String> {
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+        .ok_or("设备尚未连接")?;
+    if !session.client.isConnected() { return Err("设备已离线".into()); }
+    let value = serde_json::to_value(&*session.histories.lock().unwrap()).unwrap_or_default();
+    if !value.as_array().into_iter().flatten().any(|chat| chat["id"].as_str() == Some(id)) {
+        return Err("对话已不存在，请刷新列表".into());
     }
-    if snapshot.get("connected").and_then(|v| v.as_bool()) != Some(true) {
-        return "尚未连接对话".into();
-    }
-    snapshot
-        .get("messages")
-        .and_then(|v| v.as_array())
-        .and_then(|items| items.last())
-        .and_then(|message| message.get("text").and_then(|v| v.as_str()))
-        .map(|text| text.chars().take(20).collect())
-        .unwrap_or_else(|| "已连接 Operit".into())
+    let _guard = session.runtime.enter();
+    install(session.client.clone(), id.to_string());
+    Ok(())
+}
+
+pub fn newChat() -> Result<(), String> {
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+        .ok_or("设备尚未连接")?;
+    if !session.client.isConnected() { return Err("设备已离线".into()); }
+    if session.sending.swap(true, Ordering::AcqRel) { return Err("请等待当前操作完成".into()); }
+    let value = snapshot();
+    let current = activeConversation(&value).cloned().unwrap_or_default();
+    session.runtime.clone().spawn(async move {
+        let response = session.client.callRouted(CoreCallRequest::new(
+            operit_link::nextCoreRouteRequestId("createRoutedChat"), CORE_INTERNAL_TARGET,
+            "createRoutedChat", operit_link::toCoreValue(serde_json::json!({
+                "chatId":session.chatId, "characterCardName":current["characterCardName"],
+                "group":current["group"], "characterGroupId":current["characterGroupId"],
+            })).unwrap(),
+        )).await;
+        session.sending.store(false, Ordering::Release);
+        match response.result {
+            Ok(CoreValue::String(id)) => {
+                let current = SESSION.get().unwrap().lock().unwrap().clone();
+                if current.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session)) {
+                    install(session.client.clone(), id);
+                }
+            },
+            result => {
+                *session.error.lock().unwrap() = Some(match result {
+                    Err(error) => error.to_string(), _ => "创建对话返回了无效结果".into(),
+                });
+                UI_REVISION.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    });
+    Ok(())
 }
 
 /// Returns a compact state label for the 320x240 task rail.
@@ -321,51 +422,12 @@ pub fn taskStatus() -> String {
     "就绪".into()
 }
 
-/// Returns one plain text value for the small ESP32 display.
-///
-/// The device keeps the complete conversation in Core/Space, but its 320x240
-/// screen deliberately shows only the latest non-empty text. It is a compact
-/// message terminal rather than a second full AI chat client.
+/// Empty/error state only; actual messages are rendered as individual rows.
 pub fn screenText() -> String {
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone();
-    let Some(session) = session else {
-        return "未连接 Operit".into();
-    };
-    if let Some(error) = session.error.lock().unwrap().as_deref() {
-        return compactText(error, 640);
-    }
-    let messages = displayMessages(
-        &session.messages.lock().unwrap(),
-        &session.streams.lock().unwrap(),
-    );
-    if let Some(text) = messages
-        .as_array()
-        .into_iter()
-        .flatten()
-        .rev()
-        .filter_map(|message| message.get("text").and_then(|value| value.as_str()))
-        .find(|text| !text.trim().is_empty())
-    {
-        return compactText(text, 640);
-    }
-    if session.client.isConnected() {
-        "已连接，输入消息后发送".into()
-    } else {
-        "设备已离线".into()
-    }
-}
-
-fn compactText(text: &str, max: usize) -> String {
-    let flattened = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut result = flattened.chars().take(max).collect::<String>();
-    if flattened.chars().count() > max {
-        result.push('…');
-    }
-    result
+    let value = snapshot();
+    if let Some(error) = value["error"].as_str() { return error.to_string(); }
+    if value["messages"].as_array().is_some_and(|items| !items.is_empty()) { return String::new(); }
+    if isConnected() { "输入消息开始对话".into() } else { "已离线，等待重新连接".into() }
 }
 
 fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
@@ -394,7 +456,7 @@ fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) ->
                 .and_then(|v| v.as_str())
                 .and_then(|id| streams.get(id))
             {
-                text = stream.text.clone();
+                if !stream.text.is_empty() { text = stream.text.clone(); }
             }
             message["text"] = text.into();
         }
@@ -449,6 +511,7 @@ pub fn send(text: String) -> Result<(), String> {
         }
         *session.sendResult.lock().unwrap() = Some(result);
         session.sending.store(false, Ordering::Release);
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
     });
     Ok(())
 }

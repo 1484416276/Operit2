@@ -25094,7 +25094,7 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
 #endif
 };
 
-extern const lv_font_t lv_font_montserrat_14;
+extern const lv_font_t operit_font_format;
 
 
 /*-----------------
@@ -25109,8 +25109,8 @@ lv_font_t operit_font_zh_14 = {
 #endif
     .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
-    .line_height = 27,          /*The maximum line height required by the font*/
-    .base_line = 8,             /*Baseline measured from the bottom of the line*/
+    .line_height = 19,          /*The maximum line height required by the font*/
+    .base_line = 4,             /*Baseline measured from the bottom of the line*/
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
 #endif
@@ -25120,7 +25120,7 @@ lv_font_t operit_font_zh_14 = {
 #endif
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = &lv_font_montserrat_14,
+    .fallback = &operit_font_format,
 #endif
     .user_data = NULL,
 };

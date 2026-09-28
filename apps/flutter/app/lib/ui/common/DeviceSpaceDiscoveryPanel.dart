@@ -132,7 +132,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.memory_outlined),
               title: Text(edge.displayName),
-              subtitle: Text('${edge.model}\n${edge.endpoint}'),
+              subtitle: Text('${edge.deviceId} · ${edge.model}\n${edge.endpoint}'),
               isThreeLine: true,
               trailing: IconButton(
                 icon: const Icon(Icons.link_outlined),

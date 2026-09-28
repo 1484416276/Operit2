@@ -13,9 +13,7 @@ Wi-Fi transport, or the firmware HTTP home page. Those belong to `apps/esp32`.
 
 Display rotation `90` is used for the physical 320x240 landscape panel.
 
-The physical panel receives RGB565 pixels. The remote screen mirror stores
-RGB332 (75 KiB at 320x240) and expands colors when streaming a BMP, so remote
-previews have reduced color precision without changing panel colors. LVGL uses
-one synchronous 10-line RGB565 buffer (6.25 KiB). Full Edge snapshots use a
-fallible allocation; if RAM is insufficient, use the streaming `/screen.bmp`
-endpoint instead.
+The physical panel receives RGB565 pixels. The board still exposes an optional
+RGB332 diagnostic mirror for hosts that explicitly enable it, but the firmware
+releases that 75 KiB buffer because its current UI uses the physical panel only.
+LVGL uses one synchronous 10-line RGB565 buffer (6.25 KiB).

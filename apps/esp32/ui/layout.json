@@ -33,7 +33,8 @@
       "color": "#f4f8ff",
       "radius": 0,
       "value": 0,
-      "action": ""
+      "action": "",
+      "binding": "theme"
     },
     {
       "id": "home_card",

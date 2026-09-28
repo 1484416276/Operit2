@@ -197,15 +197,22 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
 
     if (url.pathname === '/api/board') {
       const text = await readFile(source, 'utf8');
-      const themes = [...text.matchAll(/\{0x([\da-f]+),\s*0x([\da-f]+),\s*0x([\da-f]+),\s*0x([\da-f]+),\s*"([^"]+)"\}/gi)].map(
-        (match) => ({
-          name: match[5],
-          bg: '#' + match[1],
-          surface: '#' + match[2],
-          accent: '#' + match[3],
-          muted: '#' + match[4],
-        }),
-      );
+      const fields = text.match(/typedef struct\s*\{([^}]+)\}\s*theme_t;/)?.[1] ?? '';
+      const colorNames = [...fields.matchAll(/uint32_t\s+([^;]+);/g)]
+        .flatMap(field => field[1].split(',').map(name => name.trim()));
+      const themeSource = text.match(/static const theme_t themes\[\] = \{([\s\S]*?)\n\};/i)?.[1] ?? '';
+      const themes = [...themeSource.matchAll(/\{([\s\S]*?),\s*"([^"]+)"\}/g)].flatMap((match) => {
+        const colors = [...match[1].matchAll(/0x([\da-f]+)/gi)].map((color) => color[1]);
+        if (colors.length !== colorNames.length) return [];
+        const tokens = Object.fromEntries(colorNames.map((name, index) => [name, '#' + colors[index]]));
+        return [{
+          name: match[2],
+          bg: tokens.background,
+          surface: tokens.surface,
+          accent: tokens.accent,
+          muted: tokens.text_secondary,
+        }];
+      });
       res.writeHead(200, {'Content-Type': 'application/json', 'Cache-Control': 'no-store'});
       res.end(
         JSON.stringify({

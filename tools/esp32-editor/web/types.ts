@@ -72,6 +72,7 @@ export interface RuntimeModule {
   _operit_lvgl_navigate_apps(): void;
   _operit_lvgl_round_icons(): boolean;
   _operit_lvgl_set_connection(connected: boolean, configured: boolean): void;
+  _operit_lvgl_set_paired(paired: boolean): void;
   _operit_lvgl_set_theme(index: number, circle: boolean): void;
   _operit_lvgl_theme_index(): number;
   _operit_lvgl_debug_tree?(): number;

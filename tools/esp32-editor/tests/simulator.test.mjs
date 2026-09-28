@@ -17,7 +17,7 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
     stopSimulator();
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
-    await rm(dir, {recursive: true, force: true});
+    await rm(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(base + '/api/simulator/state', {headers: {Origin: 'https://example.com'}})).status, 403);
@@ -38,8 +38,21 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   const first = await ready();
   assert.equal(first.device.chat.connected, false);
   assert.match(first.token, /^[0-9a-f]{48}$/);
-  const action = await fetch(base + '/api/simulator/action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"action":"edge_search"}'});
+  const action = await fetch(base + '/api/simulator/action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"action":"edge_unpair"}'});
   assert.equal(action.status, 200);
+  assert.equal((await state()).device.paired, false);
+  // Debug queries are fulfilled by the visible LVGL host, not fabricated by Rust.
+  const debug = fetch(base + '/api/simulator/debug/tree');
+  let commands = [];
+  while (!commands.length) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    commands = await (await fetch(base + '/api/simulator/debug/commands')).json();
+  }
+  assert.equal(commands[0].command, 'tree');
+  const rendered = {page: 'Pairing', nodes: [{id: 'actual-lvgl-node'}]};
+  await fetch(base + '/api/simulator/debug/result', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: commands[0].id, value: rendered})});
+  assert.deepEqual(await (await debug).json(), rendered);
   await fetch(base + '/api/simulator/stop', {method: 'POST'});
   assert.equal((await state()).running, false);
   await new Promise(resolve => setTimeout(resolve, 200));

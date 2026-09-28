@@ -21,6 +21,10 @@
       "value": "Used to access device location when requested."
     },
     {
+      "name": "permission_camera_reason",
+      "value": "Used to take photos and record videos for chat attachments."
+    },
+    {
       "name": "permission_microphone_reason",
       "value": "Used to record speech for text recognition."
     },

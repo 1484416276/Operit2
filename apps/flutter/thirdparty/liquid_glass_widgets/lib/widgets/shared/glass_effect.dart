@@ -134,6 +134,9 @@ class _GlassEffectState extends State<GlassEffect>
   bool _loggedCreation = false;
   ui.Image? _backgroundImage;
   late Ticker _ticker;
+  int? _lastPaintRevision;
+  RenderRepaintBoundary? _lastBoundary;
+  bool _passiveCheckPending = false;
   Size? _lastCaptureSize;
   Offset? _lastCapturePosition;
   // Web only: guards against overlapping async captures.
@@ -191,7 +194,12 @@ class _GlassEffectState extends State<GlassEffect>
     final bool shouldCapture = widget.interactionIntensity > 0.01 &&
         _effectiveKey != null &&
         widget.settings.blur > 0.0;
-    if (shouldCapture) {
+    if (shouldCapture &&
+        _effectiveKey?.currentContext?.findRenderObject()
+            is GlassCaptureRenderBoundary) {
+      _ticker.stop();
+      _queuePassiveCapture();
+    } else if (shouldCapture) {
       if (!_ticker.isActive) {
         _ticker.start();
         // debugPrint(
@@ -208,13 +216,30 @@ class _GlassEffectState extends State<GlassEffect>
     }
   }
 
+  // Observe frames requested by content/gestures without requesting our own.
+  // A capture rebuilds the glass once; the background revision is unchanged on
+  // that frame, so it cannot create a capture -> setState -> capture loop.
+  void _queuePassiveCapture() {
+    if (_passiveCheckPending) return;
+    _passiveCheckPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((elapsed) {
+      _passiveCheckPending = false;
+      if (!mounted) return;
+      if (TickerMode.of(context) && widget.interactionIntensity > 0.01 &&
+          widget.settings.blur > 0) {
+        _handleTick(elapsed);
+      }
+      _queuePassiveCapture();
+    });
+  }
+
   void _handleTick(Duration elapsed) {
     final key = _effectiveKey;
     if (key == null) return;
 
     final boundary =
         key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
-    if (boundary == null) return;
+    if (boundary == null || !boundary.attached) return;
 
     // Guard: boundary may not be laid out yet (e.g. when the glass widget
     // is mounted early for Standard quality before the first frame completes).
@@ -230,7 +255,11 @@ class _GlassEffectState extends State<GlassEffect>
     bool needsCapture = _backgroundImage == null;
     needsCapture |= _lastCaptureSize != currentSize;
     needsCapture |= _lastCapturePosition != currentPos;
-    needsCapture |= isInteracting; // every frame during drag — free cost
+    final revision = boundary is GlassCaptureRenderBoundary
+        ? boundary.paintRevision : null;
+    needsCapture |= !identical(_lastBoundary, boundary);
+    needsCapture |= revision != null
+        ? revision != _lastPaintRevision : isInteracting;
 
     if (needsCapture) {
       _captureBackground(boundary, currentSize, currentPos);
@@ -294,6 +323,9 @@ class _GlassEffectState extends State<GlassEffect>
       _backgroundImage = image;
       _lastCaptureSize = size;
       _lastCapturePosition = pos;
+      _lastBoundary = boundary;
+      _lastPaintRevision = boundary is GlassCaptureRenderBoundary
+          ? boundary.paintRevision : null;
       setState(() {});
     } catch (e) {
       assert(() {
@@ -312,6 +344,8 @@ class _GlassEffectState extends State<GlassEffect>
       RenderRepaintBoundary boundary, Size size, Offset? pos) async {
     if (_isCapturingAsync) return; // prevent overlapping futures
     _isCapturingAsync = true;
+    final revision = boundary is GlassCaptureRenderBoundary
+        ? boundary.paintRevision : null;
     try {
       final image = await boundary.toImage(pixelRatio: 1.0);
       if (mounted) {
@@ -320,7 +354,11 @@ class _GlassEffectState extends State<GlassEffect>
           _backgroundImage = image;
           _lastCaptureSize = size;
           _lastCapturePosition = pos;
+          _lastBoundary = boundary;
+          _lastPaintRevision = revision;
         });
+      } else {
+        image.dispose();
       }
     } catch (e) {
       assert(() {

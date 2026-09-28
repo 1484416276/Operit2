@@ -6,6 +6,7 @@
   import Flutter
 #elseif os(macOS)
   import FlutterMacOS
+  import AppKit
 #else
   #error("Unsupported platform.")
 #endif
@@ -16,6 +17,7 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
   var proxyApiRegistrar: ProxyAPIRegistrar?
   private var themeChannel: FlutterMethodChannel?
   private var zoomChannel: FlutterMethodChannel?
+  private var backgroundColorChannel: FlutterMethodChannel?
 
   init(binaryMessenger: FlutterBinaryMessenger) {
     proxyApiRegistrar = ProxyAPIRegistrar(
@@ -79,6 +81,61 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
         self.setPageZoom(
           identifier: identifier,
           zoomFactor: zoomFactor,
+          attempt: 0,
+          result: result)
+      }
+    }
+
+    backgroundColorChannel = FlutterMethodChannel(
+      name: "operit/webview_background_color", binaryMessenger: binaryMessenger)
+    backgroundColorChannel?.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setBackgroundColor" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+
+      guard let arguments = call.arguments as? [String: Any],
+        let identifierNumber = arguments["identifier"] as? NSNumber,
+        let redNumber = arguments["red"] as? NSNumber,
+        let greenNumber = arguments["green"] as? NSNumber,
+        let blueNumber = arguments["blue"] as? NSNumber,
+        let alphaNumber = arguments["alpha"] as? NSNumber
+      else {
+        result(
+          FlutterError(
+            code: "invalid_arguments",
+            message: "setBackgroundColor expects an identifier and RGBA components.",
+            details: nil))
+        return
+      }
+
+      let components = [
+        redNumber.doubleValue, greenNumber.doubleValue, blueNumber.doubleValue,
+        alphaNumber.doubleValue,
+      ]
+      guard components.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {
+        result(
+          FlutterError(
+            code: "invalid_color", message: "RGBA components must be between 0 and 1.",
+            details: components))
+        return
+      }
+
+      DispatchQueue.main.async { [weak self] in
+        guard let self else {
+          result(
+            FlutterError(
+              code: "plugin_detached",
+              message: "The WebView plugin was detached before its background color could be applied.",
+              details: nil))
+          return
+        }
+        self.setBackgroundColor(
+          identifier: identifierNumber.int64Value,
+          red: components[0],
+          green: components[1],
+          blue: components[2],
+          alpha: components[3],
           attempt: 0,
           result: result)
       }
@@ -154,6 +211,62 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
     #endif
   }
 
+  /// Applies a macOS WKWebView background color after the Pigeon-created view
+  /// has been registered.
+  private func setBackgroundColor(
+    identifier: Int64,
+    red: Double,
+    green: Double,
+    blue: Double,
+    alpha: Double,
+    attempt: Int,
+    result: @escaping FlutterResult
+  ) {
+    guard let webView: WKWebView = proxyApiRegistrar?.instanceManager.instance(
+      forIdentifier: identifier)
+    else {
+      guard attempt < 100 else {
+        result(
+          FlutterError(
+            code: "webview_not_found",
+            message: "No WKWebView is registered for the supplied identifier.",
+            details: identifier))
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.005) { [weak self] in
+        guard let self else {
+          result(
+            FlutterError(
+              code: "plugin_detached",
+              message: "The WebView plugin was detached before its background color could be applied.",
+              details: nil))
+          return
+        }
+        self.setBackgroundColor(
+          identifier: identifier,
+          red: red,
+          green: green,
+          blue: blue,
+          alpha: alpha,
+          attempt: attempt + 1,
+          result: result)
+      }
+      return
+    }
+
+    #if os(macOS)
+      webView.underPageBackgroundColor = NSColor(
+        calibratedRed: red, green: green, blue: blue, alpha: alpha)
+      result(nil)
+    #else
+      result(
+        FlutterError(
+          code: "unsupported_platform",
+          message: "WKWebView background colors are only supported on macOS.",
+          details: nil))
+    #endif
+  }
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     #if os(iOS)
       let binaryMessenger = registrar.messenger()
@@ -176,6 +289,7 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
     themeChannel?.setMethodCallHandler(nil)
     zoomChannel?.setMethodCallHandler(nil)
+    backgroundColorChannel?.setMethodCallHandler(nil)
     tearDownProxyAPIRegistrar()
   }
 

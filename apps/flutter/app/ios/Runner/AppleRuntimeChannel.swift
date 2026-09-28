@@ -26,6 +26,7 @@ final class AppleRuntimeChannel: NSObject {
   private var musicLoopPlayback = false
   private var musicState = "idle"
   private var musicMessage = "apple music player idle"
+  private var ttsFileJobs: [String: AppleTtsFileJob] = [:]
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var ttsAudioPlayer: AVAudioPlayer?
   private var ttsAudioPaused = false
@@ -825,7 +826,39 @@ final class AppleRuntimeChannel: NSObject {
   }
 
   private func ownerTtsSynthesize(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    result(FlutterError(code: "OWNER_TTS_SYNTHESIZE_ERROR", message: "Apple TTS file synthesis is not implemented", details: nil))
+    guard let payload = call.arguments as? [String: Any],
+      let text = payload["text"] as? String,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      let speed = payload["speed"] as? NSNumber,
+      let pitch = payload["pitch"] as? NSNumber,
+      payload["outputFormat"] as? String == "wav"
+    else {
+      result(FlutterError(code: "INVALID_ARGS", message: "TTS synthesis requires nonempty text, speed, pitch and wav outputFormat", details: nil))
+      return
+    }
+    do {
+      guard let root = configuredRuntimeRoot else {
+        throw RuntimeChannelError.invalidArgs("runtime storage is not configured")
+      }
+      let utterance = AVSpeechUtterance(string: text)
+      try configureSpeechUtterance(utterance, payload: payload, speed: speed, pitch: pitch)
+      let directory = root.appendingPathComponent("temp/tts", isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let id = UUID().uuidString
+      let output = directory.appendingPathComponent("\(id).wav")
+      let job = AppleTtsFileJob(output: output) { [weak self] error in
+        self?.ttsFileJobs.removeValue(forKey: id)
+        if let error {
+          result(FlutterError(code: "OWNER_TTS_SYNTHESIZE_ERROR", message: error.localizedDescription, details: nil))
+        } else {
+          result(["audioPath": output.path, "details": "Apple speech synthesis completed"])
+        }
+      }
+      ttsFileJobs[id] = job
+      job.start(utterance)
+    } catch {
+      result(FlutterError(code: "OWNER_TTS_SYNTHESIZE_ERROR", message: error.localizedDescription, details: nil))
+    }
   }
 
   /// Handles owner-host local inference commands.
@@ -1773,6 +1806,91 @@ private enum RuntimeChannelError: LocalizedError {
       return message
     case .invalidState(let message):
       return message
+    }
+  }
+}
+
+/// Owns one file synthesis independently of interactive speech playback.
+/// All state and file writes are serialized on the main queue.
+private final class AppleTtsFileJob: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
+  private let synthesizer = AVSpeechSynthesizer()
+  private let output: URL
+  private var file: AVAudioFile?
+  private var completion: ((Error?) -> Void)?
+  private var timeout: DispatchWorkItem?
+
+  init(output: URL, completion: @escaping (Error?) -> Void) {
+    self.output = output
+    self.completion = completion
+    super.init()
+    synthesizer.delegate = self
+  }
+
+  func start(_ utterance: AVSpeechUtterance) {
+    let timeout = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.finish(self.failure("Speech synthesis timed out"))
+    }
+    self.timeout = timeout
+    DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: timeout)
+    synthesizer.write(utterance) { [weak self] buffer in
+      DispatchQueue.main.async { self?.consume(buffer) }
+    }
+  }
+
+  private func failure(_ message: String) -> NSError {
+    NSError(domain: "OperitTtsSynthesis", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message])
+  }
+
+  private func consume(_ buffer: AVAudioBuffer) {
+    guard completion != nil else { return }
+    guard let pcm = buffer as? AVAudioPCMBuffer else {
+      finish(failure("Speech synthesis returned a non-PCM buffer"))
+      return
+    }
+    if pcm.frameLength == 0 {
+      let hasAudio = (file?.length ?? 0) > 0
+      finish(hasAudio ? nil : failure("Speech synthesis produced no audio"))
+      return
+    }
+    do {
+      if file == nil {
+        file = try AVAudioFile(forWriting: output, settings: [
+          AVFormatIDKey: kAudioFormatLinearPCM,
+          AVSampleRateKey: pcm.format.sampleRate,
+          AVNumberOfChannelsKey: pcm.format.channelCount,
+          AVLinearPCMBitDepthKey: 16,
+          AVLinearPCMIsFloatKey: false,
+          AVLinearPCMIsBigEndianKey: false,
+        ], commonFormat: pcm.format.commonFormat,
+           interleaved: pcm.format.isInterleaved)
+      }
+      try file?.write(from: pcm)
+    } catch {
+      finish(error)
+    }
+  }
+
+  private func finish(_ error: Error?) {
+    guard let completion else { return }
+    self.completion = nil
+    timeout?.cancel()
+    timeout = nil
+    // Closing the file finalizes the WAV header before exposing its path.
+    file = nil
+    if error != nil {
+      synthesizer.stopSpeaking(at: .immediate)
+      try? FileManager.default.removeItem(at: output)
+    }
+    completion(error)
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                         didCancel utterance: AVSpeechUtterance) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.finish(self.failure("Speech synthesis was cancelled"))
     }
   }
 }

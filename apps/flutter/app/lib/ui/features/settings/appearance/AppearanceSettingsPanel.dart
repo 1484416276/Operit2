@@ -2486,9 +2486,17 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
       offsetX: _offsetX,
       offsetY: _offsetY,
     );
+    final maxDialogHeight = (MediaQuery.sizeOf(context).height * 0.9)
+        .clamp(0.0, 720.0)
+        .toDouble();
     return OperitDialogScaffold(
       title: l10n.settingsAppearanceBubbleImageCrop,
       maxWidth: 460,
+      // Keep the action bar on screen on small portrait devices. Without a
+      // finite height, the scroll view receives unbounded constraints and
+      // lays out the tall background preview together with all controls,
+      // leaving the save button outside the viewport (especially on iOS).
+      maxHeight: maxDialogHeight,
       showCloseButton: true,
       actions: <Widget>[
         TextButton(

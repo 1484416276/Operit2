@@ -10,6 +10,122 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
 /// Verifies Dart preserves MessagePack bin values as Uint8List.
 void main() {
+  test('snapshot and delta byte values cannot mutate the retained base', () {
+    final decoder = CoreLinkEventValueDecoder();
+    Map<String, Object?> read(CoreLinkValueReader reader) =>
+        reader.readValue() as Map<String, Object?>;
+    for (final kind in ['Snapshot', 'Changed']) {
+      final event = _rawCoreEvent(
+        kind: kind,
+        value: {
+          'bytes': Uint8List.fromList([1, 2]),
+          'count': 0,
+        },
+      );
+      final snapshot = decoder.decodeValue(event, decode: read);
+      (snapshot['bytes'] as Uint8List)[0] = 99;
+      for (var count = 1; count <= 2; count++) {
+        final result = decoder.decodeValue(
+          _rawCoreEvent(
+            kind: 'Delta',
+            value: {
+              r'$coreDelta': [
+                {
+                  'op': 'set',
+                  'path': ['count'],
+                  'value': count,
+                },
+              ],
+            },
+          ),
+          decode: read,
+        );
+        expect(result['bytes'], [1, 2]);
+        expect(result['count'], count);
+        (result['bytes'] as Uint8List)[0] = 88;
+      }
+    }
+  });
+
+  test('typed tree reader traverses nested empty arrays across deltas', () {
+    final decoder = CoreLinkEventValueDecoder();
+    List<List<int>> read(CoreLinkValueReader reader) => List.generate(
+      reader.readArrayLength(),
+      (_) => List.generate(reader.readArrayLength(), (_) => reader.readInt()),
+    );
+    expect(
+      decoder.decodeValue(
+        _rawCoreEvent(
+          kind: 'Snapshot',
+          value: [
+            [],
+            [1, 2],
+            [],
+            [3],
+          ],
+        ),
+        decode: read,
+      ),
+      [
+        [],
+        [1, 2],
+        [],
+        [3],
+      ],
+    );
+    expect(
+      decoder.decodeValue(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': [1, 0],
+                'value': 9,
+              },
+              {
+                'op': 'remove',
+                'path': [1, 1],
+              },
+              {
+                'op': 'set',
+                'path': [2, 0],
+                'value': 4,
+              },
+            ],
+          },
+        ),
+        decode: read,
+      ),
+      [
+        [],
+        [9],
+        [4],
+        [3],
+      ],
+    );
+    expect(
+      decoder.decodeValue(
+        _rawCoreEvent(kind: 'Delta', value: {r'$coreDelta': []}),
+        decode: read,
+      ),
+      [
+        [],
+        [9],
+        [4],
+        [3],
+      ],
+    );
+    expect(
+      () => CoreLinkEventValueDecoder().decodeValue(
+        _rawCoreEvent(kind: 'Delta', value: {r'$coreDelta': []}),
+        decode: read,
+      ),
+      throwsStateError,
+    );
+  });
+
   test(
     'error labels stay concise while diagnostics retain the full native trace',
     () {
@@ -265,13 +381,10 @@ void main() {
         ],
       );
 
-      final first = decoder.decode<List<Stream<String>?>>(
+      final first = decoder.decodeValue<List<Stream<String>?>>(
         snapshot,
-        decode: (bytes) => decodeCoreLink<List<Stream<String>?>>(
-          bytes,
-          decode: _decodeStreamList,
-          embeddedStreamFactory: factory.open,
-        ),
+        decode: _decodeStreamList,
+        embeddedStreamFactory: factory.open,
       );
 
       expect(first.single, isNull);
@@ -296,13 +409,10 @@ void main() {
         },
       );
 
-      final second = decoder.decode<List<Stream<String>?>>(
+      final second = decoder.decodeValue<List<Stream<String>?>>(
         delta,
-        decode: (bytes) => decodeCoreLink<List<Stream<String>?>>(
-          bytes,
-          decode: _decodeStreamList,
-          embeddedStreamFactory: factory.open,
-        ),
+        decode: _decodeStreamList,
+        embeddedStreamFactory: factory.open,
       );
 
       expect(factory.openedStreamIds, <String>['stream-ai']);

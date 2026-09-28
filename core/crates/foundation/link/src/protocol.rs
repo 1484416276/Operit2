@@ -30,20 +30,12 @@ impl CoreValue {
     pub fn incrementalEvent(
         previous: &mut Option<CoreValue>,
         current: CoreValue,
-        incremental: bool,
     ) -> (CoreEventKind, CoreValue) {
         let Some(previousValue) = previous.as_ref() else {
             *previous = Some(current.clone());
             return (CoreEventKind::Snapshot, current);
         };
-        if !incremental {
-            *previous = Some(current.clone());
-            return (CoreEventKind::Changed, current);
-        }
-        let Some(delta) = buildCoreValueDelta(previousValue, &current) else {
-            *previous = Some(current.clone());
-            return (CoreEventKind::Changed, current);
-        };
+        let delta = buildCoreValueDelta(previousValue, &current);
         let event = if coreValueSize(&delta) < coreValueSize(&current) {
             (CoreEventKind::Delta, delta)
         } else {
@@ -62,15 +54,12 @@ impl CoreValue {
 const CORE_DELTA_MARKER: &str = "$coreDelta";
 
 /// Builds a generic map/list delta between two serialized Core values.
-fn buildCoreValueDelta(previous: &CoreValue, current: &CoreValue) -> Option<CoreValue> {
-    if previous == current {
-        return None;
-    }
+fn buildCoreValueDelta(previous: &CoreValue, current: &CoreValue) -> CoreValue {
     let mut operations = Vec::new();
     collectCoreValueDelta(previous, current, &mut Vec::new(), &mut operations);
     let mut delta = BTreeMap::new();
     delta.insert(CORE_DELTA_MARKER.to_string(), CoreValue::List(operations));
-    Some(CoreValue::Map(delta))
+    CoreValue::Map(delta)
 }
 
 /// Collects recursive set and remove operations for one value pair.
@@ -80,6 +69,9 @@ fn collectCoreValueDelta(
     path: &mut Vec<CoreValue>,
     operations: &mut Vec<CoreValue>,
 ) {
+    if previous == current {
+        return;
+    }
     match (previous, current) {
         (CoreValue::Map(previousValues), CoreValue::Map(currentValues)) => {
             for key in previousValues.keys() {
@@ -440,7 +432,7 @@ impl<'de> Deserialize<'de> for CoreValue {
 /// Converts a serializable Rust value into the Link value model.
 #[allow(non_snake_case)]
 pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
-    crate::codec::decodeLink(&crate::codec::encodeLink(value)?)
+    crate::value_codec::to_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
 }
 
 /// Converts a Link value into a typed Rust value.
@@ -449,7 +441,7 @@ pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCod
 where
     T: serde::de::DeserializeOwned,
 {
-    crate::codec::decodeLink(&crate::codec::encodeLink(value)?)
+    crate::value_codec::from_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Decode(e.to_string()))
 }
 
 pub struct CoreEventStream {
@@ -730,7 +722,6 @@ impl CoreCallResponse {
     }
 }
 
-pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
 /// Identifies a request emitted by an annotation wrapper rather than a Dart proxy.
 pub const CORE_INTERNAL_TARGET: &str = "$core.internal";
 
@@ -922,14 +913,6 @@ impl CoreWatchRequest {
         format!("{}::{}", self.target, self.propertyName)
     }
 
-    /// Reports whether this subscriber accepts generic incremental values.
-    pub fn acceptsIncrementalValues(&self) -> bool {
-        matches!(
-            &self.args,
-            CoreValue::Map(arguments)
-                if arguments.get(CORE_INCREMENTAL_VALUES_ARGUMENT) == Some(&CoreValue::Bool(true))
-        )
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -217,7 +217,7 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
       if (!_exitCode.isCompleted) {
         _exitCode.complete(code ?? -1);
       }
-    } catch (error, stackTrace) {
+    } catch (error) {
       if (!_output.isClosed) {
         await _output.close();
       }

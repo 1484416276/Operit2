@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
@@ -241,28 +242,39 @@ class WebKitWebViewPlatformController extends WebViewPlatformController {
     }
 
     if (params.backgroundColor case final Color backgroundColor) {
-      unawaited(webView.setOpaque(false));
-      const Color transparent = Colors.transparent;
-      unawaited(
-        webView.setBackgroundColor(
-          UIColor(
-            red: transparent.r,
-            green: transparent.g,
-            blue: transparent.b,
-            alpha: transparent.a,
-          ),
-        ),
-      );
-      unawaited(
-        webView.scrollView.setBackgroundColor(
-          UIColor(
+      if (defaultTargetPlatform == TargetPlatform.macOS) {
+        unawaited(
+          webView.setMacOSBackgroundColor(
             red: backgroundColor.r,
             green: backgroundColor.g,
             blue: backgroundColor.b,
             alpha: backgroundColor.a,
           ),
-        ),
-      );
+        );
+      } else {
+        unawaited(webView.setOpaque(false));
+        const Color transparent = Colors.transparent;
+        unawaited(
+          webView.setBackgroundColor(
+            UIColor(
+              red: transparent.r,
+              green: transparent.g,
+              blue: transparent.b,
+              alpha: transparent.a,
+            ),
+          ),
+        );
+        unawaited(
+          webView.scrollView.setBackgroundColor(
+            UIColor(
+              red: backgroundColor.r,
+              green: backgroundColor.g,
+              blue: backgroundColor.b,
+              alpha: backgroundColor.a,
+            ),
+          ),
+        );
+      }
     }
 
     if (params.initialUrl != null) {
@@ -589,9 +601,8 @@ class WebKitWebViewPlatformController extends WebViewPlatformController {
     final WKUserContentController controller = await webView.configuration
         .getUserContentController();
     unawaited(controller.removeAllUserScripts());
-    // TODO(bparrishMines): This can be replaced with
-    // `removeAllScriptMessageHandlers` once Dart supports runtime version
-    // checking. (e.g. The equivalent to @availability in Objective-C.)
+    // Keep the per-channel removal for compatibility with older WebKit
+    // versions where the bulk API is unavailable.
     _scriptMessageHandlers.keys.forEach(controller.removeScriptMessageHandler);
 
     removedJavaScriptChannels.forEach(_scriptMessageHandlers.remove);
@@ -637,8 +648,8 @@ class WebKitWebViewPlatformController extends WebViewPlatformController {
   // objects to strings before returning them to Dart. This method attempts
   // to converts Dart objects to Strings the way it is done in Objective-C
   // to avoid breaking users expecting the same String format.
-  // TODO(bparrishMines): Remove this method with the next breaking change.
-  // See https://github.com/flutter/flutter/issues/107491
+  // Retain Objective-C string formatting for legacy callers until the next
+  // breaking API change. See https://github.com/flutter/flutter/issues/107491
   String _asObjectiveCString(Object? value, {bool inContainer = false}) {
     if (value == null) {
       // An NSNull inside an NSArray or NSDictionary is represented as a String

@@ -20,6 +20,8 @@ dependencies:
   file_selector_platform_interface: ^2.3.0
   flutter:
     sdk: flutter
+  image_picker_ios: ^0.8.13+8
+  image_picker_platform_interface: ^2.11.1
   meta: ^1.10.0
 
 dev_dependencies:

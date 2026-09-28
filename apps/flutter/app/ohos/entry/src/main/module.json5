@@ -62,6 +62,7 @@
           "when": "inuse"
         }
       },
+      {"name": "ohos.permission.CAMERA", "reason": "$string:permission_camera_reason", "usedScene": {"abilities": ["EntryAbility"], "when": "inuse"}},
       {"name" :  "ohos.permission.MANAGE_BLUETOOTH"},
       {
         "name": "ohos.permission.LOCATION",

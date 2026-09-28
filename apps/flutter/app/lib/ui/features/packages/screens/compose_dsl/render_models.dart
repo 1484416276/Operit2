@@ -152,22 +152,6 @@ class _ComposeDslRenderResult {
   }
 }
 
-/// Reads a Compose `setEnv` command returned by a plugin action.
-Map<String, String>? _composeSetEnvCommand(Object? raw) {
-  if (raw is! Map) {
-    return null;
-  }
-  final map = _stringMap(raw);
-  if (!_bool(map['__operitSetEnv'])) {
-    return null;
-  }
-  final key = _string(map['key']).trim();
-  final value = _string(map['value']).trim();
-  if (key.isEmpty) {
-    throw StateError('compose setEnv requires a key');
-  }
-  return {key: value};
-}
 
 /// Decodes one queued Compose navigation request.
 ({String routeId, Map<String, Object?> args}) _composeNavigateCommand(

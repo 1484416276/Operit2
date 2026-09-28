@@ -8,11 +8,13 @@ PODS:
     - FlutterMacOS
   - desktop_widgets_macos (0.1.0):
     - FlutterMacOS
-  - dynamic_color (0.0.2):
+  - dynamic_color (0.0.3):
     - FlutterMacOS
   - file_selector_macos (0.0.1):
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - image_picker_macos (0.0.1):
+    - FlutterMacOS
   - operit_folder_access (0.1.0):
     - FlutterMacOS
   - printing (1.0.0):
@@ -36,6 +38,7 @@ DEPENDENCIES:
   - dynamic_color (from `Flutter/ephemeral/.symlinks/plugins/dynamic_color/macos`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
+  - image_picker_macos (from `Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos`)
   - operit_folder_access (from `Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
@@ -58,6 +61,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
+  image_picker_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/image_picker_macos/macos
   operit_folder_access:
     :path: Flutter/ephemeral/.symlinks/plugins/operit_folder_access/macos
   printing:
@@ -76,9 +81,10 @@ SPEC CHECKSUMS:
   desktop_drop: 1eeeb9484299585770b6461e4f3d60950e99efa2
   desktop_multi_window: d3d11c0c355f438e201de7c57569f95826ff97ba
   desktop_widgets_macos: 9b54eff81606e0ecbddd972d1dd1044bb3b193fe
-  dynamic_color: 5fdff3953fb3457311091863f72914fc76ea3209
+  dynamic_color: b0b28f4bc541eb1a011f49579adedf0ff836adee
   file_selector_macos: 3e56eaea051180007b900eacb006686fd54da150
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  image_picker_macos: 2506ff19cb68903beebc6327ce4024277de6faa8
   operit_folder_access: e49c215aae854e85a2c736a3105f8992373a9768
   printing: 1dd6a1fce2209ec240698e2439a4adbb9b427637
   record_macos: ccd7864c9922136e50c2937b21384f0b175922f2

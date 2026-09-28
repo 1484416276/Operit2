@@ -77,8 +77,19 @@ dependencies:
       ref: 35fb467533e174411a117b2a030c15d2a3a9687c
       path: packages/url_launcher/url_launcher_ohos
   file_selector: ^1.1.0
-  image_picker_ios: ^0.8.13+8
+  image_picker_android: ^0.8.13+17
+  image_picker_ios:
+    path: ../thirdparty/image_picker_ios
   image_picker_platform_interface: ^2.11.1
+  mime: ^2.0.0
+  image_picker_windows:
+    path: ../thirdparty/image_picker_windows
+  image_picker_for_web:
+    path: ../thirdparty/image_picker_for_web
+  image_picker_ohos:
+    path: ../thirdparty/image_picker_ohos
+  image_picker_macos:
+    path: ../thirdparty/image_picker_macos
   file_selector_android:
     path: ../thirdparty/file_selector_android
   file_selector_ios:
@@ -114,6 +125,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 dependency_overrides:
+  image_picker_ios:
+    path: ../thirdparty/image_picker_ios
   dynamic_color:
     path: ../thirdparty/dynamic_color
   webview_flutter_wkwebview:

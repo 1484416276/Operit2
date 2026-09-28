@@ -72,6 +72,40 @@ final class DirectoryPickerCompletionBridge: NSObject, UIDocumentPickerDelegate 
   }
 }
 
+/// Bridge for exporting one byte payload through the native iOS document picker.
+final class SavePickerCompletionBridge: NSObject, UIDocumentPickerDelegate {
+  let completion: FlutterResult
+  let owner: FileSelectorPlugin
+  let temporaryURL: URL
+
+  init(
+    completion: @escaping FlutterResult,
+    owner: FileSelectorPlugin,
+    temporaryURL: URL
+  ) {
+    self.completion = completion
+    self.owner = owner
+    self.temporaryURL = temporaryURL
+  }
+
+  func documentPicker(
+    _ controller: UIDocumentPickerViewController,
+    didPickDocumentsAt urls: [URL]
+  ) {
+    finish(urls.first?.path)
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    finish(nil)
+  }
+
+  private func finish(_ path: String?) {
+    try? FileManager.default.removeItem(at: temporaryURL)
+    completion(path)
+    owner.pendingSaveCompletions.remove(self)
+  }
+}
+
 public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
   /// Owning references to pending completion callbacks.
   ///
@@ -80,17 +114,20 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
   /// removing themselves from it.
   var pendingCompletions: Set<PickerCompletionBridge> = []
   var pendingDirectoryCompletions: Set<DirectoryPickerCompletionBridge> = []
+  var pendingSaveCompletions: Set<SavePickerCompletionBridge> = []
   /// Overridden document picker, for testing.
   var documentPickerViewControllerOverride: UIDocumentPickerViewController?
   /// The view controller provider, for showing the document picker.
   let viewPresenterProvider: ViewPresenterProvider
   private var directoryChannel: FlutterMethodChannel?
+  private var saveChannel: FlutterMethodChannel?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = FileSelectorPlugin(
       viewPresenterProvider: DefaultViewPresenterProvider(registrar: registrar))
     FileSelectorApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
     instance.installDirectoryChannel(binaryMessenger: registrar.messenger())
+    instance.installSaveChannel(binaryMessenger: registrar.messenger())
   }
 
   init(viewPresenterProvider: ViewPresenterProvider) {
@@ -127,6 +164,91 @@ public class FileSelectorPlugin: NSObject, FlutterPlugin, FileSelectorApi {
       self?.handleDirectoryCall(call, result: result)
     }
     directoryChannel = channel
+  }
+
+  private func installSaveChannel(binaryMessenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "dev.flutter.packages.file_selector_ios/save",
+      binaryMessenger: binaryMessenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleSaveCall(call, result: result)
+    }
+    saveChannel = channel
+  }
+
+  private func handleSaveCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "saveFile" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard pendingSaveCompletions.isEmpty else {
+      result(FlutterError(
+        code: "SAVE_IN_PROGRESS",
+        message: "A document save is already active.",
+        details: nil
+      ))
+      return
+    }
+    guard let arguments = call.arguments as? [String: Any],
+          let typedData = arguments["bytes"] as? FlutterStandardTypedData,
+          let requestedName = arguments["name"] as? String,
+          !requestedName.isEmpty else {
+      result(FlutterError(
+        code: "INVALID_SAVE_ARGS",
+        message: "bytes and a non-empty name are required.",
+        details: nil
+      ))
+      return
+    }
+
+    let safeName = URL(fileURLWithPath: requestedName).lastPathComponent
+    let temporaryURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathComponent(safeName.isEmpty ? "untitled" : safeName)
+    do {
+      try FileManager.default.createDirectory(
+        at: temporaryURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try typedData.data.write(to: temporaryURL, options: .atomic)
+    } catch {
+      result(FlutterError(
+        code: "SAVE_TEMP_WRITE_FAILED",
+        message: error.localizedDescription,
+        details: nil
+      ))
+      return
+    }
+
+    let bridge = SavePickerCompletionBridge(
+      completion: result,
+      owner: self,
+      temporaryURL: temporaryURL
+    )
+    let picker: UIDocumentPickerViewController
+    if #available(iOS 14.0, *) {
+      picker = UIDocumentPickerViewController(forExporting: [temporaryURL], asCopy: true)
+    } else {
+      picker = UIDocumentPickerViewController(url: temporaryURL, in: .exportToService)
+    }
+    if let initialPath = arguments["initialDirectory"] as? String,
+       (initialPath as NSString).isAbsolutePath {
+      picker.directoryURL = URL(fileURLWithPath: initialPath)
+    }
+    picker.allowsMultipleSelection = false
+    picker.delegate = bridge
+    guard let presenter = viewPresenterProvider.viewPresenter else {
+      try? FileManager.default.removeItem(at: temporaryURL)
+      result(FlutterError(
+        code: "SAVE_UNAVAILABLE",
+        message: "No view controller available.",
+        details: nil
+      ))
+      return
+    }
+    pendingSaveCompletions.insert(bridge)
+    presenter.present(picker, animated: true, completion: nil)
   }
 
   private func handleDirectoryCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

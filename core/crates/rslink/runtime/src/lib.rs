@@ -264,14 +264,9 @@ pub fn core_value_map(fields: impl IntoIterator<Item = (String, CoreValue)>) -> 
     CoreValue::Map(fields.into_iter().collect())
 }
 
-/// Builds route arguments with the incremental-watch capability marker enabled.
+/// Builds route arguments; transport optimization is owned by Link.
 pub fn core_route_args(fields: impl IntoIterator<Item = (String, CoreValue)>) -> CoreValue {
-    let mut args = fields.into_iter().collect::<BTreeMap<_, _>>();
-    args.insert(
-        operit_link::CORE_INCREMENTAL_VALUES_ARGUMENT.to_string(),
-        CoreValue::Bool(true),
-    );
-    CoreValue::Map(args)
+    core_value_map(fields)
 }
 
 /// Builds the internal Link call request used by annotation-generated routes.
@@ -372,7 +367,6 @@ fn send_core_watch_value_with_attachments<T: Serialize>(
     request_id: &operit_link::CoreRequestId,
     target_route: String,
     property_name: &str,
-    incremental: bool,
     attachment_adopter: &CoreStreamAttachmentAdopter,
     value: T,
 ) {
@@ -385,7 +379,6 @@ fn send_core_watch_value_with_attachments<T: Serialize>(
             .lock()
             .expect("Core watch previous value mutex must not be poisoned"),
         encoded_value,
-        incremental,
     );
     let _ = sender.send(CoreEvent {
         requestId: Some(request_id.clone()),
@@ -406,7 +399,6 @@ where
     T: Serialize + Clone + Send + 'static,
 {
     let (sender, receiver) = core_event_stream_channel();
-    let incremental = request.acceptsIncrementalValues();
     let request_id = request.requestId;
     let target_route = request.target.clone();
     let property_name = request.propertyName;
@@ -420,7 +412,6 @@ where
                 &request_id,
                 target_route.clone(),
                 &property_name,
-                incremental,
                 &attachment_adopter,
                 value,
             );
@@ -439,7 +430,6 @@ where
     T: Serialize + Clone + PartialEq + Send + 'static,
 {
     let (sender, receiver) = core_event_stream_channel();
-    let incremental = request.acceptsIncrementalValues();
     let request_id = request.requestId;
     let target_route = request.target.clone();
     let property_name = request.propertyName;
@@ -453,7 +443,6 @@ where
             &request_id,
             target_route.clone(),
             &property_name,
-            incremental,
             &attachment_adopter,
             value,
         );
@@ -1323,6 +1312,27 @@ pub fn generated_proxy_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_sender_optimizes_without_request_capabilities() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let previous = StdMutex::new(None);
+        let request_id = operit_link::CoreRequestId::new("automatic-delta");
+        let adopter = require_empty_core_stream_attachments();
+        let first = BTreeMap::from([("stable", "x".repeat(2048)), ("changed", "before".into())]);
+        let mut second = first.clone();
+        second.insert("changed", "after".into());
+        for value in [&first, &second] {
+            send_core_watch_value_with_attachments(&sender, &previous, &request_id, 1, "values", &adopter, value);
+        }
+        let snapshot = receiver.try_recv().unwrap();
+        let delta = receiver.try_recv().unwrap();
+        assert_eq!(snapshot.kind, CoreEventKind::Snapshot);
+        assert_eq!(delta.kind, CoreEventKind::Delta);
+        assert_eq!(snapshot.value.applyIncrementalDelta(&delta.value).unwrap(), to_core_value(second).unwrap());
+        assert_eq!(core_route_args([]), CoreValue::emptyMap());
+    }
+
     use operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost;
     use operit_host_api::{
         HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,

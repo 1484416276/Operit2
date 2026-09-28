@@ -46,7 +46,7 @@ void main() {
     await controller.clearCache();
     await controller.clearLocalStorage();
     await controller.runJavaScript('window.value = 1');
-    final Object result = await controller.runJavaScriptReturningResult(
+    final Object? result = await controller.runJavaScriptReturningResult(
       'window.value',
     );
     await controller.addJavaScriptChannel(
@@ -139,7 +139,7 @@ void main() {
     expect(platform.navigationDelegate, navigationDelegate);
     expect(result, 42);
     expect(platform.javaScript, 'window.value = 1');
-    expect(platform.javaScriptReturningResult, 'window.value');
+    expect(platform.javaScriptReturningResult, contains('"window.value"'));
     expect(platform.javaScriptChannelParams!.name, 'TestChannel');
     expect(platform.receivedJavaScriptMessage, 'hello');
     expect(platform.removedJavaScriptChannel, 'TestChannel');
@@ -413,7 +413,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController {
   @override
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     javaScriptReturningResult = javaScript;
-    return 42;
+    return '{"value":42}';
   }
 
   @override

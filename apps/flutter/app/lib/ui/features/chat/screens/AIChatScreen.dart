@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
+import 'package:mime/mime.dart';
 
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
@@ -19,6 +20,7 @@ import '../PendingChatDraftHandler.dart';
 import '../components/ChatScreenContent.dart';
 import '../components/ChatRuntimeScope.dart';
 import '../components/MessageEditorDialog.dart';
+import '../components/attachments/MemoryAttachmentDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
 import '../components/style/input/common/MentionSuggestionPanel.dart';
@@ -233,6 +235,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isCurrentMainScreen = true;
   bool _topBarActionsUpdateScheduled = false;
   bool _pendingQueueEnqueueInFlight = false;
+  bool _cameraRequestInFlight = false;
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
@@ -265,8 +268,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _messageController.addListener(_onMessageControllerChanged);
     unawaited(_loadLongPastedTextInputSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _consumePendingChatDraft();
       _refreshAttachments();
+      if (!widget.embedded) {
+        unawaited(_recoverLostCameraPhoto());
+      }
     });
   }
 
@@ -1096,27 +1103,103 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     return _handleSpecialAttachment('package_attach:$packageName');
   }
 
+  /// Recovers the camera result after Android recreates the activity/process.
+  Future<void> _recoverLostCameraPhoto() async {
+    if (_cameraRequestInFlight) return;
+    _cameraRequestInFlight = true;
+    try {
+      final response = await ImagePickerPlatform.instance.getLostData();
+      if (!mounted || response.isEmpty) return;
+      if (response.exception != null) throw response.exception!;
+      final files =
+          response.files ??
+          (response.file == null ? <XFile>[] : <XFile>[response.file!]);
+      await _handleCapturedPhotos(files);
+    } on UnimplementedError {
+      // Some picker implementations have no interrupted-capture recovery.
+    } on MissingPluginException {
+      // No picker is registered on this host.
+    } catch (error, stackTrace) {
+      _reportCameraError(error, stackTrace);
+    } finally {
+      _cameraRequestInFlight = false;
+    }
+  }
+
+  void _reportCameraError(Object error, StackTrace stackTrace) {
+    ClientLogger.e(
+      'Failed to capture or recover camera photo',
+      tag: 'AIChatScreen',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    if (!mounted) return;
+    final fallback = AppLocalizations.of(context)!.attachmentCameraUnavailable;
+    _showLocalToast(
+      error is PlatformException ? error.message ?? fallback : fallback,
+    );
+  }
+
+  /// Transfers photo bytes so browser blobs and local files share one attachment path.
+  Future<void> _handleCapturedPhotos(List<XFile> files) async {
+    for (final file in files) {
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      final mimeType =
+          lookupMimeType(file.name, headerBytes: bytes) ??
+          file.mimeType ??
+          'image/jpeg';
+      if (!mimeType.startsWith('image/')) {
+        throw StateError('Camera returned a non-image file');
+      }
+      await _viewModel.attachPastedImage(
+        PastedImageAttachmentPayload.fromBytes(
+          fileName:
+              'camera_${DateTime.now().microsecondsSinceEpoch}.${extensionFromMime(mimeType)}',
+          mimeType: mimeType,
+          bytes: bytes,
+        ),
+      );
+    }
+    await _refreshAttachments();
+  }
+
   Future<void> _handleTakePhoto() async {
-    final unavailableMessage =
-        AppLocalizations.of(context)!.attachmentCameraUnavailable;
+    if (_cameraRequestInFlight) return;
+    _cameraRequestInFlight = true;
     try {
       final file = await ImagePickerPlatform.instance.getImageFromSource(
         source: ImageSource.camera,
       );
-      if (file != null && file.path.isNotEmpty) {
-        await _handleAttachmentPaths(<String>[file.path]);
+      if (mounted && file != null) {
+        await _handleCapturedPhotos([file]);
       }
-    } on PlatformException catch (error) {
-      if (!mounted) return;
-      _showLocalToast(error.message ?? unavailableMessage);
-    } catch (_) {
-      if (!mounted) return;
-      _showLocalToast(unavailableMessage);
+    } catch (error, stackTrace) {
+      _reportCameraError(error, stackTrace);
+    } finally {
+      _cameraRequestInFlight = false;
     }
   }
 
-  void _handleAttachMemory() {
-    _showLocalToast(AppLocalizations.of(context)!.attachmentMemoryUnavailable);
+  Future<void> _handleAttachMemory() async {
+    final chatId = _currentChatId;
+    final content = await showDialog<String>(
+      context: context,
+      builder: (context) => MemoryAttachmentDialog(clients: _viewModel.clients),
+    );
+    if (!mounted || content == null || _currentChatId != chatId) return;
+    try {
+      await _viewModel.attachPastedText(content);
+      await _refreshAttachments();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to attach memory',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) _showLocalToast(error.toString());
+    }
   }
 
   Future<void> _removeAttachment(String filePath) async {

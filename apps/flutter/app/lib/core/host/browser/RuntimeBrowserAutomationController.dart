@@ -183,11 +183,11 @@ class RuntimeBrowserAutomationController {
     return jsonEncode(<String, Object?>{'url': url, 'title': title});
   }
 
-  Future<Object> evaluate(String expression) {
+  Future<Object?> evaluate(String expression) {
     return controller.runJavaScriptReturningResult(expression);
   }
 
-  Future<Object> evaluateFunction(String function, {String? selector}) {
+  Future<Object?> evaluateFunction(String function, {String? selector}) {
     final target = selector?.trim();
     if (target == null || target.isEmpty) {
       return controller.runJavaScriptReturningResult('($function)()');
@@ -197,11 +197,11 @@ class RuntimeBrowserAutomationController {
     );
   }
 
-  Future<Object> runCode(String code) {
+  Future<Object?> runCode(String code) {
     return controller.runJavaScriptReturningResult(code);
   }
 
-  Future<Object> snapshot() {
+  Future<Object?> snapshot() {
     return controller.runJavaScriptReturningResult(r'''
 JSON.stringify((function() {
   const selector = 'a,button,input,textarea,select,[role]';
@@ -375,7 +375,7 @@ if (start && end) {
     }
   }
 
-  Future<Object> waitForText(String text) {
+  Future<Object?> waitForText(String text) {
     return controller.runJavaScriptReturningResult('''
 new Promise(function(resolve) {
   const target = ${jsonEncode(text)};
@@ -394,7 +394,7 @@ new Promise(function(resolve) {
 ''');
   }
 
-  Future<Object> waitForTextGone(String text) {
+  Future<Object?> waitForTextGone(String text) {
     return controller.runJavaScriptReturningResult('''
 new Promise(function(resolve) {
   const target = ${jsonEncode(text)};

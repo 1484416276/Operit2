@@ -6,18 +6,28 @@ import 'package:file_selector_platform_interface/file_selector_platform_interfac
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
+import 'package:image_picker_ios/image_picker_ios.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
+
 import 'src/messages.g.dart';
 
 /// An implementation of [FileSelectorPlatform] for iOS.
 class FileSelectorIOS extends FileSelectorPlatform {
   /// Creates a new plugin implementation instance.
-  FileSelectorIOS({@visibleForTesting FileSelectorApi? api})
-    : _hostApi = api ?? FileSelectorApi();
+  FileSelectorIOS({
+    @visibleForTesting FileSelectorApi? api,
+    @visibleForTesting ImagePickerPlatform? imagePicker,
+  }) : _hostApi = api ?? FileSelectorApi(),
+       _imagePicker = imagePicker ?? ImagePickerIOS();
 
   final FileSelectorApi _hostApi;
+  final ImagePickerPlatform _imagePicker;
 
   static const MethodChannel _directoryChannel = MethodChannel(
     'dev.flutter.packages.file_selector_ios/directory',
+  );
+  static const MethodChannel _saveChannel = MethodChannel(
+    'dev.flutter.packages.file_selector_ios/save',
   );
 
   /// Registers the iOS implementation.
@@ -31,6 +41,10 @@ class FileSelectorIOS extends FileSelectorPlatform {
     String? initialDirectory,
     String? confirmButtonText,
   }) async {
+    final media = await _pickMedia(acceptedTypeGroups, multiple: false);
+    if (media != null) {
+      return media.isEmpty ? null : media.first;
+    }
     final List<String> path = await _hostApi.openFile(
       FileSelectorConfig(
         utis: _allowedUtiListFromTypeGroups(acceptedTypeGroups),
@@ -45,6 +59,10 @@ class FileSelectorIOS extends FileSelectorPlatform {
     String? initialDirectory,
     String? confirmButtonText,
   }) async {
+    final media = await _pickMedia(acceptedTypeGroups, multiple: true);
+    if (media != null) {
+      return media;
+    }
     final List<String> pathList = await _hostApi.openFile(
       FileSelectorConfig(
         utis: _allowedUtiListFromTypeGroups(acceptedTypeGroups),
@@ -52,6 +70,103 @@ class FileSelectorIOS extends FileSelectorPlatform {
       ),
     );
     return pathList.map((String path) => XFile(path)).toList();
+  }
+
+  // Only media-only filters belong in Photos. Mixed document filters and
+  // unrestricted requests continue to use Files. An empty result is cancellation;
+  // null means the request is not a photo-library request.
+  Future<List<XFile>?> _pickMedia(
+    List<XTypeGroup>? groups, {
+    required bool multiple,
+  }) async {
+    final utis = _allowedUtiListFromTypeGroups(groups);
+    const images = <String>{
+      'public.image',
+      'public.jpeg',
+      'public.png',
+      'com.compuserve.gif',
+      'org.webmproject.webp',
+      'com.microsoft.bmp',
+      'public.heic',
+      'public.heif',
+      'public.tiff',
+    };
+    const videos = <String>{
+      'public.movie',
+      'public.video',
+      'public.mpeg-4',
+      'com.apple.quicktime-movie',
+      'public.avi',
+      'org.webmproject.matroska',
+      'public.3gpp',
+    };
+    if (utis.isEmpty ||
+        !utis.every((uti) => images.contains(uti) || videos.contains(uti))) {
+      return null;
+    }
+    if (utis.every(images.contains)) {
+      if (multiple) {
+        return _imagePicker.getMultiImageWithOptions(
+          options: const MultiImagePickerOptions(
+            imageOptions: ImageOptions(requestFullMetadata: false),
+          ),
+        );
+      }
+      final image = await _imagePicker.getImageFromSource(
+        source: ImageSource.gallery,
+        options: const ImagePickerOptions(requestFullMetadata: false),
+      );
+      return image == null ? <XFile>[] : <XFile>[image];
+    }
+    if (utis.every(videos.contains)) {
+      if (multiple) {
+        return _imagePicker.getMultiVideoWithOptions();
+      }
+      final video = await _imagePicker.getVideo(source: ImageSource.gallery);
+      return video == null ? <XFile>[] : <XFile>[video];
+    }
+    return _imagePicker.getMedia(
+      options: MediaOptions(
+        allowMultiple: multiple,
+        imageOptions: const ImageOptions(requestFullMetadata: false),
+      ),
+    );
+  }
+
+  /// Saves [file] through the iOS document export picker.
+  ///
+  /// iOS's upstream file_selector implementation only exposes import and
+  /// directory pickers. The repository-owned implementation passes the bytes
+  /// to native code so the export picker can create the destination document.
+  Future<FileSaveLocation?> saveFile({
+    required XFile file,
+    List<XTypeGroup>? acceptedTypeGroups,
+    SaveDialogOptions options = const SaveDialogOptions(),
+  }) async {
+    final String? path = await _saveChannel
+        .invokeMethod<String>('saveFile', <String, Object?>{
+          'bytes': await file.readAsBytes(),
+          'name': options.suggestedName ?? file.name,
+          'mimeType': file.mimeType ?? 'application/octet-stream',
+          'initialDirectory': options.initialDirectory,
+        });
+    return path == null ? null : FileSaveLocation(path);
+  }
+
+  /// Compatibility implementation for callers still using the deprecated API.
+  @override
+  Future<String?> getSavePath({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? suggestedName,
+    String? confirmButtonText,
+  }) async {
+    return _saveChannel.invokeMethod<String>('saveFile', <String, Object?>{
+      'bytes': Uint8List(0),
+      'name': suggestedName ?? 'untitled',
+      'mimeType': 'application/octet-stream',
+      'initialDirectory': initialDirectory,
+    });
   }
 
   /// Opens the native iOS document picker in directory mode.
@@ -155,6 +270,8 @@ class FileSelectorIOS extends FileSelectorPlatform {
         return 'org.webmproject.webp';
       case 'bmp':
         return 'com.microsoft.bmp';
+      case 'heif':
+        return 'public.heif';
       case 'heic':
         return 'public.heic';
       case 'tif':
@@ -197,6 +314,19 @@ class FileSelectorIOS extends FileSelectorPlatform {
         return 'public.zip-archive';
       case 'text/plain':
         return 'public.plain-text';
+      case 'image/jpeg':
+      case 'image/jpg':
+        return 'public.jpeg';
+      case 'image/png':
+        return 'public.png';
+      case 'image/gif':
+        return 'com.compuserve.gif';
+      case 'image/webp':
+        return 'org.webmproject.webp';
+      case 'video/mp4':
+        return 'public.mpeg-4';
+      case 'video/quicktime':
+        return 'com.apple.quicktime-movie';
       case 'image/*':
         return 'public.image';
       case 'video/*':

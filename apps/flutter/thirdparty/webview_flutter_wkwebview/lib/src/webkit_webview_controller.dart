@@ -664,6 +664,15 @@ class WebKitWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> setBackgroundColor(Color color) {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return _webView.setMacOSBackgroundColor(
+        red: color.r,
+        green: color.g,
+        blue: color.b,
+        alpha: color.a,
+      );
+    }
+
     const Color transparent = Colors.transparent;
     return Future.wait(<Future<void>>[
       _webView.setOpaque(false),
@@ -874,7 +883,7 @@ class WebKitWebViewController extends PlatformWebViewController {
         return _webView.scrollView.setDelegate(null);
       }
     } else {
-      // TODO(stuartmorgan): Investigate doing this via JS instead.
+      // macOS does not expose UIScrollView's scroll callback delegate.
       throw UnimplementedError(
         'setOnScrollPositionChange is not implemented on macOS',
       );
@@ -928,9 +937,8 @@ class WebKitWebViewController extends PlatformWebViewController {
     final WKUserContentController controller = await _webView.configuration
         .getUserContentController();
     await controller.removeAllUserScripts();
-    // TODO(bparrishMines): This can be replaced with
-    // `removeAllScriptMessageHandlers` once Dart supports runtime version
-    // checking. (e.g. The equivalent to @availability in Objective-C.)
+    // Keep the per-channel removal for compatibility with older WebKit
+    // versions where the bulk API is unavailable.
     _javaScriptChannelParams.keys.forEach(
       controller.removeScriptMessageHandler,
     );

@@ -307,7 +307,10 @@ window.scrollTo(0, document.body ? document.body.scrollHeight : document.documen
     }
   }
 
-  WebVisitResult _decodeVisitResult(Object raw) {
+  WebVisitResult _decodeVisitResult(Object? raw) {
+    if (raw == null) {
+      throw StateError('Web page extraction returned no result');
+    }
     Object? decoded = raw;
     if (decoded is String) {
       decoded = jsonDecode(decoded);

@@ -105,6 +105,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
+  camera_platform_interface:
+    dependency: transitive
+    description:
+      name: camera_platform_interface
+      sha256: "9365babc7488a9e93d0ed6dcccd917619fb12ea6f9e601519e1191d4890ee2fe"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.14.0"
+  camera_windows:
+    dependency: transitive
+    description:
+      name: camera_windows
+      sha256: da05937f6dff64fbbd2d64f74e4240b6da50d377031034704b0a12a9dfb4ea15
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   characters:
     dependency: transitive
     description:
@@ -238,10 +254,9 @@ packages:
   dynamic_color:
     dependency: "direct main"
     description:
-      name: dynamic_color
-      sha256: "4aeb76de323e8eb660bab5557d826ad7ebbf1434a598f0c6aa8a11a9696a6757"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../thirdparty/dynamic_color"
+      relative: true
+    source: path
     version: "1.9.0"
   equatable:
     dependency: transitive
@@ -381,6 +396,14 @@ packages:
       relative: true
     source: path
     version: "0.7.4"
+  flutter_plugin_android_lifecycle:
+    dependency: transitive
+    description:
+      name: flutter_plugin_android_lifecycle
+      sha256: "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.35"
   flutter_shaders:
     dependency: transitive
     description:
@@ -452,14 +475,42 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.10.1"
+  image_picker_android:
+    dependency: "direct main"
+    description:
+      name: image_picker_android
+      sha256: d5b3e1774af29c9ab00103afb0d4614070f924d2e0057ac867ec98800114793f
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.8.13+17"
+  image_picker_for_web:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/image_picker_for_web"
+      relative: true
+    source: path
+    version: "3.1.1"
   image_picker_ios:
     dependency: "direct main"
     description:
-      name: image_picker_ios
-      sha256: "852a7762962f3bb3ad54ef1d342669e41557f466033a676baa8876b367cf4050"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../thirdparty/image_picker_ios"
+      relative: true
+    source: path
     version: "0.8.13+8"
+  image_picker_macos:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/image_picker_macos"
+      relative: true
+    source: path
+    version: "0.2.2+1"
+  image_picker_ohos:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/image_picker_ohos"
+      relative: true
+    source: path
+    version: "0.8.7+4"
   image_picker_platform_interface:
     dependency: "direct main"
     description:
@@ -468,6 +519,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.11.1"
+  image_picker_windows:
+    dependency: "direct main"
+    description:
+      path: "../thirdparty/image_picker_windows"
+      relative: true
+    source: path
+    version: "0.2.2"
   integration_test:
     dependency: "direct dev"
     description: flutter
@@ -576,6 +634,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.17.0"
+  mime:
+    dependency: "direct main"
+    description:
+      name: mime
+      sha256: bd47de35f07e27267e69c8c8b22edf9473bfee170a60d60fcc93730c5144b7f6
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.0"
   nested:
     dependency: transitive
     description:
@@ -884,6 +950,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.4"
+  stream_transform:
+    dependency: transitive
+    description:
+      name: stream_transform
+      sha256: a00e5f18bffc764f923e7dec1038527f7fe7a1791361a7117f0358193f13d53a
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.2"
   string_scanner:
     dependency: transitive
     description:

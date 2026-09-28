@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  camera_windows
   desktop_drop
   desktop_multi_window
   desktop_widgets_windows

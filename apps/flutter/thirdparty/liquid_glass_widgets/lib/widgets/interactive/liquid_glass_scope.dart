@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/rendering.dart';
 
 /// A scope that provides infrastructure for glass refraction on Skia and Web.
 ///
@@ -174,11 +175,30 @@ class GlassBackgroundSource extends StatelessWidget {
     // If no scope is found, render the child normally — no silent failures.
     if (key == null) return child;
 
-    return RepaintBoundary(
+    return _GlassCaptureBoundary(
       key: key,
       child: child,
     );
   }
+}
+
+/// Counts actual background paints so sampling never needs to drive new frames.
+class GlassCaptureRenderBoundary extends RenderRepaintBoundary {
+  int paintRevision = 0;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    super.paint(context, offset);
+    paintRevision++;
+  }
+}
+
+class _GlassCaptureBoundary extends SingleChildRenderObjectWidget {
+  const _GlassCaptureBoundary({super.key, required super.child});
+
+  @override
+  GlassCaptureRenderBoundary createRenderObject(BuildContext context) =>
+      GlassCaptureRenderBoundary();
 }
 
 /// Deprecated: use [GlassBackgroundSource] instead.

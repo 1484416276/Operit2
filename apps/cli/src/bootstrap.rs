@@ -99,7 +99,10 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     .withWebSocketHost(Arc::new(NativeHttpHost::new()))
     .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
-    .withRuntimeStorageWriteHost(runtimeStorageWriteHost);
+    .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
+    .withServiceDiscoveryHost(Arc::new(
+        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default(),
+    ));
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         context = context.withTerminalHost(Arc::new(NativeTerminalHost::new()));

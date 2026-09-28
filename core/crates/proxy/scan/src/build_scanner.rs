@@ -26,7 +26,7 @@ pub(crate) fn object_specs(
         "ChatServiceCore",
         ObjectAccess::ResolvedHolder {
             holder_field: "chatRuntimeHolder".to_string(),
-            resolver_method: "coreForObjectId".to_string(),
+            resolver_method: "coreForTarget".to_string(),
             proxy_aliases: Vec::new(),
         },
         ObjectPathMatch::Exact,
@@ -200,7 +200,7 @@ pub(crate) fn discover_factory_object_specs(
                 continue;
             }
             specs.push(ObjectSpec {
-                object_id: 0,
+                object_id: String::new(),
                 dispatch_name: dispatch_name_from_schema_key(&schema_key),
                 schema_key,
                 type_name: target_type.type_name.clone(),
@@ -272,7 +272,7 @@ fn required_object_spec(
 ) -> ObjectSpec {
     let source_path = source_root.as_path().join(relative_path);
     ObjectSpec {
-        object_id: 0,
+        object_id: String::new(),
         schema_key: schema_key.to_string(),
         dispatch_name: dispatch_name_from_schema_key(schema_key),
         type_name: type_name.to_string(),
@@ -329,7 +329,7 @@ fn discover_core_proxy_objects_inner(
         }
         let schema_key = lower_first(&type_name);
         specs.push(ObjectSpec {
-            object_id: 0,
+            object_id: String::new(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             schema_key,
             full_type: full_type_for_source_with_crate(
@@ -369,7 +369,7 @@ fn discover_constructible_objects(
         let path_match = constructible_object_path_match(&access);
         let schema_key = format!("{schema_prefix}.{}", lower_first(&type_name));
         specs.push(ObjectSpec {
-            object_id: 0,
+            object_id: String::new(),
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             full_type: full_type_for_source_with_crate(
@@ -448,7 +448,7 @@ fn discover_constructible_objects_recursive_inner(
             schema_key = format!("{prefix}.{}", lower_first(&type_name));
         }
         specs.push(ObjectSpec {
-            object_id: 0,
+            object_id: String::new(),
             schema_key: schema_key.clone(),
             dispatch_name: dispatch_name_from_schema_key(&schema_key),
             full_type: full_type_for_source_with_crate(
@@ -702,7 +702,7 @@ pub(crate) fn scan_object(
         type_registry,
     );
     SourceObject {
-        object_id: spec.object_id,
+        object_id: spec.object_id.clone(),
         schema_key: spec.schema_key.clone(),
         dispatch_name: spec.dispatch_name.clone(),
         full_type: spec.full_type.clone(),

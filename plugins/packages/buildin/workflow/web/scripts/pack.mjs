@@ -18,5 +18,10 @@ async function collect(directory) {
       files[path] = new Uint8Array(await readFile(path));
   }
 }
+const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
+if (typeof manifest.public_api !== "string" || manifest.public_api !== "src/api.ts") {
+  throw new Error("Workflow public_api must identify src/api.ts");
+}
+files[manifest.public_api] = new Uint8Array(await readFile(manifest.public_api));
 await collect("dist");
 await writeFile("dist/workflow.toolpkg", zipSync(files));

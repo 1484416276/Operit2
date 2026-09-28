@@ -99,7 +99,7 @@ void main() {
       final bridge = ProxyCoreRuntimeBridge(coreProxy: proxy);
       final firstStream = bridge.openEmbeddedCoreStream<MarkdownStreamEvent>(
         'stream-ai',
-        64,
+        'core/test64',
         'openCoreStream',
         <String, Object?>{'streamId': 'stream-ai'},
         MarkdownStreamEvent.fromMessagePack,
@@ -111,7 +111,7 @@ void main() {
 
       final secondStream = bridge.openEmbeddedCoreStream<MarkdownStreamEvent>(
         'stream-ai',
-        64,
+        'core/test64',
         'openCoreStream',
         <String, Object?>{'streamId': 'stream-ai'},
         MarkdownStreamEvent.fromMessagePack,
@@ -154,7 +154,7 @@ class _RecordingBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -256,7 +256,7 @@ class _GeneratedFlowBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -411,7 +411,7 @@ CoreEvent _rawGeneratedEvent(
 ) {
   return CoreEvent.raw(
     requestId: request.requestId,
-    targetObjectId: request.targetObjectId,
+    target: request.target,
     propertyName: request.propertyName,
     kind: kind,
     valueBytes: encodeCoreLink(value),
@@ -448,7 +448,7 @@ Map<String, Object?> _streamDescriptorValue(String streamId) {
   return <String, Object?>{
     r'$coreStream': <String, Object?>{
       'streamId': streamId,
-      'targetObjectId': 64,
+      'target': 'core/test64',
       'propertyName': 'openCoreStream',
       'args': <String, Object?>{'streamId': streamId},
     },

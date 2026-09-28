@@ -24,22 +24,22 @@ pub(crate) fn render_generated(
     output.push_str(&schema_json);
     output.push_str("\"#).expect(\"generated core proxy schema must be valid JSON\")).expect(\"generated core proxy schema must convert to CoreValue\")\n");
     output.push_str("}\n\n");
-    output.push_str("/// Returns the generated numeric object ID for one concrete runtime type.\n");
-    output.push_str("pub fn generated_object_id_for_type(typeName: &str) -> Option<u32> {\n    match typeName {\n");
+    output.push_str("/// Returns the generated string target for one concrete runtime type.\n");
+    output.push_str("pub fn generated_target_for_type(typeName: &str) -> Option<&'static str> {\n    match typeName {\n");
     for object in objects {
         output.push_str(&format!(
             "        {:?} => Some({}),\n",
-            object.full_type, object.object_id
+            object.full_type, format!("{:?}", object.object_id)
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
-    output.push_str("/// Returns the generated numeric object id for one schema key.\n");
-    output.push_str("pub fn generated_object_id_for_schema(schema: &str) -> Option<u32> {\n");
+    output.push_str("/// Returns the generated string target for one schema key.\n");
+    output.push_str("pub fn generated_target_for_schema(schema: &str) -> Option<&'static str> {\n");
     output.push_str("    match schema {\n");
     for object in objects {
         output.push_str(&format!(
             "        {:?} => Some({}),\n",
-            object.schema_key, object.object_id
+            object.schema_key, format!("{:?}", object.object_id)
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
@@ -85,7 +85,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
                 .methods
                 .iter()
                 .filter(|method| method.reverse_stream_protocol().is_some())
-                .map(move |method| format!("({}, {:?})", object.object_id, method.name))
+                .map(move |method| format!("({}, {:?})", format!("{:?}", object.object_id), method.name))
         })
         .collect::<Vec<_>>()
         .join(" | ");
@@ -93,7 +93,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
     if patterns.is_empty() {
         output.push_str("    false\n");
     } else {
-        output.push_str("    matches!((request.targetObjectId, request.methodName.as_str()), ");
+        output.push_str("    matches!((request.target.as_str(), request.methodName.as_str()), ");
         output.push_str(&patterns);
         output.push_str(")\n");
     }
@@ -102,7 +102,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
         "/// Opens one schema-declared reverse stream without exposing Link details to services.\n",
     );
     output.push_str("fn generated_open_reverse_stream(proxy: &LocalCoreProxy, request: operit_link::CorePushRequest) -> Result<operit_rslink_runtime::CoreReverseStreamSession, operit_link::CoreLinkError> {\n");
-    output.push_str("    match (request.targetObjectId, request.methodName.as_str()) {\n");
+    output.push_str("    match (request.target.as_str(), request.methodName.as_str()) {\n");
     for object in objects {
         for method in &object.methods {
             let Some(reverse) = method.reverse_stream_protocol() else {
@@ -148,7 +148,7 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            output.push_str(&format!("        ({:?}, {:?}) => {{\n            let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}            let (sender, input) = operit_rslink_runtime::core_reverse_stream_channel::<{}>();\n            let (completionSender, completionReceiver) = tokio::sync::oneshot::channel();\n            let hostManager = proxy.hostManager.clone();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(), \"core-rslinkrs-reverse-stream\", Box::new(move || Box::pin(async move {{\n{}                let result = match object {{\n                    Ok(object) => object.{}({}).await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),\n                    Err(error) => Err(error),\n                }};\n                let _ = completionSender.send(result);\n            }}))).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(operit_rslink_runtime::CoreReverseStreamSession::new(sender, completionReceiver))\n        }}\n", object.object_id, method.name, decode_args, reverse.item_type, construct_object, method.name, call_args));
+            output.push_str(&format!("        ({:?}, {:?}) => {{\n            let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}            let (sender, input) = operit_rslink_runtime::core_reverse_stream_channel::<{}>();\n            let (completionSender, completionReceiver) = tokio::sync::oneshot::channel();\n            let hostManager = proxy.hostManager.clone();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(), \"core-rslinkrs-reverse-stream\", Box::new(move || Box::pin(async move {{\n{}                let result = match object {{\n                    Ok(object) => object.{}({}).await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),\n                    Err(error) => Err(error),\n                }};\n                let _ = completionSender.send(result);\n            }}))).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(operit_rslink_runtime::CoreReverseStreamSession::new(sender, completionReceiver))\n        }}\n", format!("{:?}", object.object_id), method.name, decode_args, reverse.item_type, construct_object, method.name, call_args));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::new(\"REVERSE_STREAM_NOT_FOUND\", \"reverse stream method is not declared by this proxy\")),\n    }\n}\n\n");

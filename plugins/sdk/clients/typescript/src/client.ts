@@ -4,7 +4,7 @@ import { decode, encode } from '@msgpack/msgpack';
 /** One Core watch event returned through Plugin SDK IPC. */
 export interface OperitPluginSdkEvent {
   readonly requestId: string | null;
-  readonly targetObjectId: number;
+  readonly target: string;
   readonly propertyName: string;
   readonly kind: string;
   readonly value: unknown;
@@ -38,21 +38,21 @@ export class OperitPluginSdkClient {
   public close(): void { this.host.close(); this.fail(new Error('Plugin SDK connection closed')); }
 
   /** Calls one generated Core method. */
-  public call(targetObjectId: number, methodName: string, args?: unknown): Promise<unknown> {
+  public call(target: string, methodName: string, args?: unknown): Promise<unknown> {
     const requestId = this.requestId();
     return this.request(requestId, {
       type: 'Call',
-      body: { requestId, targetObjectId, methodName, args: args ?? {} },
+      body: { requestId, target, methodName, args: args ?? {} },
     });
   }
 
   /** Calls one route and decodes its MessagePack value. */
-  public callTyped<T>(targetObjectId: number, methodName: string, args: unknown, decodeValue: (value: unknown) => T): Promise<T> {
-    return this.call(targetObjectId, methodName, args).then(decodeValue);
+  public callTyped<T>(target: string, methodName: string, args: unknown, decodeValue: (value: unknown) => T): Promise<T> {
+    return this.call(target, methodName, args).then(decodeValue);
   }
 
   /** Watches one generated Core property. */
-  public async *watch(targetObjectId: number, propertyName: string, args?: unknown): AsyncIterable<OperitPluginSdkEvent> {
+  public async *watch(target: string, propertyName: string, args?: unknown): AsyncIterable<OperitPluginSdkEvent> {
     const subscriptionId = this.requestId();
     const queue = new AsyncQueue<OperitPluginSdkEvent>();
     this.watchQueues.set(subscriptionId, queue);
@@ -60,7 +60,7 @@ export class OperitPluginSdkClient {
       type: 'WatchOpen',
       body: {
         subscriptionId,
-        request: { requestId: subscriptionId, targetObjectId, propertyName, args: args ?? {} },
+        request: { requestId: subscriptionId, target, propertyName, args: args ?? {} },
       },
     });
     try {
@@ -72,16 +72,16 @@ export class OperitPluginSdkClient {
   }
 
   /** Watches one route and decodes each MessagePack event value. */
-  public async *watchTyped<T>(targetObjectId: number, propertyName: string, args: unknown, decodeValue: (value: unknown) => T): AsyncIterable<T> {
-    for await (const event of this.watch(targetObjectId, propertyName, args)) yield decodeValue(event.value);
+  public async *watchTyped<T>(target: string, propertyName: string, args: unknown, decodeValue: (value: unknown) => T): AsyncIterable<T> {
+    for await (const event of this.watch(target, propertyName, args)) yield decodeValue(event.value);
   }
 
   /** Opens one generated caller-owned Core input stream. */
-  public async push(targetObjectId: number, methodName: string, args?: unknown): Promise<OperitPluginSdkPushSink> {
+  public async push(target: string, methodName: string, args?: unknown): Promise<OperitPluginSdkPushSink> {
     const pushId = this.requestId();
     await this.request(pushId, {
       type: 'PushOpen',
-      body: { requestId: pushId, targetObjectId, methodName, args: args ?? {} },
+      body: { requestId: pushId, target, methodName, args: args ?? {} },
     });
     let sequence = 0;
     return {
@@ -153,7 +153,7 @@ export class OperitPluginSdkClient {
   /** Converts one serialized Core event. */
   private event(value: unknown): OperitPluginSdkEvent {
     const event = value as Record<string, unknown>;
-    return { requestId: event.requestId as string | null, targetObjectId: event.targetObjectId as number, propertyName: event.propertyName as string, kind: String(event.kind), value: event.value };
+    return { requestId: event.requestId as string | null, target: event.target as string, propertyName: event.propertyName as string, kind: String(event.kind), value: event.value };
   }
 
   /** Fails pending calls and watch streams after the platform carrier closes. */

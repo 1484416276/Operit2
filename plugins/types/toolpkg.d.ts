@@ -3596,6 +3596,34 @@ export namespace ToolPkg {
   }
 
   /**
+   * Supplies the payload and authenticated calling package to a public API handler.
+   */
+  export interface PublicApiEvent<TPayload> {
+    /**
+     * Contains the caller's JSON request.
+     */
+    payload: TPayload;
+    /**
+     * Identifies the calling package, attached by the runtime.
+     */
+    callerPackage: string;
+  }
+
+  /**
+   * Registers one explicitly published function implemented by this package.
+   */
+  export interface PublicApiRegistration<TPayload, TResult> {
+    /**
+     * Identifies the stable public method name.
+     */
+    name: string;
+    /**
+     * Handles a request in the provider's main runtime.
+     */
+    function: (arg0: PublicApiEvent<TPayload>) => Promise<TResult>;
+  }
+
+  /**
    * Provides IPC and registration services for the current ToolPkg package.
    */
   export interface Registry {
@@ -3607,6 +3635,14 @@ export namespace ToolPkg {
      * Exposes declared WASM exports for this ToolPkg registry.
      */
     wasm: WasmApi;
+    /**
+     * Publishes an exported handler for dependent packages.
+     */
+    registerApi<TPayload, TResult>(definition: PublicApiRegistration<TPayload, TResult>): void;
+    /**
+     * Calls an explicitly published method of a declared prerequisite.
+     */
+    callDependency<TPayload, TResult>(packageName: string, methodName: string, payload: TPayload): Promise<TResult>;
     /**
      * Registers a Compose DSL screen in the toolbox UI.
      */

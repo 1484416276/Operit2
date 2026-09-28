@@ -118,6 +118,7 @@ fn parseCapturedRegistration(
 ) -> Result<ToolPkgMainRegistration, String> {
     Ok(ToolPkgMainRegistration {
         marketOrigin: parseMarketOrigin(captured.marketOrigin, toolPkgId)?,
+        publicApis: parseRegisteredItems(&captured.publicApis, "public_api", toolPkgId)?,
         toolboxUiModules: parseRegisteredItems(
             &captured.toolboxUiModules,
             TOOLPKG_REGISTRATION_TOOLBOX_UI_MODULE,

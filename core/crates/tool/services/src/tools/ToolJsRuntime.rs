@@ -258,6 +258,7 @@ pub async fn invokeToolPkgIpc(
         ));
     }
     let packageManager = toolHandler.getOrCreatePackageManager();
+    let mut publicMethod = None;
     let (engine, scriptPath, script) = {
         let manager = packageManager
             .lock()
@@ -265,6 +266,20 @@ pub async fn invokeToolPkgIpc(
         let containerRuntime = manager
             .getToolPkgContainerRuntime(&packageTarget)
             .ok_or_else(|| format!("ToolPkg container not found: {packageTarget}"))?;
+        if let Some(callerName) = request.dependency_caller.as_deref() {
+            if !isMainTarget || callerName == packageTarget {
+                return Err("Dependency APIs require a distinct prerequisite main runtime".to_string());
+            }
+            let caller = manager.getToolPkgContainerRuntime(callerName)
+                .ok_or_else(|| format!("Dependency caller not found: {callerName}"))?;
+            publicMethod = Some(validateDependencyCall(
+                &caller,
+                &containerRuntime,
+                manager.isPackageEnabled(callerName),
+                manager.isPackageEnabled(&packageTarget),
+                &channel,
+            )?);
+        }
         let engine = if isMainTarget {
             manager.getToolPkgExecutionEngine(&targetContextKey, &packageTarget)
         } else {
@@ -328,10 +343,25 @@ pub async fn invokeToolPkgIpc(
         "__operit_toolpkg_ipc_caller_context_key".to_string(),
         Value::String(request.caller_context_key.trim().to_string()),
     );
+    let functionName = match publicMethod {
+        Some(method) => {
+            params.remove("__operit_inline_function_name");
+            params.remove("__operit_inline_function_source");
+            if let Some(source) = method.functionSource {
+                params.insert("__operit_inline_function_name".to_string(), Value::String(method.function.clone()));
+                params.insert("__operit_inline_function_source".to_string(), Value::String(source));
+            }
+            params.insert("payload".to_string(), request.payload.clone());
+            params.insert("callerPackage".to_string(), Value::String(request.dependency_caller.clone()
+                .ok_or_else(|| "Public API caller is required".to_string())?));
+            method.function
+        }
+        None => TOOLPKG_IPC_DISPATCH_FUNCTION_NAME.to_string(),
+    };
     let result = engine
         .execute_script_function_async(
             script,
-            TOOLPKG_IPC_DISPATCH_FUNCTION_NAME.to_string(),
+            functionName,
             params,
             BTreeMap::new(),
             None,
@@ -341,6 +371,37 @@ pub async fn invokeToolPkgIpc(
         .await
         .map_err(|error| error.to_string())?;
     decode_js_execution_result_value(result.as_deref()).map_err(|error| error.to_string())
+}
+
+/// Checks public dependency access against the authenticated caller and installed contracts.
+#[allow(non_snake_case)]
+fn validateDependencyCall(
+    caller: &operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime,
+    provider: &operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime,
+    callerEnabled: bool,
+    providerEnabled: bool,
+    method: &str,
+) -> Result<operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredFunctionHook, String> {
+    if !callerEnabled || !providerEnabled {
+        return Err("Dependency caller and provider must both be enabled".to_string());
+    }
+    let requirement = caller.requires.iter().find(|item| item.id == provider.packageName)
+        .ok_or_else(|| format!("{} does not declare dependency {}", caller.packageName, provider.packageName))?;
+    for (bound, minimum) in [(&requirement.minVersion, true), (&requirement.maxVersion, false)] {
+        if let Some(bound) = bound {
+            let comparison = operit_util::GithubReleaseUtil::GithubReleaseUtil::compareVersions(
+                &provider.version, bound,
+            )?;
+            if (minimum && comparison < 0) || (!minimum && comparison > 0) {
+                return Err(format!("Dependency version mismatch: {}", provider.packageName));
+            }
+        }
+    }
+    if provider.publicApi.is_none() {
+        return Err(format!("{} does not publish public_api", provider.packageName));
+    }
+    provider.publicApis.iter().find(|item| item.id == method).cloned()
+        .ok_or_else(|| format!("Public API not found: {}/{method}", provider.packageName))
 }
 
 /// Resolves the ToolPkg runtime kind encoded by a context key.
@@ -375,4 +436,50 @@ fn requiredText(value: &str, fieldName: &str) -> Result<String, String> {
         return Err(format!("{fieldName} is required"));
     }
     Ok(trimmed.to_string())
+}
+
+#[cfg(test)]
+mod dependency_api_tests {
+    use super::validateDependencyCall;
+    use operit_plugin_sdk::toolpkg::ToolPkgParser::{
+        ToolPkgContainerRuntime, ToolPkgManifestRequirement, ToolPkgRegisteredFunctionHook,
+    };
+
+    /// Verifies enabled state, declared version bounds, and explicit exports independently.
+    #[test]
+    fn enforces_public_dependency_contract() {
+        let mut caller = ToolPkgContainerRuntime {
+            packageName: "consumer".to_string(),
+            requires: vec![ToolPkgManifestRequirement {
+                id: "provider".to_string(),
+                minVersion: Some("1.0.0".to_string()),
+                maxVersion: Some("1.2.0".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut provider = ToolPkgContainerRuntime {
+            packageName: "provider".to_string(),
+            version: "1.1.0".to_string(),
+            publicApi: Some("api.ts".to_string()),
+            publicApis: vec![ToolPkgRegisteredFunctionHook {
+                id: "run".to_string(),
+                function: "runExport".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(validateDependencyCall(&caller, &provider, true, true, "run").unwrap().function, "runExport");
+        assert!(validateDependencyCall(&caller, &provider, false, true, "run").is_err());
+        assert!(validateDependencyCall(&caller, &provider, true, false, "run").is_err());
+        assert!(validateDependencyCall(&caller, &provider, true, true, "private").is_err());
+        provider.version = "1.3.0".to_string();
+        assert!(validateDependencyCall(&caller, &provider, true, true, "run").is_err());
+        provider.version = "1.1.0".to_string();
+        provider.publicApi = None;
+        assert!(validateDependencyCall(&caller, &provider, true, true, "run").is_err());
+        provider.publicApi = Some("api.ts".to_string());
+        caller.requires.clear();
+        assert!(validateDependencyCall(&caller, &provider, true, true, "run").is_err());
+    }
 }

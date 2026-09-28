@@ -78,7 +78,7 @@ fn openCoreResponseStream(
         &format!(
             "response.open requestId={} target={} property={} streamKey={} initialChars={}",
             request.requestId.0,
-            request.targetObjectId,
+            request.target.clone(),
             request.propertyName,
             streamKey,
             initialContent.chars().count()
@@ -95,7 +95,7 @@ fn openCoreResponseStream(
                         sendCoreTextEvent(
                             &sender,
                             &request.requestId,
-                            request.targetObjectId,
+                            request.target.clone(),
                             &request.propertyName,
                             CoreEventKind::Changed,
                             operit_link::toCoreValue(event)
@@ -111,7 +111,7 @@ fn openCoreResponseStream(
                                 sendCoreTextEvent(
                                     &sender,
                                     &request.requestId,
-                                    request.targetObjectId,
+                                    request.target.clone(),
                                     &request.propertyName,
                                     CoreEventKind::Changed,
                                     operit_link::toCoreValue(event)
@@ -150,7 +150,7 @@ fn openCoreResponseStream(
                             sendCoreTextEvent(
                                 &sender,
                                 &request.requestId,
-                                request.targetObjectId,
+                                request.target.clone(),
                                 &request.propertyName,
                                 CoreEventKind::Changed,
                                 operit_link::toCoreValue(markdownEvent)
@@ -171,7 +171,7 @@ fn openCoreResponseStream(
                     sendCoreTextEvent(
                         &sender,
                         &request.requestId,
-                        request.targetObjectId,
+                        request.target.clone(),
                         &request.propertyName,
                         CoreEventKind::Completed,
                         completionValue,
@@ -187,7 +187,7 @@ fn openCoreResponseStream(
 fn sendCoreTextEvent(
     sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     requestId: &CoreRequestId,
-    targetObjectId: u32,
+    target: String,
     propertyName: &str,
     kind: CoreEventKind,
     value: CoreValue,
@@ -195,7 +195,7 @@ fn sendCoreTextEvent(
     if sender
         .send(CoreEvent {
             requestId: Some(requestId.clone()),
-            targetObjectId,
+            target: target.clone(),
             propertyName: propertyName.to_string(),
             kind,
             value,
@@ -206,7 +206,7 @@ fn sendCoreTextEvent(
             "CoreStreamTrace",
             &format!(
                 "response.event.receiver_closed requestId={} target={} property={}",
-                requestId.0, targetObjectId, propertyName
+                requestId.0, target, propertyName
             ),
         );
     }

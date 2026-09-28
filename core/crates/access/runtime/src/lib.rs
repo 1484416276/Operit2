@@ -1973,7 +1973,7 @@ impl RemoteWsConnection {
     pub(crate) fn sendPayload(&self, payload: RemoteWsPayload) -> Result<(), String> {
         let payloadBytes = operit_link::encodeLink(&payload).map_err(|error| error.to_string())?;
         let envelope = RemoteWsEnvelope {
-            protocolVersion: 3,
+            protocolVersion: 4,
             sessionId: self.sessionId.clone(),
             deviceId: self.deviceId.clone(),
             signature: sign(&self.sessionSecret, &payloadBytes),
@@ -2123,7 +2123,7 @@ impl PairedRemoteSession {
             "POST",
             format!("{}/link/{path}", self.baseUrl),
             vec![
-                ("x-operit-link-version".to_string(), "3".to_string()),
+                ("x-operit-link-version".to_string(), "4".to_string()),
                 ("x-operit-session".to_string(), self.sessionId.clone()),
                 ("x-operit-device".to_string(), self.deviceId.clone()),
                 (
@@ -2157,7 +2157,7 @@ async fn hello(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Resp
         None => return internal_server_error("Current device profile is not initialized"),
     };
     Json(HelloResponse {
-        protocolVersion: 3,
+        protocolVersion: 4,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
         coreDeviceId: state.deviceId,
         coreDeviceInfo: state.deviceInfo,
@@ -2351,7 +2351,7 @@ async fn session_info(
     encode_link_response(
         StatusCode::OK,
         RemoteSessionInfoResponse {
-            protocolVersion: 3,
+            protocolVersion: 4,
             pairingServiceVersion: session.pairingServiceVersion,
             coreDeviceId: state.deviceId,
             coreDeviceInfo: state.deviceInfo,
@@ -2647,7 +2647,7 @@ async fn static_web_access_hello(
         return internal_server_error("Current device profile is not initialized");
     };
     Json(HelloResponse {
-        protocolVersion: 3,
+        protocolVersion: 4,
         pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
         coreDeviceId: control.deviceId.clone(),
         coreDeviceInfo: control.deviceInfo.clone(),
@@ -2856,7 +2856,7 @@ async fn static_web_access_session_info(
     encode_link_response(
         StatusCode::OK,
         RemoteSessionInfoResponse {
-            protocolVersion: 3,
+            protocolVersion: 4,
             pairingServiceVersion: session.pairingServiceVersion,
             coreDeviceId: control.deviceId.clone(),
             coreDeviceInfo: control.deviceInfo.clone(),
@@ -2993,12 +2993,12 @@ async fn verify_static_web_access_session(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<VerifiedRemoteSession, Response> {
-    if header_string(headers, "x-operit-link-version").as_deref() != Some("3") {
+    if header_string(headers, "x-operit-link-version").as_deref() != Some("4") {
         return Err(encode_link_response(
             StatusCode::BAD_REQUEST,
             CoreLinkError::new(
                 "LINK_VERSION_MISMATCH",
-                "Link protocol version 3 is required",
+                "Link protocol version 4 is required",
             ),
         ));
     }
@@ -3146,10 +3146,10 @@ async fn verify_ws_envelope(
     state: &RemoteLinkState,
     envelope: &RemoteWsEnvelope,
 ) -> Result<VerifiedRemoteSession, CoreLinkError> {
-    if envelope.protocolVersion != 3 {
+    if envelope.protocolVersion != 4 {
         return Err(CoreLinkError::new(
             "LINK_VERSION_MISMATCH",
-            "Link protocol version 3 is required",
+            "Link protocol version 4 is required",
         ));
     }
     verify_session_parts(
@@ -3343,10 +3343,10 @@ async fn handle_ws_envelope(
     state: &RemoteLinkState,
     envelope: RemoteWsEnvelope,
 ) -> RemoteWsResponse {
-    if envelope.protocolVersion != 3 {
+    if envelope.protocolVersion != 4 {
         return RemoteWsResponse::Error(CoreLinkError::new(
             "LINK_VERSION_MISMATCH",
-            "Link protocol version 3 is required",
+            "Link protocol version 4 is required",
         ));
     }
     let payload = match operit_link::decodeLink::<RemoteWsPayload>(&envelope.payloadBytes) {
@@ -3386,7 +3386,7 @@ async fn handle_ws_envelope(
                 ));
             };
             RemoteWsResponse::SessionInfo(RemoteSessionInfoResponse {
-                protocolVersion: 3,
+                protocolVersion: 4,
                 pairingServiceVersion: session.pairingServiceVersion,
                 coreDeviceId: state.deviceId.clone(),
                 coreDeviceInfo: state.deviceInfo.clone(),
@@ -3411,12 +3411,12 @@ async fn verify_session(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<VerifiedRemoteSession, Response> {
-    if header_string(headers, "x-operit-link-version").as_deref() != Some("3") {
+    if header_string(headers, "x-operit-link-version").as_deref() != Some("4") {
         return Err(encode_link_response(
             StatusCode::BAD_REQUEST,
             CoreLinkError::new(
                 "LINK_VERSION_MISMATCH",
-                "Link protocol version 3 is required",
+                "Link protocol version 4 is required",
             ),
         ));
     }

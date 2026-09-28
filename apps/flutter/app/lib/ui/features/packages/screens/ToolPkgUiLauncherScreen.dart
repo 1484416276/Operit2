@@ -5,6 +5,7 @@ import '../../../../core/application/PluginHotReload.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -89,6 +90,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   ColorScheme? _themeScheme;
   String? _error;
   Future<Object?> _actionTail = Future<Object?>.value();
+  Future<void> _renderTail = Future<void>.value();
   final Set<StreamSubscription<String>> _detachedComposeEventSubscriptions = {};
 
   GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
@@ -99,6 +101,17 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     super.initState();
     ComposeDslWebViewHostRegistry.ensureHostInteractionRegistered();
     PluginHotReload.revision.addListener(_reloadDevelopmentPackage);
+  }
+
+  /// Updates an embedded XML screen without destroying its tree or JS context.
+  @override
+  void didUpdateWidget(covariant ToolPkgUiLauncherScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!mapEquals(oldWidget.initialState, widget.initialState) ||
+        !mapEquals(oldWidget.initialMemo, widget.initialMemo) ||
+        !mapEquals(oldWidget.initialModuleSpec, widget.initialModuleSpec)) {
+      unawaited(_loadRoute(updateInputs: true));
+    }
   }
 
   /// Recreates the visible plugin document after runtime packages reload.
@@ -199,11 +212,24 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     return '';
   }
 
-  Future<void> _loadRoute() async {
-    if (!mounted) {
+  /// Serializes renders and invalidates superseded XML updates.
+  Future<void> _loadRoute({bool updateInputs = false}) async {
+    final generation = ++_routeLoadGeneration;
+    final pending = _renderTail.then((_) async {
+      await _loadRouteCore(generation, updateInputs: updateInputs);
+    });
+    _renderTail = pending;
+    await pending;
+  }
+
+  /// Renders the latest input while preserving an already visible DSL tree.
+  Future<void> _loadRouteCore(
+    int routeLoadGeneration, {
+    required bool updateInputs,
+  }) async {
+    if (!_isCurrentRouteLoad(routeLoadGeneration)) {
       return;
     }
-    final routeLoadGeneration = ++_routeLoadGeneration;
     final uiModuleId = _selectedUiModuleId();
     final routeInstanceId = _selectedRouteInstanceId();
     final executionContextKey = _executionContextKey(
@@ -215,7 +241,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       containerPackageName: widget.plugin.packageName,
     );
     setState(() {
-      _loading = true;
+      // Streaming input is an update, not a new page initialization.
+      _loading = !updateInputs || _renderResult == null;
       _error = null;
     });
     try {
@@ -283,6 +310,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           uiModuleId: uiModuleId,
           routeInstanceId: routeInstanceId,
           executionContextKey: executionContextKey,
+          updateInputs: updateInputs,
         ),
         envOverrides: const <String, String>{},
       );
@@ -510,6 +538,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     required String uiModuleId,
     required String routeInstanceId,
     required String executionContextKey,
+    bool updateInputs = false,
   }) {
     return <String, Object?>{
       'packageName': widget.plugin.packageName,
@@ -521,8 +550,12 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       'uiModuleId': uiModuleId,
       '__operit_ui_module_id': uiModuleId,
       '__operit_toolpkg_runtime_kind': 'ui',
-      'state': _renderResult?.state ?? widget.initialState,
-      'memo': _renderResult?.memo ?? widget.initialMemo,
+      'state': updateInputs
+          ? <String, Object?>{...?_renderResult?.state, ...widget.initialState}
+          : _renderResult?.state ?? widget.initialState,
+      'memo': updateInputs
+          ? <String, Object?>{...?_renderResult?.memo, ...widget.initialMemo}
+          : _renderResult?.memo ?? widget.initialMemo,
       'routeInstanceId': routeInstanceId,
       '__operit_route_instance_id': routeInstanceId,
       'executionContextKey': executionContextKey,

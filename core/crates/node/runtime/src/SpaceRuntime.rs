@@ -1,7 +1,7 @@
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
     CoreStreamAttachment, CoreStreamSource, CoreValue, CoreWatchRequest,
-    CORE_STREAM_POOL_OBJECT_ID,
+    CORE_STREAM_TARGET,
 };
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
@@ -91,7 +91,7 @@ impl SpaceRuntime {
             ));
         };
         let requestId = request.requestId.clone();
-        let targetObjectId = request.targetObjectId;
+        let target = request.target.clone();
         let propertyName = request.propertyName.clone();
         let (result, attachments) = operit_link::withCoreStreamCapture({
             let holder = self.chatRuntimeHolder.clone();
@@ -105,7 +105,7 @@ impl SpaceRuntime {
         self.adoptAttachments(attachments);
         Ok(CoreEvent {
             requestId: Some(requestId),
-            targetObjectId,
+            target,
             propertyName,
             kind: CoreEventKind::Snapshot,
             value: result?,
@@ -114,7 +114,7 @@ impl SpaceRuntime {
 
     /// Opens one annotation-addressed Space watch on the main slot.
     pub async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == CORE_STREAM_TARGET {
             return self.openEmbeddedStream(request);
         }
         let Some(_route) = crate::generated_space_watch_route(&request) else {

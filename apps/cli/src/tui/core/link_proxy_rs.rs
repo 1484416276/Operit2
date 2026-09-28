@@ -93,7 +93,7 @@ impl TuiCore {
             ),
         );
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
-        let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+        let target = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
             .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
         let mut args = std::collections::BTreeMap::new();
         args.insert(
@@ -105,7 +105,7 @@ impl TuiCore {
             .generatedClientMut()
             .watch(CoreWatchRequest::new(
                 requestId.0.clone(),
-                targetObjectId,
+                target,
                 "chatMessagesFlow",
                 CoreValue::Map(args),
             ))
@@ -233,7 +233,7 @@ impl TuiCore {
             .generatedClientMut()
             .watch(CoreWatchRequest::new(
                 requestId.0.clone(),
-                descriptor.targetObjectId,
+                descriptor.target,
                 descriptor.propertyName,
                 descriptor.args,
             ))
@@ -302,7 +302,7 @@ impl TuiCore {
             ),
         );
         let mut chatProxy = self.proxy.chat_runtime_holder_main();
-        let targetObjectId = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+        let target = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
             .ok_or_else(|| CoreLinkError::internal("chat runtime object id is not generated"))?;
         let mut args = std::collections::BTreeMap::new();
         args.insert(
@@ -314,7 +314,7 @@ impl TuiCore {
             .generatedClientMut()
             .watch(CoreWatchRequest::new(
                 requestId.0.clone(),
-                targetObjectId,
+                target,
                 "chatStateFlow",
                 CoreValue::Map(args),
             ))
@@ -480,7 +480,7 @@ mod tests {
         NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost,
         NativeRuntimeStorageHost,
     };
-    use operit_link::{CoreEventKind, CORE_STREAM_POOL_OBJECT_ID};
+    use operit_link::{CoreEventKind, CORE_STREAM_TARGET};
     use operit_runtime::core::application::OperitApplication::OperitApplication;
     use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
     use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
@@ -829,7 +829,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn tui_core_opens_embedded_content_stream_from_message_flow() {
         let mut tui = tui_core(test_local_proxy());
-        let target_object_id = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+        let target_route = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
             .expect("chat runtime object id must be generated");
         let chat_id = "tui-embedded-route-probe".to_string();
         let flow_args = CoreValue::Map(BTreeMap::from([
@@ -844,7 +844,7 @@ mod tests {
             .generatedClientMut()
             .watch(CoreWatchRequest::new(
                 "tui-embedded-flow",
-                target_object_id,
+                target_route,
                 "routeProbeChatMessagesFlow",
                 flow_args,
             ))
@@ -864,7 +864,7 @@ mod tests {
             .expect("message Flow must expose a content stream")
             .descriptor
             .clone();
-        assert_eq!(descriptor.targetObjectId, CORE_STREAM_POOL_OBJECT_ID);
+        assert_eq!(descriptor.target, CORE_STREAM_TARGET);
         assert_eq!(descriptor.propertyName, "openCoreStream");
 
         tui.syncMainChatContentStreams(&messages)

@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 use operit_edge_transport::EdgeSpaceRouteClient;
 use operit_link::{
-    CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -135,7 +135,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
                 .client
                 .watchRouted(CoreWatchRequest::new(
                     operit_link::nextCoreRouteRequestId("openCoreStream"),
-                    descriptor.targetObjectId,
+                    descriptor.target,
                     descriptor.propertyName,
                     CoreValue::Map(args),
                 ))
@@ -193,7 +193,7 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
             .client
             .watchRouted(CoreWatchRequest::new(
                 "edge-ui-messages",
-                CORE_INTERNAL_ROUTE_OBJECT_ID,
+                CORE_INTERNAL_TARGET,
                 "chatMessagesFlow",
                 args,
             ))
@@ -435,7 +435,7 @@ pub fn send(text: String) -> Result<(), String> {
             .client
             .callRouted(CoreCallRequest::new(
                 operit_link::nextCoreRouteRequestId("sendUserMessage"),
-                CORE_INTERNAL_ROUTE_OBJECT_ID,
+                CORE_INTERNAL_TARGET,
                 "sendUserMessage",
                 args,
             ))

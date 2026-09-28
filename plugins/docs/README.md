@@ -4,3 +4,7 @@ Notes for Operit2 plugin authors live here.
 
 - `package_builder/`: documentation resources included into the bundled `PackageBuilder` Skill.
 - [Theme API](package_builder/THEME_API.md): read and observe UI themes; plugins control their own WebView updates.
+
+- [ToolPkg v1 compatibility](V1_COMPATIBILITY.md): contract ownership, runtime adapters, checks, and remaining capability gaps.
+
+- [Prerequisite public APIs](PUBLIC_API.md): manifest-declared single-file clients, explicit public handlers, dependency calls, and the v1 workflow adapter.

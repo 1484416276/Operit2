@@ -2777,6 +2777,22 @@ pub trait ToolPkgWasmApiMethods: Send + Sync {
         args: Option<Vec<ToolPkgWasmArg>>,
     ) -> JsFuture<ToolPkgWasmScalarValue>;
 }
+/// Supplies the payload and authenticated calling package to a public API handler.
+#[derive(Serialize, Deserialize)]
+pub struct ToolPkgPublicApiEvent<TPayload> {
+    /// Contains the caller's JSON request.
+    pub payload: TPayload,
+    /// Identifies the calling package, attached by the runtime.
+    #[serde(rename = "callerPackage")]
+    pub callerPackage: String,
+}
+/// Registers one explicitly published function implemented by this package.
+pub struct ToolPkgPublicApiRegistration<TPayload, TResult> {
+    /// Identifies the stable public method name.
+    pub name: String,
+    /// Handles a request in the provider's main runtime.
+    pub function: Arc<dyn Fn(ToolPkgPublicApiEvent<TPayload>) -> JsFuture<TResult> + Send + Sync>,
+}
 /// Provides IPC and registration services for the current ToolPkg package.
 pub struct ToolPkgRegistry {
     /// Exposes inter-context messaging for this ToolPkg registry.
@@ -2786,6 +2802,19 @@ pub struct ToolPkgRegistry {
 }
 /// Requires the host to implement every registry methods operation.
 pub trait ToolPkgRegistryMethods: Send + Sync {
+    /// Publishes an exported handler for dependent packages.
+    fn registerApi<TPayload, TResult>(
+        &self,
+        definition: ToolPkgPublicApiRegistration<TPayload, TResult>,
+    ) -> ();
+    /// Calls an explicitly published method of a declared prerequisite.
+    fn callDependency<TPayload, TResult>(
+        &self,
+        packageName: String,
+        methodName: String,
+        payload: TPayload,
+    ) -> JsFuture<TResult>;
+
     /// Registers a Compose DSL screen in the toolbox UI.
     fn registerToolboxUiModule(&self, definition: ToolPkgToolboxUiModuleRegistration) -> ();
     /// Registers a routable Compose DSL screen for the current plugin.

@@ -22,6 +22,65 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
 
+  testWidgets('streaming inputs preserve the tree and execution context', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    final clients = GeneratedCoreProxyClients(bridge);
+    final plugin = _pluginRuntime();
+
+    /// Updates the XML input on the same embedded screen instance.
+    Widget screen(String xml) => MaterialApp(
+      home: ToolPkgUiLauncherScreen(
+        clients: clients,
+        plugin: plugin,
+        initialState: {'xmlContent': xml},
+        initialMemo: const {'source': 'xml'},
+      ),
+    );
+    await tester.pumpWidget(screen('<demo>'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    final hostState = tester.state(find.byType(ToolPkgUiLauncherScreen));
+    final pending = Completer<String>();
+    bridge.renderCompletion = pending;
+    await tester.pumpWidget(screen('<demo>one'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(tester.state(find.byType(ToolPkgUiLauncherScreen)), same(hostState));
+    final calls = bridge.calls.where(
+      (call) => call.methodName == 'executeToolPkgComposeDslScript',
+    );
+    final options = (calls.last.args as Map)['runtimeOptions'] as Map;
+    expect(options['state'], containsPair('xmlContent', '<demo>one'));
+    expect(options['state'], containsPair('count', 1));
+    expect(options['memo'], containsPair('source', 'xml'));
+    await tester.pumpWidget(screen('<demo>two</demo>'));
+    await tester.pump();
+    bridge.renderCompletion = null;
+    pending.complete(_counterRenderResult(99));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 99'), findsNothing);
+    final latest = (calls.last.args as Map)['runtimeOptions'] as Map;
+    expect(latest['state'], containsPair('xmlContent', '<demo>two</demo>'));
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'acquireToolPkgExecutionEngine',
+      ),
+      hasLength(1),
+    );
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'releaseToolPkgExecutionEngine',
+      ),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final sender in ['user', 'ai']) {
     testWidgets('opens and closes translation from the $sender message menu', (
       tester,
@@ -762,7 +821,7 @@ void main() {
     final packageManagerId = GeneratedCoreProxyClients(
       bridge,
     ).application.packageManager().objectId;
-    expect(scriptCall.targetObjectId, packageManagerId);
+    expect(scriptCall.target, packageManagerId);
     expect(scriptCall.args, isA<Map<String, Object?>>());
     final args = scriptCall.args as Map<String, Object?>;
     expect(args['containerPackageName'], 'demo_toolpkg');
@@ -771,7 +830,7 @@ void main() {
     final renderCall = bridge.calls.singleWhere(
       (request) => request.methodName == 'executeToolPkgComposeDslScript',
     );
-    expect(renderCall.targetObjectId, packageManagerId);
+    expect(renderCall.target, packageManagerId);
     final renderArgs = renderCall.args as Map<String, Object?>;
     expect(
       renderArgs['contextKey'],
@@ -891,7 +950,7 @@ void main() {
     expect(args['actionId'], 'increment');
     expect(args['payload'], isNull);
     expect(
-      actionCall.targetObjectId,
+      actionCall.target,
       GeneratedCoreProxyClients(bridge).application.packageManager().objectId,
     );
     expect(
@@ -1960,6 +2019,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   final bool holdActionCompletion;
   final void Function(Map<String, Object?>)? onAction;
   Completer<void>? actionCompletion;
+  Completer<String>? renderCompletion;
   var _count = 0;
   var _checked = false;
 
@@ -2025,6 +2085,8 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
         final args = request.args as Map<String, Object?>;
         return args['uiModuleId'] == 'toolbox' ? 'ui/toolbox.js' : 'ui/main.js';
       case 'executeToolPkgComposeDslScript':
+        final pendingRender = renderCompletion;
+        if (pendingRender != null) return pendingRender.future;
         _count = 0;
         _checked = false;
         return _renderResult(_count);
@@ -2042,7 +2104,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   @override
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -2055,7 +2117,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) async {
     return CoreEvent(
       requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
+      target: request.target,
       propertyName: request.propertyName,
       kind: 'Snapshot',
       value: null,
@@ -2071,7 +2133,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     calls.add(
       CoreCallRequest(
         requestId: request.requestId,
-        targetObjectId: request.targetObjectId,
+        target: request.target,
         methodName: request.propertyName,
         args: request.args,
       ),
@@ -2095,7 +2157,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     }
     yield CoreEvent.raw(
       requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
+      target: request.target,
       propertyName: request.propertyName,
       kind: 'Changed',
       decodeValue: decodeCoreLink<Object?>,
@@ -2111,7 +2173,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     }
     yield CoreEvent.raw(
       requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
+      target: request.target,
       propertyName: request.propertyName,
       kind: 'Changed',
       decodeValue: decodeCoreLink<Object?>,
@@ -2121,7 +2183,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
     );
     yield CoreEvent.raw(
       requestId: request.requestId,
-      targetObjectId: request.targetObjectId,
+      target: request.target,
       propertyName: request.propertyName,
       kind: 'Completed',
       decodeValue: decodeCoreLink<Object?>,

@@ -9,9 +9,9 @@ use operit_link::route_runtime::CoreRouteRuntime;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
-    CoreValue, CoreWatchRequest, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
     CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT,
-    CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_POOL_OBJECT_ID,
+    CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_TARGET,
 };
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
@@ -74,7 +74,7 @@ pub struct CoreNodeLocalRuntime {
     sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     applicationClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
-    objectIdForSchema: Arc<dyn Fn(&str) -> Option<u32> + Send + Sync>,
+    targetForSchema: Arc<dyn Fn(&str) -> Option<&'static str> + Send + Sync>,
     bindCoreNodeToolRuntime:
         Arc<dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync>,
     openPush: Arc<
@@ -91,7 +91,7 @@ impl CoreNodeLocalRuntime {
         sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
         applicationClient: Arc<dyn CoreLinkSharedClient + Send + Sync>,
         runtimeStorageHost: Arc<dyn RuntimeStorageHost>,
-        objectIdForSchema: Arc<dyn Fn(&str) -> Option<u32> + Send + Sync>,
+        targetForSchema: Arc<dyn Fn(&str) -> Option<&'static str> + Send + Sync>,
         bindCoreNodeToolRuntime: Arc<
             dyn Fn(Arc<dyn CoreNodeToolRuntime>) -> Result<(), CoreLinkError> + Send + Sync,
         >,
@@ -106,7 +106,7 @@ impl CoreNodeLocalRuntime {
             sharedClient,
             applicationClient,
             runtimeStorageHost,
-            objectIdForSchema,
+            targetForSchema,
             bindCoreNodeToolRuntime,
             openPush,
             spaceRuntime,
@@ -121,8 +121,8 @@ impl CoreNodeLocalRuntime {
 
     /// Resolves one generated Core schema to the local numeric object ID.
     #[allow(non_snake_case)]
-    pub fn objectIdForSchema(&self, schema: &str) -> Option<u32> {
-        (self.objectIdForSchema)(schema)
+    pub fn targetForSchema(&self, schema: &str) -> Option<&'static str> {
+        (self.targetForSchema)(schema)
     }
 
     /// Installs the routing capability used by built-in tools.
@@ -281,8 +281,8 @@ impl CoreNodeRouter {
 
     /// Resolves one generated Core schema through the owning local runtime.
     #[allow(non_snake_case)]
-    pub fn objectIdForSchema(&self, schema: &str) -> Option<u32> {
-        self.localCore.objectIdForSchema(schema)
+    pub fn targetForSchema(&self, schema: &str) -> Option<&'static str> {
+        self.localCore.targetForSchema(schema)
     }
 
     /// Opens a push stream whose CoreNode route remains fixed for its lifetime.
@@ -509,7 +509,7 @@ impl CoreNodeRouter {
         callerNodeId: &str,
         targetNodeId: &str,
     ) -> Result<(), CoreLinkError> {
-        let route = if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+        let route = if request.target == CORE_STREAM_TARGET {
             embeddedStreamSourceRoute(request)?
         } else {
             crate::generated_space_watch_route(request).ok_or_else(|| {
@@ -605,7 +605,7 @@ impl CoreNodeRouter {
             originNodeId,
             targetNodeId,
             ttl,
-            routeKind: RoutedCoreRequestKind::ObjectId,
+            routeKind: RoutedCoreRequestKind::Target,
             payload,
         })
     }
@@ -842,7 +842,7 @@ impl CoreNodeRouter {
         targetNodeId: String,
         request: CoreCallRequest,
     ) -> CoreCallResponse {
-        self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::ObjectId)
+        self.callNodeWithKind(targetNodeId, request, RoutedCoreRequestKind::Target)
             .await
     }
 
@@ -1082,7 +1082,7 @@ impl CoreNodeRouter {
         request: CoreWatchRequest,
         originNodeId: String,
     ) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == CORE_STREAM_TARGET {
             return self.watchSpaceEmbeddedStreamWithOrigin(request, originNodeId).await;
         }
         let route = crate::generated_space_watch_route(&request).ok_or_else(|| {
@@ -1313,9 +1313,9 @@ impl CoreNodeRouter {
     #[allow(non_snake_case)]
     async fn executeLocalCall(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let applicationObjectId = self.localCore.objectIdForSchema("application");
+        let applicationObjectId = self.localCore.targetForSchema("application");
         let isApplicationCall =
-            applicationObjectId.is_some_and(|objectId| objectId == request.targetObjectId);
+            applicationObjectId.is_some_and(|objectId| objectId == request.target);
         let response = if isApplicationCall {
             self.localCore.callApplication(request).await
         } else {
@@ -1341,7 +1341,7 @@ impl CoreNodeRouter {
         request: CoreWatchRequest,
         originNodeId: String,
     ) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == CORE_STREAM_TARGET {
             let route = embeddedStreamSourceRoute(&request)?;
             self.requireRoutePermission(&route, &originNodeId, &targetNodeId)?;
             if targetNodeId == self.localNodeId {
@@ -1841,13 +1841,13 @@ fn embeddedStreamSourceRoute(
     match sourceMode.as_str() {
         "call" => crate::generated_space_call_route(&CoreCallRequest {
             requestId: request.requestId.clone(),
-            targetObjectId: CORE_INTERNAL_ROUTE_OBJECT_ID,
+            target: CORE_INTERNAL_TARGET.to_string(),
             methodName: sourceMethod,
             args: sourceArgs.clone(),
         }),
         "watch" => crate::generated_space_watch_route(&CoreWatchRequest {
             requestId: request.requestId.clone(),
-            targetObjectId: CORE_INTERNAL_ROUTE_OBJECT_ID,
+            target: CORE_INTERNAL_TARGET.to_string(),
             propertyName: sourceMethod,
             args: sourceArgs.clone(),
         }),
@@ -2077,7 +2077,7 @@ impl CoreNodeLinkClient for CoreNodeRouter {
                 "route_watch_incoming requestId={} property={} object={} previous={} local={} target={} ttl={} routeKind={:?} atTarget={}",
                 request.payload.requestId.0,
                 request.payload.propertyName,
-                request.payload.targetObjectId,
+                request.payload.target,
                 previousNodeId,
                 self.localNodeId,
                 request.targetNodeId,
@@ -2095,7 +2095,7 @@ impl CoreNodeLinkClient for CoreNodeRouter {
             return if request.routeKind == RoutedCoreRequestKind::SpaceRoute {
                 self.requireWatchPermission(&request.payload, &request.originNodeId, &self.localNodeId)?;
                 self.localCore.watchSpace(request.payload).await
-            } else if request.payload.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            } else if request.payload.target == CORE_STREAM_TARGET {
                 self.localCore.watchSpace(request.payload).await
             } else {
                 operit_link::withCoreForceLocal(self.localCore.watch(request.payload)).await
@@ -2172,7 +2172,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding_call_resolve requestId={} path={} method={} key={} local={}",
                     request.requestId.0,
-                    request.targetObjectId.to_string(),
+                    request.target.to_string(),
                     request.methodName,
                     key,
                     self.localNodeId
@@ -2194,7 +2194,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding call route requestId={} path={} method={} key={} source={} target={}",
                     request.requestId.0,
-                    request.targetObjectId.to_string(),
+                    request.target.to_string(),
                     request.methodName,
                     key,
                     self.localNodeId,
@@ -2231,7 +2231,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding_snapshot_resolve requestId={} path={} property={} key={} local={}",
                     request.requestId.0,
-                    request.targetObjectId.to_string(),
+                    request.target.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId
@@ -2250,14 +2250,14 @@ impl CoreLinkSharedClient for CoreNodeRouter {
 
     /// Opens a watch stream on the CoreNode selected by generated metadata.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == CORE_STREAM_TARGET {
             operit_util::AppLogger::AppLogger::trace(
                 "CoreNodeRouteTrace",
                 &format!(
                     "watch_embedded_open requestId={} property={} object={} local={}",
                     request.requestId.0,
                     request.propertyName,
-                    request.targetObjectId,
+                    request.target,
                     self.localNodeId
                 ),
             );
@@ -2270,7 +2270,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding_watch_resolve requestId={} path={} property={} key={} local={}",
                     request.requestId.0,
-                    request.targetObjectId.to_string(),
+                    request.target.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId
@@ -2283,7 +2283,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 &format!(
                     "binding watch open requestId={} path={} property={} key={} source={}",
                     request.requestId.0,
-                    request.targetObjectId.to_string(),
+                    request.target.to_string(),
                     request.propertyName,
                     key,
                     self.localNodeId
@@ -2311,7 +2311,7 @@ impl CoreLinkSharedClient for CoreNodeRouter {
                 "watch_target_resolve requestId={} property={} object={} local={} target={}",
                 request.requestId.0,
                 request.propertyName,
-                request.targetObjectId,
+                request.target,
                 self.localNodeId,
                 targetNodeId
             ),
@@ -2331,7 +2331,7 @@ impl CoreRouteRuntime for CoreNodeRouter {
         }
         let request = CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId(methodName),
-            operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+            operit_link::CORE_INTERNAL_TARGET,
             methodName,
             args.clone(),
         );
@@ -2363,7 +2363,7 @@ impl CoreRouteRuntime for CoreNodeRouter {
         }
         let request = CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId(methodName),
-            operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+            operit_link::CORE_INTERNAL_TARGET,
             methodName,
             args.clone(),
         );
@@ -2397,7 +2397,7 @@ impl CoreRouteRuntime for CoreNodeRouter {
         }
         let request = CoreCallRequest::new(
             operit_link::nextCoreRouteRequestId(methodName),
-            operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+            operit_link::CORE_INTERNAL_TARGET,
             methodName,
             args.clone(),
         );
@@ -2445,7 +2445,7 @@ impl CoreRouteRuntime for CoreNodeRouter {
     ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>> {
         let router = self.clone();
         Box::pin(async move {
-            if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            if request.target == CORE_STREAM_TARGET {
                 let route = embeddedStreamSourceRoute(&request)?;
                 let bindingKey = route.bindingKey(embeddedStreamSourceArgs(&request)?)?;
                 let targetNodeId = router
@@ -2507,7 +2507,7 @@ mod tests {
         SqliteRow, SqliteValue,
     };
     use operit_link::{
-        CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_ROUTE_OBJECT_ID,
+        CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_TARGET,
     };
     use operit_model::ChatMessage::ChatMessage;
     use operit_model::ChatTurnOptions::ChatTurnOptions;
@@ -3349,7 +3349,7 @@ mod tests {
             targetNodeId: router.localNodeId(),
             ttl: 3,
             routeKind: RoutedCoreRequestKind::SpaceBinding,
-            payload: CoreCallRequest::new("edge-send", CORE_INTERNAL_ROUTE_OBJECT_ID,
+            payload: CoreCallRequest::new("edge-send", CORE_INTERNAL_TARGET,
                 "sendUserMessage", CoreValue::Map(BTreeMap::from([
                     ("chatIdOverride".into(), CoreValue::String("edge-chat".into())),
                 ]))),
@@ -3460,7 +3460,7 @@ mod tests {
         );
         let mut stream = tokio::time::timeout(Duration::from_secs(5),
             CoreLinkSharedClient::watch(&client, CoreWatchRequest::new("edge-chat-watch",
-                CORE_INTERNAL_ROUTE_OBJECT_ID, "chatMessagesFlow", CoreValue::Map(BTreeMap::from([
+                CORE_INTERNAL_TARGET, "chatMessagesFlow", CoreValue::Map(BTreeMap::from([
                     ("chatId".into(), CoreValue::String("edge-chat".into())),
                 ]))))).await.unwrap().unwrap();
         let initial = tokio::time::timeout(Duration::from_secs(5), stream.recv()).await.unwrap().unwrap();
@@ -3910,10 +3910,10 @@ mod tests {
         ) -> Result<CoreEventStream, CoreLinkError> {
             assert_eq!(request.routeKind, RoutedCoreRequestKind::SpaceRoute);
             let payload = request.payload;
-            if payload.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            if payload.target == CORE_STREAM_TARGET {
                 self.embeddedStreamOpened.store(true, Ordering::SeqCst);
             } else {
-                assert_eq!(payload.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_eq!(payload.target, CORE_INTERNAL_TARGET);
                 assert_eq!(payload.propertyName, "chatMessagesFlow");
             }
             self.spaceRuntime.watch(payload).await
@@ -4013,10 +4013,10 @@ mod tests {
         ) -> Result<CoreEventStream, CoreLinkError> {
             assert_eq!(request.routeKind, RoutedCoreRequestKind::SpaceRoute);
             let payload = request.payload;
-            if payload.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+            if payload.target == CORE_STREAM_TARGET {
                 return self.openEmbeddedStream(payload);
             }
-            assert_eq!(payload.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+            assert_eq!(payload.target, CORE_INTERNAL_TARGET);
             assert_eq!(payload.propertyName, "chatMessagesFlow");
             self.openChatMessagesFlow(payload)
         }
@@ -4089,8 +4089,8 @@ mod tests {
         ) -> CoreCallResponse {
             assert_eq!(request.routeKind, RoutedCoreRequestKind::SpaceRoute);
             assert_eq!(
-                request.payload.targetObjectId,
-                CORE_INTERNAL_ROUTE_OBJECT_ID
+                request.payload.target,
+                CORE_INTERNAL_TARGET
             );
             self.callCount.fetch_add(1, Ordering::SeqCst);
             self.methods
@@ -4437,14 +4437,14 @@ mod tests {
                         Box::pin(async move {
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value: CoreValue::String(text),
                             });
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName,
                                 kind: CoreEventKind::Completed,
                                 value: CoreValue::Null,
@@ -4485,14 +4485,14 @@ mod tests {
                                 .expect("Markdown stream event must encode");
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value,
                             });
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName,
                                 kind: CoreEventKind::Completed,
                                 value: CoreValue::Null,
@@ -4514,7 +4514,7 @@ mod tests {
             let (sender, receiver) = CoreEventStream::channel();
             let events = events.clone();
             let requestId = request.requestId.clone();
-            let targetObjectId = request.targetObjectId;
+            let target = request.target.clone();
             let propertyName = request.propertyName.clone();
             defaultHostRuntimeTaskSchedulerHost()
                 .scheduleHostRuntimeAsyncTask(
@@ -4526,7 +4526,7 @@ mod tests {
                                     .expect("structured Markdown stream event must encode");
                                 let _ = sender.send(CoreEvent {
                                     requestId: Some(requestId.clone()),
-                                    targetObjectId,
+                                    target: target.clone(),
                                     propertyName: propertyName.clone(),
                                     kind: CoreEventKind::Changed,
                                     value,
@@ -4534,7 +4534,7 @@ mod tests {
                             }
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(requestId),
-                                targetObjectId,
+                                target,
                                 propertyName,
                                 kind: CoreEventKind::Completed,
                                 value: CoreValue::Null,
@@ -4720,7 +4720,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))
@@ -4787,7 +4787,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-real-router-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))
@@ -4853,7 +4853,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-real-chat-router-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))
@@ -4915,7 +4915,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-real-chat-live-router-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))
@@ -5019,7 +5019,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-two-router-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))
@@ -5291,7 +5291,7 @@ mod tests {
         let mut openedStream = localPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "embedded-open-structured-route-test",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 stream.descriptor.args.clone(),
             ))

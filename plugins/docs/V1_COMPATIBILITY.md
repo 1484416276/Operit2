@@ -1,0 +1,132 @@
+# ToolPkg v1 compatibility in Operit2
+
+## Contract ownership
+
+- **v1:** `plugins/types-v1/*.d.ts`, copied without edits from the handwritten v1 SDK.
+- **v2:** `core/crates/plugin/sdk/src/js_sdk/*.rs`, rendered to `plugins/types` by the existing code generator.
+- **Adapters:** `core/crates/plugin/sdk/src/compat/v1/*.js`. JSDoc imports check the input/output contract against v1 and calls against v2 using `tsc --checkJs --noEmit`.
+
+There are two contract families, not one declaration tree for every patch version.
+Minor/patch availability remains documented by upstream version annotations.
+No Flutter branches or alternative platform runtimes are introduced.
+
+## Loading and dispatch
+
+The archive parser accepts explicitly declared `api_version` values `1.0.0`,
+`1.0.1`, and `2.0.0`. The original version is retained for registration and execution.
+Unknown releases remain rejected until admitted explicitly.
+
+Omitted `api_version` retains the existing Operit2 meaning (`2.0.0`). Legacy
+archives relying on the original application's omitted-version rule must declare
+`1.0.0`; their origin is not inferred from filenames or source text.
+Standalone scripts executed outside a ToolPkg context use the current SDK contract.
+
+The runtime method builder supports:
+
+```js
+api.method()
+    .between('1.0.0', '2.0.0', legacyImplementation)
+    .since('2.0.0', currentImplementation)
+```
+
+`between` is lower-inclusive and upper-exclusive. `since` is bounded by the next
+major API family. Shared implementations can bind multiple explicit ranges:
+
+```js
+api.method()
+    .between('1.0.1', '2.0.0')
+    .since('2.0.0')
+    .implement(sharedImplementation)
+```
+
+An explicit range spanning multiple major families is possible but must be
+intentional. Overlap, unbound ranges, and unmatched versions are errors. Dispatch
+uses the active call, not the version present when the engine was constructed.
+Adapter failures propagate; they never select a different implementation.
+
+## Implemented adapters
+
+The existing generator appends the handwritten adapters to `js_tools.js` after
+emitting the canonical v2 bindings. Both inline and modular engine bootstrap paths
+therefore install the same code. Adapters capture the canonical functions before
+installing versioned entry points, so v1 cannot recursively invoke itself.
+
+### Files
+
+All functions in the copied v1 `Files` namespace have signature adapters:
+
+- Positional `environment`, `sourceEnvironment`, and `destEnvironment` arguments.
+- `read` and `download` object overloads, without modifying caller-owned options.
+- `zip`'s fourth `include_root_directory` argument and `download`'s fourth headers argument.
+- `env` metadata on returned file results and nested apply/create/edit operations.
+- Root and child paths returned by find/grep, including nullable grep context conversion.
+
+Environment interpretation follows the old API, not the OS running Operit2:
+
+- Omitted environment means the documented v1 `android` environment.
+- Linux absolute paths map to `/mnt/linux`.
+- Android `/sdcard` and `/data` use the existing VFS roots.
+- `/storage/emulated/0` maps to `/sdcard`.
+- `/app` and `/mnt` paths returned by current resource/config APIs remain VFS paths.
+- Unmapped Android roots and unsupported environment names are explicit errors.
+
+Actual mount availability is decided by the existing host/VFS implementation.
+This adapter does not create mounts, emulate Android/Linux filesystems, or bypass
+host permissions. In particular, a Linux environment call on a host without that
+mount fails. Legacy content-URI access is not implemented by this mapping.
+
+### Chat.call (1.0.1)
+
+- Nullable legacy `toolName` becomes the optional current field.
+- Returned role and finish-reason values are checked against the closed v1 vocabulary.
+- Metadata is validated as JSON rather than asserted to a wider type.
+- Request objects and original turns are not mutated.
+- `1.0.0` cannot invoke this API; `2.0.0` retains its existing implementation.
+
+### Registration
+
+`registerChatMessageMenuItem` and `registerChatRuntimeHook` explicitly cover
+`1.0.1` and `2.0.0`. Their current registration normalizers are shared. Other
+existing registration implementations remain unchanged.
+
+### Workflow
+
+`Tools.Workflow` now calls the public API of `com.operit.workflow` through the
+existing dependency transport. It covers list/create/get/update/patch/enable/disable/
+delete/trigger. Every v1 package receives the workflow prerequisite (`>= 0.2.0`)
+in its effective runtime `requires` during archive loading; old manifests need
+no edits. Explicit stricter bounds remain in effect. Both packages must be enabled. The workflow plugin owns all state
+and validates legacy graph inputs. See `PUBLIC_API.md` for the distributed typed
+client and provider capability limits. No historical database migration is implicit.
+
+## Scope and outstanding work
+
+This is not a claim that every historical plugin runs unchanged. Copying the
+complete type tree preserves the upstream contract; it does not implement all of
+its capabilities. The following are not yet covered by compatibility adapters:
+
+- Removed v1 SoftwareSettings model/character/speech/sandbox management methods.
+- FFmpeg and Tasker namespaces absent from the current generated Tools surface.
+- Workflow engine features not supported by the prerequisite plugin (Tasker/intent/speech triggers and non-empty extract.defaultValue).
+- A complete audit/conversion of every ToolPkg hook input, return value, and stream callback.
+- Direct low-level `toolCall` requests using legacy environment parameters (the current Files adapters operate on `Tools.Files`).
+- Exact legacy formatted `toString()` output for all result types.
+- End-to-end equivalence of underlying v2 services; for example the current zip executor does not consume `include_root_directory`, even though the binding and adapter accept it.
+
+These capabilities must be implemented or explicitly reported, never simulated
+with successful empty results. Future work belongs in bounded adapter modules and
+contract fixtures, not in a second loader or platform-specific Flutter code.
+
+## Checks
+
+```powershell
+.venv/Scripts/python.exe plugins/tools/sync_v1_types.py check
+tsc -p core/crates/plugin/sdk/src/compat/v1/tsconfig.json
+node --test tools/tests/toolpkg_api_compatibility.test.mjs tools/tests/toolpkg_v1_adapters.test.mjs tools/tests/plugin_bridge_contracts.test.mjs
+```
+
+The TypeScript check intentionally skips checking upstream declaration bodies,
+while checking adapter use of both contracts under strict mode. This isolates
+upstream global declaration conventions from adapter implementation checking.
+Rust archive-loading and version-admission tests are included in the SDK source;
+they require a separate Rust test run and are not exercised by the Node checks.

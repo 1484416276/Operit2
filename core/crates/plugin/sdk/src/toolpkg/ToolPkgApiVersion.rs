@@ -1,6 +1,12 @@
 use std::fmt;
 
-/// Identifies the first ToolPkg API contract supported by Operit2.
+/// Identifies the original ToolPkg API contract.
+pub const TOOLPKG_API_VERSION_1_0_0: &str = "1.0.0";
+
+/// Identifies the legacy contract with chat model and runtime extensions.
+pub const TOOLPKG_API_VERSION_1_0_1: &str = "1.0.1";
+
+/// Identifies the Operit2 ToolPkg API contract.
 pub const TOOLPKG_API_VERSION_2_0_0: &str = "2.0.0";
 
 /// Identifies the ToolPkg API contract exposed by this SDK.
@@ -63,8 +69,14 @@ pub fn currentToolPkgApiVersionText() -> String {
 /// Lists the ToolPkg API versions accepted by this runtime.
 #[allow(non_snake_case)]
 pub fn supportedToolPkgApiVersions() -> Vec<ToolPkgApiVersion> {
-    vec![ToolPkgApiVersion::parse(TOOLPKG_API_VERSION_2_0_0)
-        .expect("ToolPkg API 2.0.0 constant must parse")]
+    [
+        TOOLPKG_API_VERSION_1_0_0,
+        TOOLPKG_API_VERSION_1_0_1,
+        TOOLPKG_API_VERSION_2_0_0,
+    ]
+    .into_iter()
+    .map(|version| ToolPkgApiVersion::parse(version).expect("ToolPkg API constant must parse"))
+    .collect()
 }
 
 /// Parses and validates a declared ToolPkg API version.
@@ -102,7 +114,7 @@ mod tests {
         );
     }
 
-    /// Verifies the supported ToolPkg API set starts at the Operit2 contract.
+    /// Verifies both API families use an explicit supported contract set.
     #[test]
     fn supports_operit2_toolpkg_api_version() {
         assert_eq!(
@@ -111,6 +123,14 @@ mod tests {
                 .to_string(),
             "2.0.0"
         );
-        assert!(requireSupportedToolPkgApiVersion("1.0.1").is_err());
+        for version in ["1.0.0", "1.0.1"] {
+            assert_eq!(
+                requireSupportedToolPkgApiVersion(version).unwrap().to_string(),
+                version
+            );
+        }
+        for version in ["1.0.2", "1.1.0", "2.0.1", "3.0.0", "", "1.0"] {
+            assert!(requireSupportedToolPkgApiVersion(version).is_err());
+        }
     }
 }

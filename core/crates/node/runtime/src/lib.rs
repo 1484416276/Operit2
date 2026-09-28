@@ -25,7 +25,7 @@ pub enum GeneratedRouteLifecycle {
 /// Describes one annotation-generated Space route independent of local Proxy object IDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneratedSpaceRoute {
-    pub routeId: u32,
+    pub routeId: &'static str,
     pub methodName: &'static str,
     pub bindingArgument: &'static str,
     pub targetType: &'static str,
@@ -94,4 +94,17 @@ mod tests {
         assert_eq!(after.bindingArgument, "chatId");
         assert_eq!(after.lifecycle, GeneratedRouteLifecycle::AfterChangeRoute);
     }
+
+    /// Resolves the semantic Space target without a declaration-position identifier.
+    #[test]
+    fn space_routes_use_stable_named_targets() {
+        let route = generated_space_route_for_method("beforeChangeRoute").unwrap();
+        assert_eq!(route.routeId, format!("space/{}/beforeChangeRoute", route.targetType));
+        assert_eq!(generated_space_route_for_id(route.routeId, route.methodName), Some(route.clone()));
+        assert!(generated_space_route_for_id("0", route.methodName).is_none());
+        assert!(generated_space_route_for_id(route.routeId, "notAnExportedMethod").is_none());
+        let request = operit_link::CoreCallRequest::new("space-test", route.routeId, route.methodName, operit_link::CoreValue::emptyMap());
+        assert_eq!(generated_space_call_route(&request), Some(route));
+    }
+
 }

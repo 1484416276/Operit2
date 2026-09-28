@@ -953,12 +953,12 @@ fn blobPushRequest(
     nodeRouter: &CoreNodeRouter,
     reference: &RuntimeFileSyncReference,
 ) -> Result<CorePushRequest, String> {
-    let targetObjectId = nodeRouter
-        .objectIdForSchema("services.syncBlobTransferManager")
+    let target = nodeRouter
+        .targetForSchema("services.syncBlobTransferManager")
         .ok_or_else(|| "unknown Core schema key: services.syncBlobTransferManager".to_string())?;
     Ok(CorePushRequest::new(
         format!("space-persistence-blob-{}", currentTimeMillis()),
-        targetObjectId,
+        target,
         "syncReceiveBlob",
     )
     .withArgs(
@@ -1084,7 +1084,7 @@ fn applicationCallRequest(
     Ok(CoreCallRequest::new(
         format!("space-persistence-{methodName}-{}", currentTimeMillis()),
         nodeRouter
-            .objectIdForSchema("application")
+            .targetForSchema("application")
             .ok_or_else(|| "unknown Core schema key: application".to_string())?,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
@@ -1099,12 +1099,12 @@ fn serviceCallRequest(
     methodName: &str,
     args: Value,
 ) -> Result<CoreCallRequest, String> {
-    let targetObjectId = nodeRouter
-        .objectIdForSchema(targetPath)
+    let target = nodeRouter
+        .targetForSchema(targetPath)
         .ok_or_else(|| format!("unknown Core schema key: {targetPath}"))?;
     Ok(CoreCallRequest::new(
         format!("space-persistence-{methodName}-{}", currentTimeMillis()),
-        targetObjectId,
+        target,
         methodName,
         toCoreValue(args).map_err(|error| error.to_string())?,
     ))

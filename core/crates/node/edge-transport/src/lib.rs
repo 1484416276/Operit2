@@ -590,7 +590,7 @@ mod tests {
                     ))),
                 }),
             }).unwrap();
-            let incoming = CoreCallRequest::new("inbound", 1, "getDigitalOutput", CoreValue::emptyMap());
+            let incoming = CoreCallRequest::new("inbound", "core/test", "getDigitalOutput", CoreValue::emptyMap());
             coreTx.send(LinkFrame {
                 messageId: "inbound".into(),
                 payload: LinkFramePayload::PeerFrame(PeerFrame {
@@ -608,7 +608,7 @@ mod tests {
             assert_eq!(response.result.unwrap_err().code, "EDGE_CAPABILITY_NOT_HOSTED");
         });
         let response = CoreRouteRuntime::call(&client, CoreCallRequest::new(
-            "outbound", operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+            "outbound", operit_link::CORE_INTERNAL_TARGET,
             "sendUserMessage", CoreValue::emptyMap(),
         )).await;
         assert!(response.result.is_ok());

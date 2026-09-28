@@ -72,7 +72,7 @@ pub fn generate_plugin_sdk_surface(
                         | MethodProtocol::ReverseStream(_)
                 )
             {
-                output.push_str(&format!("    surface.expose({}, {:?});\n", object.object_id, method.name));
+                output.push_str(&format!("    surface.expose({}, {:?});\n", format!("{:?}", object.object_id), method.name));
             }
         }
     }
@@ -117,7 +117,7 @@ fn collect_objects(objects: &[SourceObject]) -> Vec<SdkObject> {
                 })
                 .collect::<Vec<_>>();
             (!methods.is_empty()).then(|| SdkObject {
-                object_id: object.object_id,
+                object_id: object.object_id.clone(),
                 schema_key: object.schema_key.clone(),
                 class_name: class_name(&object.schema_key),
                 methods,
@@ -167,7 +167,7 @@ fn dart_value_type(
 }
 
 struct SdkObject {
-    object_id: u32,
+    object_id: String,
     schema_key: String,
     class_name: String,
     methods: Vec<SdkMethod>,
@@ -308,15 +308,15 @@ fn render_rust(objects: &[SdkObject], serializable_types: &HashMap<String, Seria
             match method.mode {
                 SdkMode::Call => output.push_str(&format!(
                         "    /// Calls `{}` through the Core Link route.\n    pub async fn {}(&self{parameters}) -> Result<{}, CoreLinkError> {{\n        let args = {arguments};\n        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, {}, \"{}\", args)).await;\n        let value = response.result?;\n        decode_messagepack_value(&value)\n    }}\n",
-                    method.name, method_name, rust_method_type(method.return_type.as_deref(), serializable_types), object.object_id, method.name
+                    method.name, method_name, rust_method_type(method.return_type.as_deref(), serializable_types), format!("{:?}", object.object_id), method.name
                 )),
                 SdkMode::Watch => output.push_str(&format!(
                     "    /// Watches `{}` through the Core Link route.\n    pub async fn {}(&self{parameters}) -> Result<OperitPluginSdkTypedEventStream<{}>, CoreLinkError> {{\n        let args = {arguments};\n        let stream = self.client.watch(operit_link::CoreWatchRequest::new(self.client.nextRequestId()?, {}, \"{}\", args)).await?;\n        Ok(OperitPluginSdkTypedEventStream::new(stream))\n    }}\n",
-                    method.name, method_name, rust_method_type(method.return_type.as_deref(), serializable_types), object.object_id, method.name
+                    method.name, method_name, rust_method_type(method.return_type.as_deref(), serializable_types), format!("{:?}", object.object_id), method.name
                 )),
                 SdkMode::Push => output.push_str(&format!(
                     "    /// Opens the caller-owned `{}` Core input stream.\n    pub async fn {}(&self{parameters}) -> Result<Box<dyn CoreLinkPushSession>, CoreLinkError> {{\n        let args = {arguments};\n        self.client.openPush(operit_link::CorePushRequest::new(self.client.nextRequestId()?, {}, \"{}\").withArgs(args)).await\n    }}\n",
-                    method.name, method_name, object.object_id, method.name
+                    method.name, method_name, format!("{:?}", object.object_id), method.name
                 )),
             }
         }
@@ -388,7 +388,7 @@ fn render_dart(
                 SdkMode::Call => match dart_value_type(method.return_type.as_deref(), serializable_types) {
                     None => output.push_str(&format!(
                         "  /// Calls `{}` through the Core Link route.\n  Future<void> {}({parameters}) async {{ await _client.call({}, '{}', {arguments}); }}\n",
-                        method.name, method_name, object.object_id, method.name
+                        method.name, method_name, format!("{:?}", object.object_id), method.name
                     )),
                     Some(return_type) => output.push_str(&format!(
                         "  /// Calls `{}` through the Core Link route.\n  Future<{}> {}({parameters}) async {{ return await _client.callTyped<{}>({}, '{}', {arguments}, {}); }}\n",
@@ -396,7 +396,7 @@ fn render_dart(
                         return_type,
                         method_name,
                         return_type,
-                        object.object_id,
+                        format!("{:?}", object.object_id),
                         method.name,
                         dart_decoder_expr(method.return_type.as_deref().expect("typed return"), serializable_types)
                     )),
@@ -409,14 +409,14 @@ fn render_dart(
                         item_type,
                         method_name,
                         item_type,
-                        object.object_id,
+                        format!("{:?}", object.object_id),
                         method.name,
                         dart_decoder_expr(method.return_type.as_deref().expect("watch item type"), serializable_types)
                     ));
                 },
                 SdkMode::Push => output.push_str(&format!(
                     "  /// Opens the caller-owned `{}` Core input stream.\n  Future<PluginSdkPushSink> {}({parameters}) => _client.push({}, '{}', {arguments});\n",
-                    method.name, method_name, object.object_id, method.name
+                    method.name, method_name, format!("{:?}", object.object_id), method.name
                 )),
             }
         }
@@ -581,15 +581,15 @@ fn render_kotlin(objects: &[SdkObject], serializable_types: &HashMap<String, Ser
             match method.mode {
                 SdkMode::Call => {
                     let return_type = method.return_type.as_deref().map(|value| kotlin_type(value, serializable_types)).unwrap_or_else(|| "Unit".to_string());
-                    output.push_str(&format!("    /** Calls `{}` through the Core Link route. */\n    suspend fun {}({parameters}): {} = client.callTyped({}, \"{}\", {arguments}, ::decode{})\n", method.name, method_name, return_type, object.object_id, method.name, kotlin_decoder_name(&return_type)));
+                    output.push_str(&format!("    /** Calls `{}` through the Core Link route. */\n    suspend fun {}({parameters}): {} = client.callTyped({}, \"{}\", {arguments}, ::decode{})\n", method.name, method_name, return_type, format!("{:?}", object.object_id), method.name, kotlin_decoder_name(&return_type)));
                 },
                 SdkMode::Watch => output.push_str(&format!(
                     "    /** Watches `{}` through the Core Link route. */\n    fun {}({parameters}): kotlinx.coroutines.flow.Flow<{}> = client.watchTyped({}, \"{}\", {arguments}, ::decode{})\n",
-                    method.name, method_name, method.return_type.as_deref().map(|value| kotlin_type(value, serializable_types)).unwrap_or_else(|| "Any?".to_string()), object.object_id, method.name, method.return_type.as_deref().map(|value| kotlin_decoder_name(&kotlin_type(value, serializable_types))).unwrap_or_else(|| "Any".to_string())
+                    method.name, method_name, method.return_type.as_deref().map(|value| kotlin_type(value, serializable_types)).unwrap_or_else(|| "Any?".to_string()), format!("{:?}", object.object_id), method.name, method.return_type.as_deref().map(|value| kotlin_decoder_name(&kotlin_type(value, serializable_types))).unwrap_or_else(|| "Any".to_string())
                 )),
                 SdkMode::Push => output.push_str(&format!(
                     "    /** Opens the caller-owned `{}` Core input stream. */\n    suspend fun {}({parameters}): OperitPluginSdkPushSink = client.push({}, \"{}\", {arguments})\n",
-                    method.name, method_name, object.object_id, method.name
+                    method.name, method_name, format!("{:?}", object.object_id), method.name
                 )),
             }
         }
@@ -618,19 +618,19 @@ fn render_typescript(
                 SdkMode::Call => {
                     let return_type = method.return_type.as_deref().map(|value| ts_public_type(value, serializable_types)).unwrap_or_else(|| "void".to_string());
                     if return_type == "void" {
-                        output.push_str(&format!("  /** Calls `{}` through the Core Link route. */\n  public {}({parameters}): Promise<void> {{ return this.client.call({}, '{}', {arguments}).then(() => undefined); }}\n", method.name, method_name, object.object_id, method.name));
+                        output.push_str(&format!("  /** Calls `{}` through the Core Link route. */\n  public {}({parameters}): Promise<void> {{ return this.client.call({}, '{}', {arguments}).then(() => undefined); }}\n", method.name, method_name, format!("{:?}", object.object_id), method.name));
                     } else {
                         let decode_type = method.return_type.as_deref().map(|value| ts_type(value, serializable_types)).unwrap_or_else(|| "unknown".to_string());
-                        output.push_str(&format!("  /** Calls `{}` through the Core Link route. */\n  public {}({parameters}): Promise<{}> {{ return this.client.callTyped<{}>({}, '{}', {arguments}, {}); }}\n", method.name, method_name, return_type, return_type, object.object_id, method.name, ts_decoder_expr(&decode_type)));
+                        output.push_str(&format!("  /** Calls `{}` through the Core Link route. */\n  public {}({parameters}): Promise<{}> {{ return this.client.callTyped<{}>({}, '{}', {arguments}, {}); }}\n", method.name, method_name, return_type, return_type, format!("{:?}", object.object_id), method.name, ts_decoder_expr(&decode_type)));
                     }
                 },
                 SdkMode::Watch => output.push_str(&format!(
                     "  /** Watches `{}` through the Core Link route. */\n  public {}({parameters}): AsyncIterable<{}> {{ return this.client.watchTyped<{}>({}, '{}', {arguments}, {}); }}\n",
-                    method.name, method_name, method.return_type.as_deref().map(|value| ts_public_type(value, serializable_types)).unwrap_or_else(|| "unknown".to_string()), method.return_type.as_deref().map(|value| ts_public_type(value, serializable_types)).unwrap_or_else(|| "unknown".to_string()), object.object_id, method.name, method.return_type.as_deref().map(|value| ts_decoder_expr(&ts_type(value, serializable_types))).unwrap_or_else(|| "(value) => value".to_string())
+                    method.name, method_name, method.return_type.as_deref().map(|value| ts_public_type(value, serializable_types)).unwrap_or_else(|| "unknown".to_string()), method.return_type.as_deref().map(|value| ts_public_type(value, serializable_types)).unwrap_or_else(|| "unknown".to_string()), format!("{:?}", object.object_id), method.name, method.return_type.as_deref().map(|value| ts_decoder_expr(&ts_type(value, serializable_types))).unwrap_or_else(|| "(value) => value".to_string())
                 )),
                 SdkMode::Push => output.push_str(&format!(
                     "  /** Opens the caller-owned `{}` Core input stream. */\n  public {}({parameters}): Promise<OperitPluginSdkPushSink> {{ return this.client.push({}, '{}', {arguments}); }}\n",
-                    method.name, method_name, object.object_id, method.name
+                    method.name, method_name, format!("{:?}", object.object_id), method.name
                 )),
             }
         }
@@ -798,7 +798,7 @@ mod parameter_tests {
 
     /// Builds a route with real string and boolean input metadata.
     fn objects() -> Vec<SdkObject> {
-        vec![SdkObject { object_id: 4, schema_key: "application.packageManager".to_string(), class_name: "PackageManagerClient".to_string(), methods: vec![SdkMethod {
+        vec![SdkObject { object_id: "core/application.packageManager".to_string(), schema_key: "application.packageManager".to_string(), class_name: "PackageManagerClient".to_string(), methods: vec![SdkMethod {
             name: "getToolPkgContainerDetails".to_string(), mode: SdkMode::Call, return_type: Some("String".to_string()),
             args: vec![SourceArg { name: "packageName".to_string(), ty: "&str".to_string() }, SourceArg { name: "useEnglish".to_string(), ty: "bool".to_string() }],
         }] }]
@@ -810,6 +810,9 @@ mod parameter_tests {
         let objects = objects();
         let models = HashMap::new();
         let dart = render_dart(&objects, &models);
+        for source in [render_rust(&objects, &models), render_dart(&objects, &models), render_kotlin(&objects, &models), render_typescript(&objects, &models)] {
+            assert!(source.contains("\"core/application.packageManager\""));
+        }
         assert!(dart.contains("getToolPkgContainerDetails({required String packageName, required bool useEnglish})"));
         assert!(dart.contains("'packageName': packageName, 'useEnglish': useEnglish"));
         assert!(render_kotlin(&objects, &models).contains("getToolPkgContainerDetails(packageName: String, useEnglish: Boolean)"));

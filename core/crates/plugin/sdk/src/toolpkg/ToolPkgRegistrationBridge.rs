@@ -15,6 +15,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         var moduleRefFunctionCounter = 0;
         var capture = {
             marketOrigin: null,
+            publicApis: [],
             toolboxUiModules: [],
             uiRoutes: [],
             chatComposerSlots: [],
@@ -582,6 +583,17 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         var toolPkgApi = requireToolPkgApiRuntime();
         var api = toolPkgApi.namespace('ToolPkg', {
             _m: captureMarketOrigin,
+            // Captures only explicitly published methods using durable exported function references.
+            registerApi: function(definition) {
+                if (!definition || typeof definition.name !== 'string' || !definition.name.trim()) {
+                    throw new Error('registerApi requires a non-empty name');
+                }
+                var normalized = normalizeFunctionField(definition, 'function', 'registerApi');
+                normalized.id = definition.name.trim();
+                delete normalized.name;
+                capture.publicApis.push(normalizeSpec(normalized));
+            },
+            callDependency: toolPkgApi.callDependency,
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
             registerChatComposerSlot: registerScreen('chatComposerSlots', 'registerToolPkgChatComposerSlot'),
@@ -607,20 +619,24 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerChatInputHook: registerFunction('chatInputHooks', 'registerChatInputHook'),
             registerChatViewHook: registerFunction('chatViewHooks', 'registerChatViewHook'),
             registerChatMessageHook: registerFunction('chatMessageHooks', 'registerChatMessageHook'),
-            registerChatMessageMenuItem: toolPkgApi.method().since('2.0.0', function(definition) {
-                capture.chatMessageMenuItems.push(
-                    normalizeSpec(
-                        normalizeChatMessageMenuItemDefinition(
-                            definition,
-                            'registerChatMessageMenuItem'
+            registerChatMessageMenuItem: toolPkgApi.method()
+                .between('1.0.1', '2.0.0')
+                .since('2.0.0')
+                // Adapts both API families to the shared registration payload.
+                .implement(function(definition) {
+                    capture.chatMessageMenuItems.push(
+                        normalizeSpec(
+                            normalizeChatMessageMenuItemDefinition(
+                                definition,
+                                'registerChatMessageMenuItem'
+                            )
                         )
-                    )
-                );
-            }),
-            registerChatRuntimeHook: toolPkgApi.method().since(
-                '2.0.0',
-                registerFunction('chatRuntimeHooks', 'registerChatRuntimeHook')
-            ),
+                    );
+                }),
+            registerChatRuntimeHook: toolPkgApi.method()
+                .between('1.0.1', '2.0.0')
+                .since('2.0.0')
+                .implement(registerFunction('chatRuntimeHooks', 'registerChatRuntimeHook')),
             registerHostEventHook: registerFunction('hostEventHooks', 'registerHostEventHook'),
             registerToolLifecycleHook: registerFunction('toolLifecycleHooks', 'registerToolLifecycleHook'),
             registerPromptInputHook: registerFunction('promptInputHooks', 'registerPromptInputHook'),

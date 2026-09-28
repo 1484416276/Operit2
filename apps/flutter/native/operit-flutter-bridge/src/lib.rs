@@ -561,7 +561,7 @@ impl OperitFlutterBridge {
         };
         let response = self.call(CoreCallRequest::new(
             format!("runtime-event-{}", current_time_millis_u64()),
-            LocalCoreProxy::generatedObjectIdForSchema("application")
+            LocalCoreProxy::generatedTargetForSchema("application")
                 .expect("generated application object id must exist"),
             "ingestRuntimeEvent",
             operit_link::toCoreValue(serde_json::json!({

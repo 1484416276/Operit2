@@ -228,36 +228,39 @@ fn render_route_catalog(
 ) -> String {
     let mut output = String::new();
     output.push_str("/// Resolves one annotation-generated Space route by its wire route ID.\n");
-    output.push_str("pub fn generated_space_route_for_id(routeId: u32, methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
+    output.push_str("pub fn generated_space_route_for_id(routeId: &str, methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match (routeId, methodName) {\n");
-    for (routeId, (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability)) in
-        declarations.iter().enumerate()
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability) in
+        declarations
     {
+        let routeId = format!("space/{targetType}/{method}");
         output.push_str(&format!(
-            "        ({routeId}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
+            "        ({routeId:?}, {method:?}) => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Resolves one internal annotation route without a Proxy object address.\n");
     output.push_str("pub fn generated_space_route_for_method(methodName: &str) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match methodName {\n");
-    for (routeId, (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability)) in
-        declarations.iter().enumerate()
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability) in
+        declarations
     {
+        let routeId = format!("space/{targetType}/{method}");
         output.push_str(&format!(
-            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
+            "        {method:?} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
         ));
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
     output.push_str("/// Resolves the generated Space route registered for one lifecycle hook.\n");
     output.push_str("pub fn generated_space_lifecycle_route(lifecycle: GeneratedRouteLifecycle) -> Option<GeneratedSpaceRoute> {\n");
     output.push_str("    match lifecycle {\n");
-    for (routeId, (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability)) in
-        declarations.iter().enumerate()
+    for (method, binding, targetType, _routeKind, lifecycle, permissionScope, permissionCapability) in
+        declarations
     {
+        let routeId = format!("space/{targetType}/{method}");
         if lifecycle != "Normal" {
             output.push_str(&format!(
-                "        GeneratedRouteLifecycle::{lifecycle} => Some(GeneratedSpaceRoute {{ routeId: {routeId}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
+                "        GeneratedRouteLifecycle::{lifecycle} => Some(GeneratedSpaceRoute {{ routeId: {routeId:?}, methodName: {method:?}, bindingArgument: {binding:?}, targetType: {targetType:?}, permissionScope: GeneratedRoutePermissionSubject::{permissionScope}, permissionCapability: {permissionCapability:?}, lifecycle: GeneratedRouteLifecycle::{lifecycle} }}),\n"
             ));
         }
     }
@@ -265,15 +268,15 @@ fn render_route_catalog(
     output.push_str(
         "/// Resolves one annotation-generated Space route from a standard Link call request.\n",
     );
-    output.push_str("pub fn generated_space_call_route(request: &operit_link::CoreCallRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(request.targetObjectId, &request.methodName) } }\n\n");
+    output.push_str("pub fn generated_space_call_route(request: &operit_link::CoreCallRequest) -> Option<GeneratedSpaceRoute> { if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) } }\n\n");
     output.push_str(
         "/// Resolves one annotation-generated Space route from a standard Link watch request.\n",
     );
-    output.push_str("pub fn generated_space_watch_route(request: &operit_link::CoreWatchRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.propertyName) } else { generated_space_route_for_id(request.targetObjectId, &request.propertyName) } }\n\n");
+    output.push_str("pub fn generated_space_watch_route(request: &operit_link::CoreWatchRequest) -> Option<GeneratedSpaceRoute> { if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.propertyName) } else { generated_space_route_for_id(&request.target, &request.propertyName) } }\n\n");
     output.push_str(
         "/// Resolves one annotation-generated Space route from a standard Link push request.\n",
     );
-    output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { if request.targetObjectId == operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(request.targetObjectId, &request.methodName) } }\n\n");
+    output.push_str("pub fn generated_space_push_route(request: &operit_link::CorePushRequest) -> Option<GeneratedSpaceRoute> { if request.target == operit_link::CORE_INTERNAL_TARGET { generated_space_route_for_method(&request.methodName) } else { generated_space_route_for_id(&request.target, &request.methodName) } }\n\n");
     output.push_str(
         "/// Dispatches one generated Space call on the runtime's main ChatServiceCore.\n",
     );

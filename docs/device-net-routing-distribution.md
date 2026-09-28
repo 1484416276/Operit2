@@ -139,7 +139,7 @@ event payloads.
 Every router owns a `SharedWatchHub`. A `SnapshotShared` entry is keyed by:
 
 ```text
-(spaceId, targetNodeId, routeKind, targetObjectId, propertyName,
+(spaceId, targetNodeId, routeKind, target, propertyName,
  canonicalArguments, topologyGeneration)
 ```
 

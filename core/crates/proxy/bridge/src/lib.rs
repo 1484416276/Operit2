@@ -29,12 +29,12 @@ pub trait LocalApplicationBridgeTarget: Send + Sync {
 /// Adapts one local application dispatch target into a shared Link client.
 pub struct LocalApplicationSharedClient<T: LocalApplicationBridgeTarget + ?Sized> {
     target: Arc<T>,
-    application_object_id: u32,
+    application_object_id: &'static str,
 }
 
 impl<T: LocalApplicationBridgeTarget + ?Sized> LocalApplicationSharedClient<T> {
     /// Creates a shared client for one application object id.
-    pub fn new(target: Arc<T>, application_object_id: u32) -> Self {
+    pub fn new(target: Arc<T>, application_object_id: &'static str) -> Self {
         Self {
             target,
             application_object_id,
@@ -42,12 +42,12 @@ impl<T: LocalApplicationBridgeTarget + ?Sized> LocalApplicationSharedClient<T> {
     }
 
     /// Builds the target mismatch error used by application-only clients.
-    fn targetError(&self, target_object_id: u32) -> CoreLinkError {
+    fn targetError(&self, target_route: &str) -> CoreLinkError {
         CoreLinkError::new(
             "LOCAL_APPLICATION_TARGET_REQUIRED",
             format!(
                 "local application client cannot dispatch object {}",
-                target_object_id
+                target_route
             ),
         )
     }
@@ -61,24 +61,24 @@ where
     /// Dispatches one application-owned call request through the bridge target.
     async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        if request.targetObjectId != self.application_object_id {
-            return CoreCallResponse::err(requestId, self.targetError(request.targetObjectId));
+        if request.target != self.application_object_id {
+            return CoreCallResponse::err(requestId, self.targetError(&request.target));
         }
         self.target.callLocalApplication(request).await
     }
 
     /// Reads one application-owned watch snapshot through the bridge target.
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
-        if request.targetObjectId != self.application_object_id {
-            return Err(self.targetError(request.targetObjectId));
+        if request.target != self.application_object_id {
+            return Err(self.targetError(&request.target));
         }
         self.target.watchLocalApplicationSnapshot(request).await
     }
 
     /// Opens one application-owned watch stream through the bridge target.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId != self.application_object_id {
-            return Err(self.targetError(request.targetObjectId));
+        if request.target != self.application_object_id {
+            return Err(self.targetError(&request.target));
         }
         self.target.watchLocalApplication(request).await
     }

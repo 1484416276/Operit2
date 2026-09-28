@@ -132,7 +132,7 @@ pub struct CoreStreamDescriptor {
     /// Identifies one logical stream independently from its current source.
     pub streamId: String,
     /// Identifies the generated object that owns the stream property.
-    pub targetObjectId: u32,
+    pub target: String,
     pub propertyName: String,
     pub args: CoreValue,
 }
@@ -226,7 +226,7 @@ impl<T> CoreStream<T> {
         Self {
             descriptor: CoreStreamDescriptor {
                 streamId: streamId.clone(),
-                targetObjectId: crate::CORE_STREAM_POOL_OBJECT_ID,
+                target: crate::CORE_STREAM_TARGET.to_string(),
                 propertyName: "openCoreStream".to_string(),
                 args: CoreValue::Map(BTreeMap::from([(
                     "streamId".to_string(),

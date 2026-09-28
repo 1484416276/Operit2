@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** One Core watch event returned through Plugin SDK IPC. */
 data class OperitPluginSdkEvent(
     val requestId: String?,
-    val targetObjectId: Int,
+    val target: String,
     val propertyName: String,
     val kind: String,
     val value: Any?,
@@ -42,21 +42,21 @@ class OperitPluginSdkClient private constructor(private val handle: Long) : Auto
     }
 
     /** Calls one generated Core method. */
-    suspend fun call(targetObjectId: Int, methodName: String, args: Any?): Any? {
+    suspend fun call(target: String, methodName: String, args: Any?): Any? {
         val id = requestId()
-        return request(id, mapOf("type" to "Call", "body" to mapOf("requestId" to id, "targetObjectId" to targetObjectId, "methodName" to methodName, "args" to (args ?: emptyMap<String, Any?>()))))
+        return request(id, mapOf("type" to "Call", "body" to mapOf("requestId" to id, "target" to target, "methodName" to methodName, "args" to (args ?: emptyMap<String, Any?>()))))
     }
 
     /** Calls one route and decodes its MessagePack value. */
-    suspend fun <T> callTyped(targetObjectId: Int, methodName: String, args: Any?, decode: (Any?) -> T): T = decode(call(targetObjectId, methodName, args))
+    suspend fun <T> callTyped(target: String, methodName: String, args: Any?, decode: (Any?) -> T): T = decode(call(target, methodName, args))
 
     /** Watches one generated Core property. */
-    fun watch(targetObjectId: Int, propertyName: String, args: Any?): Flow<OperitPluginSdkEvent> = flow {
+    fun watch(target: String, propertyName: String, args: Any?): Flow<OperitPluginSdkEvent> = flow {
         val id = requestId()
         val channel = Channel<OperitPluginSdkEvent>(Channel.BUFFERED)
         watches[id] = channel
         try {
-            request(id, mapOf("type" to "WatchOpen", "body" to mapOf("subscriptionId" to id, "request" to mapOf("requestId" to id, "targetObjectId" to targetObjectId, "propertyName" to propertyName, "args" to (args ?: emptyMap<String, Any?>())))))
+            request(id, mapOf("type" to "WatchOpen", "body" to mapOf("subscriptionId" to id, "request" to mapOf("requestId" to id, "target" to target, "propertyName" to propertyName, "args" to (args ?: emptyMap<String, Any?>())))))
             for (event in channel) emit(event)
         } finally {
             watches.remove(id)
@@ -65,14 +65,14 @@ class OperitPluginSdkClient private constructor(private val handle: Long) : Auto
     }
 
     /** Watches one route and decodes each MessagePack event value. */
-    fun <T> watchTyped(targetObjectId: Int, propertyName: String, args: Any?, decode: (Any?) -> T): Flow<T> = flow {
-        watch(targetObjectId, propertyName, args).collect { emit(decode(it.value)) }
+    fun <T> watchTyped(target: String, propertyName: String, args: Any?, decode: (Any?) -> T): Flow<T> = flow {
+        watch(target, propertyName, args).collect { emit(decode(it.value)) }
     }
 
     /** Opens one generated caller-owned Core input stream. */
-    suspend fun push(targetObjectId: Int, methodName: String, args: Any?): OperitPluginSdkPushSink {
+    suspend fun push(target: String, methodName: String, args: Any?): OperitPluginSdkPushSink {
         val id = requestId()
-        request(id, mapOf("type" to "PushOpen", "body" to mapOf("requestId" to id, "targetObjectId" to targetObjectId, "methodName" to methodName, "args" to (args ?: emptyMap<String, Any?>()))))
+        request(id, mapOf("type" to "PushOpen", "body" to mapOf("requestId" to id, "target" to target, "methodName" to methodName, "args" to (args ?: emptyMap<String, Any?>()))))
         return object : OperitPluginSdkPushSink {
             private var sequence = 0L
             /** Sends the next ordered item and waits for its acknowledgement. */
@@ -147,7 +147,7 @@ class OperitPluginSdkClient private constructor(private val handle: Long) : Auto
             "PushItemResult" -> complete("${body["pushId"]}:${body["sequence"]}", body["result"])
             "WatchEvent" -> {
                 val event = body["event"] as Map<*, *>
-                watches[body["subscriptionId"].toString()]?.trySend(OperitPluginSdkEvent(event["requestId"] as String?, (event["targetObjectId"] as Number).toInt(), event["propertyName"].toString(), event["kind"].toString(), event["value"]))
+                watches[body["subscriptionId"].toString()]?.trySend(OperitPluginSdkEvent(event["requestId"] as String?, event["target"] as String, event["propertyName"].toString(), event["kind"].toString(), event["value"]))
             }
             "WatchClose" -> watches.remove(body["subscriptionId"].toString())?.close()
         }

@@ -6,13 +6,13 @@ import 'dart:typed_data';
 class CoreCallRequest {
   const CoreCallRequest({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.methodName,
     required this.args,
   });
 
   final String requestId;
-  final int targetObjectId;
+  final String target;
   final String methodName;
   final Object? args;
 }
@@ -20,13 +20,13 @@ class CoreCallRequest {
 class CoreWatchRequest {
   const CoreWatchRequest({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.propertyName,
     required this.args,
   });
 
   final String requestId;
-  final int targetObjectId;
+  final String target;
   final String propertyName;
   final Object? args;
 }
@@ -35,13 +35,13 @@ class CorePushRequest {
   /// Creates a client-owned input stream targeting one Core method.
   const CorePushRequest({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.methodName,
     this.args = const <String, Object?>{},
   });
 
   final String requestId;
-  final int targetObjectId;
+  final String target;
   final String methodName;
   final Object? args;
 }
@@ -57,7 +57,7 @@ abstract class CorePushSink {
 class CoreEvent {
   CoreEvent({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.propertyName,
     required this.kind,
     required Object? value,
@@ -67,7 +67,7 @@ class CoreEvent {
 
   CoreEvent.raw({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.propertyName,
     required this.kind,
     required Uint8List valueBytes,
@@ -77,7 +77,7 @@ class CoreEvent {
        _decodeValue = decodeValue;
 
   final String? requestId;
-  final int targetObjectId;
+  final String target;
   final String propertyName;
   final String kind;
   final Uint8List? _valueBytes;

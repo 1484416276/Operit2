@@ -515,7 +515,7 @@ impl CoreRequestId {
 }
 
 /// Fixed protocol address of the process-local embedded stream pool.
-pub const CORE_STREAM_POOL_OBJECT_ID: u32 = u32::MAX;
+pub const CORE_STREAM_TARGET: &str = "$core.stream.open";
 /// Carries the routed method or property that produced an embedded stream.
 pub const CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT: &str = "$coreRouteStreamSourceMethod";
 /// Carries the routed request mode that produced an embedded stream.
@@ -580,7 +580,7 @@ impl CoreMethodProtocol {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreCallRequest {
     pub requestId: CoreRequestId,
-    pub targetObjectId: u32,
+    pub target: String,
     pub methodName: String,
     pub args: CoreValue,
 }
@@ -589,13 +589,13 @@ impl CoreCallRequest {
     /// Creates a serialized core call request.
     pub fn new(
         requestId: impl Into<String>,
-        targetObjectId: u32,
+        target: impl Into<String>,
         methodName: impl Into<String>,
         args: CoreValue,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetObjectId,
+            target: target.into(),
             methodName: methodName.into(),
             args,
         }
@@ -603,7 +603,7 @@ impl CoreCallRequest {
 
     /// Returns the generated dispatch registry key for this call.
     pub fn registryKey(&self) -> String {
-        format!("{}::{}", self.targetObjectId, self.methodName)
+        format!("{}::{}", self.target, self.methodName)
     }
 }
 
@@ -732,12 +732,12 @@ impl CoreCallResponse {
 
 pub const CORE_INCREMENTAL_VALUES_ARGUMENT: &str = "$coreIncremental";
 /// Identifies a request emitted by an annotation wrapper rather than a Dart proxy.
-pub const CORE_INTERNAL_ROUTE_OBJECT_ID: u32 = u32::MAX - 1;
+pub const CORE_INTERNAL_TARGET: &str = "$core.internal";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreWatchRequest {
     pub requestId: CoreRequestId,
-    pub targetObjectId: u32,
+    pub target: String,
     pub propertyName: String,
     pub args: CoreValue,
 }
@@ -745,7 +745,7 @@ pub struct CoreWatchRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CorePushRequest {
     pub requestId: CoreRequestId,
-    pub targetObjectId: u32,
+    pub target: String,
     pub methodName: String,
     #[serde(default = "CoreValue::emptyMap")]
     pub args: CoreValue,
@@ -755,12 +755,12 @@ impl CorePushRequest {
     /// Creates a client-owned input stream targeting one core method.
     pub fn new(
         requestId: impl Into<String>,
-        targetObjectId: u32,
+        target: impl Into<String>,
         methodName: impl Into<String>,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetObjectId,
+            target: target.into(),
             methodName: methodName.into(),
             args: CoreValue::emptyMap(),
         }
@@ -786,7 +786,7 @@ pub struct CorePushItem {
 pub enum RoutedCoreRequestKind {
     /// Addresses the destination through its local Core object namespace.
     #[default]
-    ObjectId,
+    Target,
     /// Addresses the destination through the annotation-generated Space route namespace.
     SpaceRoute,
     /// Resolves the generated Binding at the addressed adjacent Space router.
@@ -905,13 +905,13 @@ impl CoreWatchRequest {
     /// Creates a serialized watch request.
     pub fn new(
         requestId: impl Into<String>,
-        targetObjectId: u32,
+        target: impl Into<String>,
         propertyName: impl Into<String>,
         args: CoreValue,
     ) -> Self {
         Self {
             requestId: CoreRequestId::new(requestId),
-            targetObjectId,
+            target: target.into(),
             propertyName: propertyName.into(),
             args,
         }
@@ -919,7 +919,7 @@ impl CoreWatchRequest {
 
     /// Returns the generated dispatch registry key for this watch.
     pub fn registryKey(&self) -> String {
-        format!("{}::{}", self.targetObjectId, self.propertyName)
+        format!("{}::{}", self.target, self.propertyName)
     }
 
     /// Reports whether this subscriber accepts generic incremental values.
@@ -935,7 +935,7 @@ impl CoreWatchRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CoreEvent {
     pub requestId: Option<CoreRequestId>,
-    pub targetObjectId: u32,
+    pub target: String,
     pub propertyName: String,
     pub kind: CoreEventKind,
     pub value: CoreValue,

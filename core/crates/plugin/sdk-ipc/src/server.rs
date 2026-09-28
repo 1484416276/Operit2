@@ -228,7 +228,7 @@ impl PluginSdkIpcServer {
 
     /// Forwards one call without interpreting its target object or method.
     async fn handleCall(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CoreCallRequest) {
-        if let Err(error) = self.surface.check(request.targetObjectId, &request.methodName) {
+        if let Err(error) = self.surface.check(&request.target, &request.methodName) {
             self.sendMessage(&sessionId, PluginSdkIpcMessage::CallResponse(CoreCallResponse::err(request.requestId, error)));
             return;
         }
@@ -239,7 +239,7 @@ impl PluginSdkIpcServer {
     /// Forwards one watch snapshot and returns its event through the watch envelope.
     async fn handleWatchSnapshot(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CoreWatchRequest) {
         let subscriptionId = request.requestId.0.clone();
-        if let Err(error) = self.surface.check(request.targetObjectId, &request.propertyName) {
+        if let Err(error) = self.surface.check(&request.target, &request.propertyName) {
             self.sendMessage(&sessionId, PluginSdkIpcMessage::WatchClose { subscriptionId, error: Some(error) });
             return;
         }
@@ -278,7 +278,7 @@ impl PluginSdkIpcServer {
         subscriptionId: String,
         request: CoreWatchRequest,
     ) {
-        if let Err(error) = self.surface.check(request.targetObjectId, &request.propertyName) {
+        if let Err(error) = self.surface.check(&request.target, &request.propertyName) {
             self.sendMessage(&sessionId, PluginSdkIpcMessage::WatchOpened { subscriptionId, result: Err(error) });
             return;
         }
@@ -356,7 +356,7 @@ impl PluginSdkIpcServer {
     /// Opens one Core push stream and acknowledges the server-side session.
     async fn handlePushOpen(self: Arc<Self>, sessionId: PluginSdkIpcSessionId, request: CorePushRequest) {
         let pushId = request.requestId.0.clone();
-        if let Err(error) = self.surface.check(request.targetObjectId, &request.methodName) {
+        if let Err(error) = self.surface.check(&request.target, &request.methodName) {
             self.sendMessage(&sessionId, PluginSdkIpcMessage::PushOpened { pushId, result: Err(error) });
             return;
         }

@@ -28,7 +28,7 @@ use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreValue, LinkDeviceInfo,
-    LinkFrame, LinkFramePayload, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    LinkFrame, LinkFramePayload, CORE_INTERNAL_TARGET,
 };
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
@@ -908,7 +908,7 @@ impl RuntimeRemoteLinkService {
         }
         let objectId = self
             .nodeRouter
-            .objectIdForSchema("application")
+            .targetForSchema("application")
             .ok_or_else(|| "unknown Core schema key: application".to_string())?;
         let mut args = BTreeMap::new();
         args.insert(
@@ -951,7 +951,7 @@ impl RuntimeRemoteLinkService {
         }
         let request = CoreCallRequest::new(
             format!("core-route-lifecycle-{}", currentTimeMillis()),
-            CORE_INTERNAL_ROUTE_OBJECT_ID,
+            CORE_INTERNAL_TARGET,
             route.methodName,
             CoreValue::Map(args),
         );
@@ -1378,7 +1378,7 @@ impl RuntimeRemoteLinkService {
         };
         self.installRouteBindingOnTarget(&commit.binding.nodeId, commit.operation).await?;
         let response = self.nodeRouter.callSpace(CoreCallRequest::new(
-            format!("edge-chat-init-{}", currentTimeMillis()), CORE_INTERNAL_ROUTE_OBJECT_ID,
+            format!("edge-chat-init-{}", currentTimeMillis()), CORE_INTERNAL_TARGET,
             "ensureRoutedChat", CoreValue::Map(BTreeMap::from([
                 ("chatId".into(), CoreValue::String(chatId.clone())),
             ])),

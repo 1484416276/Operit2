@@ -1,3 +1,5 @@
+import { getAll, create, get, updateWorkflow, patchWorkflow, setEnabled, deleteWorkflow, triggerWorkflow } from "./public-api";
+export { getAll, create, get, updateWorkflow, patchWorkflow, setEnabled, deleteWorkflow, triggerWorkflow } from "./public-api";
 import screen from "./ui/web";
 import { dispatch, receive, replaceManifestTemplates, trigger } from "./service";
 import { parseWorkflow } from "./validation";
@@ -12,6 +14,14 @@ ToolPkg.ipc.on("workflow.web", (request, meta) => receive(request as import("./s
 
 /** Registers the plugin UI, public service and host-owned trigger sources. */
 export function registerToolPkg(): boolean {
+  ToolPkg.registerApi({ name: "getAll", function: getAll });
+  ToolPkg.registerApi({ name: "create", function: create });
+  ToolPkg.registerApi({ name: "get", function: get });
+  ToolPkg.registerApi({ name: "update", function: updateWorkflow });
+  ToolPkg.registerApi({ name: "patch", function: patchWorkflow });
+  ToolPkg.registerApi({ name: "setEnabled", function: setEnabled });
+  ToolPkg.registerApi({ name: "delete", function: deleteWorkflow });
+  ToolPkg.registerApi({ name: "trigger", function: triggerWorkflow });
   ToolPkg.registerUiRoute({ id: "workflow", route: ROUTE, screen, runtime: "compose_dsl", keepAlive: true, title: { zh: "工作流", en: "Workflow" } });
   ToolPkg.registerNavigationEntry({ id: "workflow_sidebar", route: ROUTE, surface: "main_sidebar_plugins", title: { zh: "工作流", en: "Workflow" }, icon: "AccountTree", order: 140 });
   ToolPkg.registerNavigationEntry({ id: "workflow_toolbox", route: ROUTE, surface: "toolbox", title: { zh: "工作流", en: "Workflow" }, icon: "AccountTree", order: 140 });

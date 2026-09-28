@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::package::{LocalizedText, ToolPackage};
 use crate::toolpkg::ToolPkgApiVersion::{
-    currentToolPkgApiVersionText, requireSupportedToolPkgApiVersion,
+    currentToolPkgApiVersionText, requireSupportedToolPkgApiVersion, ToolPkgApiVersion,
 };
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgTemplateModels::{
@@ -475,6 +475,8 @@ pub struct ToolPkgMainRegistration {
     pub aiProviders: Vec<ToolPkgRegisteredAiProvider>,
     #[serde(rename = "manifestExtensions", default)]
     pub manifestExtensions: Vec<ToolPkgRegisteredManifestExtension>,
+    #[serde(rename = "publicApis", default)]
+    pub publicApis: Vec<ToolPkgRegisteredFunctionHook>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -497,6 +499,10 @@ pub struct ToolPkgContainerRuntime {
     pub version: String,
     #[serde(rename = "apiVersion")]
     pub apiVersion: String,
+    #[serde(rename = "publicApi", default)]
+    pub publicApi: Option<String>,
+    #[serde(rename = "publicApis", default)]
+    pub publicApis: Vec<ToolPkgRegisteredFunctionHook>,
     pub requires: Vec<ToolPkgManifestRequirement>,
     #[serde(rename = "dependencyIssues", default)]
     pub dependencyIssues: Vec<ToolPkgDependencyIssue>,
@@ -601,6 +607,9 @@ pub struct ToolPkgManifest {
     pub version: String,
     #[serde(rename = "api_version", default = "currentToolPkgApiVersionText")]
     pub apiVersion: String,
+    /// Names the self-contained TypeScript client distributed to dependent packages.
+    #[serde(rename = "public_api", default)]
+    pub publicApi: Option<String>,
     #[serde(default)]
     pub requires: Vec<ToolPkgManifestRequirement>,
     #[serde(default)]
@@ -761,7 +770,8 @@ impl ToolPkgArchiveParser {
         let manifest = parseToolPkgManifest(&manifestText, &manifestEntryName)?;
         let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
         let apiVersionText = apiVersion.to_string();
-        let requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
+        let mut requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
+        applyCompatibilityRequirements(apiVersion, &manifest.toolpkgId, &mut requires)?;
         validateProtectedEntryPolicy(
             &manifest,
             &manifestEntryName,
@@ -777,6 +787,25 @@ impl ToolPkgArchiveParser {
         if manifest.toolpkgId.trim().is_empty() {
             return Err("manifest.toolpkg_id is required".to_string());
         }
+        let publicApi = match manifest.publicApi.as_deref() {
+            Some(path) => {
+                if path != path.trim() || path.starts_with('/') || path.starts_with('\\') || path.split(['/', '\\']).any(|part| part == ".." || part.contains(':')) {
+                    return Err("manifest.public_api must be a safe relative file path".to_string());
+                }
+                let normalized = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, path)
+                    .ok_or_else(|| "manifest.public_api must be a safe relative file path".to_string())?;
+                if !normalized.ends_with(".ts") || !entryIndex.containsEntry(&normalized) {
+                    return Err(format!("manifest.public_api must reference an existing TypeScript file: {path}"));
+                }
+                let source = readEntryText(&normalized)
+                    .ok_or_else(|| format!("Cannot read manifest.public_api: {path}"))?;
+                if source.trim().is_empty() {
+                    return Err("manifest.public_api must not be empty".to_string());
+                }
+                Some(normalized)
+            }
+            None => None,
+        };
         let normalizedMainEntry =
             Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, &manifest.main)
                 .ok_or_else(|| "manifest.main is required".to_string())?;
@@ -1036,6 +1065,15 @@ impl ToolPkgArchiveParser {
             }
         };
 
+        if !mainRegistration.publicApis.is_empty() && publicApi.is_none() {
+            return Err("registerApi requires manifest.public_api".to_string());
+        }
+        let mut publicApiNames = BTreeSet::new();
+        for api in &mainRegistration.publicApis {
+            if !publicApiNames.insert(api.id.clone()) {
+                return Err(format!("Duplicate public API: {}", api.id));
+            }
+        }
         let mut registeredUiRoutes = Vec::new();
         for module in &mainRegistration.toolboxUiModules {
             registeredUiRoutes.push(ToolPkgRegisteredUiRoute {
@@ -1316,6 +1354,8 @@ impl ToolPkgArchiveParser {
             description: containerDescription,
             version: manifest.version.clone(),
             apiVersion: apiVersionText,
+            publicApi,
+            publicApis: mainRegistration.publicApis.clone(),
             requires,
             dependencyIssues: Vec::new(),
             manifestExtensions,
@@ -2056,6 +2096,51 @@ fn normalizeRequirements(
     Ok(normalized)
 }
 
+/// Identifies the provider required by every admitted v1 compatibility contract.
+const V1_WORKFLOW_PREREQUISITE: &str = "com.operit.workflow";
+/// Identifies the first workflow plugin release exposing the compatibility API.
+const V1_WORKFLOW_MIN_VERSION: &str = "0.2.0";
+
+/// Adds the v1 compatibility prerequisite without changing the original manifest or relaxing explicit bounds.
+#[allow(non_snake_case)]
+fn applyCompatibilityRequirements(
+    apiVersion: ToolPkgApiVersion,
+    packageId: &str,
+    requirements: &mut Vec<ToolPkgManifestRequirement>,
+) -> Result<(), String> {
+    if apiVersion.major != 1 {
+        return Ok(());
+    }
+    if packageId.trim().eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE) {
+        return Err("The workflow compatibility provider must not itself use the v1 contract".to_string());
+    }
+    let minimum = ToolPkgApiVersion::parse(V1_WORKFLOW_MIN_VERSION)?;
+    match requirements.iter_mut().find(|item| item.id.eq_ignore_ascii_case(V1_WORKFLOW_PREREQUISITE)) {
+        Some(requirement) => {
+            let effectiveMinimum = match requirement.minVersion.as_deref() {
+                Some(value) => ToolPkgApiVersion::parse(value)?.max(minimum),
+                None => minimum,
+            };
+            if let Some(maximum) = requirement.maxVersion.as_deref() {
+                if ToolPkgApiVersion::parse(maximum)? < effectiveMinimum {
+                    return Err(format!(
+                        "v1 workflow prerequisite version bounds conflict: >= {effectiveMinimum}, <= {maximum}"
+                    ));
+                }
+            }
+            requirement.id = V1_WORKFLOW_PREREQUISITE.to_string();
+            requirement.minVersion = Some(effectiveMinimum.to_string());
+        }
+        None => requirements.push(ToolPkgManifestRequirement {
+            id: V1_WORKFLOW_PREREQUISITE.to_string(),
+            description: "Required by the ToolPkg v1 compatibility contract".to_string(),
+            minVersion: Some(V1_WORKFLOW_MIN_VERSION.to_string()),
+            maxVersion: None,
+        }),
+    }
+    Ok(())
+}
+
 #[allow(non_snake_case)]
 /// Normalizes and validates one optional package version constraint.
 fn normalizeRequirementVersion(
@@ -2372,5 +2457,162 @@ mod logo_tests {
             .expect("logo resource should exist");
 
         assert_eq!(logo.mime, "image/png");
+    }
+}
+
+#[cfg(test)]
+mod api_compatibility_tests {
+    use super::*;
+
+    /// Verifies archive loading preserves the declared API contract through registration and runtime metadata.
+    #[test]
+    fn loads_explicit_legacy_and_current_contracts() {
+        for version in ["1.0.0", "1.0.1", "2.0.0"] {
+            let manifest = serde_json::json!({
+                "schema_version": 1,
+                "toolpkg_id": "compat_fixture",
+                "api_version": version,
+                "main": "main.js"
+            })
+            .to_string();
+            let entries = BTreeMap::from([
+                ("manifest.json".to_string(), manifest),
+                ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+            ]);
+            let index = ToolPkgEntryIndex {
+                entryNames: entries.keys().cloned().collect(),
+                entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+            };
+            let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+                &index,
+                |name| entries.get(name).cloned(),
+                |_| None,
+                ToolPkgSourceType::EXTERNAL,
+                "compat_fixture.toolpkg",
+                false,
+                |_, _| panic!("fixture does not contain subpackages"),
+                |_, id, path, declared| {
+                    assert_eq!(id, "compat_fixture");
+                    assert_eq!(path, "main.js");
+                    assert_eq!(declared, version);
+                    ToolPkgMainRegistrationParseResult::Success {
+                        registration: ToolPkgMainRegistration::default(),
+                    }
+                },
+                |name, message| panic!("unexpected package error {name}: {message}"),
+            )
+            .expect("supported manifest must load");
+            assert_eq!(loaded.containerRuntime.apiVersion, version);
+            let requirements = &loaded.containerRuntime.requires;
+            if version == "2.0.0" {
+                assert!(requirements.is_empty());
+            } else {
+                assert_eq!(requirements.len(), 1);
+                assert_eq!(requirements[0].id, V1_WORKFLOW_PREREQUISITE);
+                assert_eq!(requirements[0].minVersion.as_deref(), Some(V1_WORKFLOW_MIN_VERSION));
+            }
+        }
+    }
+
+    /// Preserves stricter author constraints, raises weak minimums, and rejects incompatible maximums.
+    #[test]
+    fn merges_v1_workflow_prerequisite_without_duplicates() {
+        let version = ToolPkgApiVersion::parse("1.0.1").unwrap();
+        for (declared, effective) in [(None, "0.2.0"), (Some("0.1.0"), "0.2.0"), (Some("0.3.0"), "0.3.0")] {
+            let mut requirements = vec![ToolPkgManifestRequirement {
+                id: V1_WORKFLOW_PREREQUISITE.to_string(),
+                description: "Author requirement".to_string(),
+                minVersion: declared.map(str::to_string),
+                maxVersion: Some("0.4.0".to_string()),
+            }];
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            applyCompatibilityRequirements(version, "consumer", &mut requirements).unwrap();
+            assert_eq!(requirements.len(), 1);
+            assert_eq!(requirements[0].minVersion.as_deref(), Some(effective));
+            assert_eq!(requirements[0].maxVersion.as_deref(), Some("0.4.0"));
+            assert_eq!(requirements[0].description, "Author requirement");
+        }
+        let mut requirements = vec![ToolPkgManifestRequirement {
+            id: V1_WORKFLOW_PREREQUISITE.to_string(),
+            maxVersion: Some("0.1.0".to_string()),
+            ..Default::default()
+        }];
+        assert!(applyCompatibilityRequirements(version, "consumer", &mut requirements).is_err());
+        assert!(applyCompatibilityRequirements(version, V1_WORKFLOW_PREREQUISITE, &mut Vec::new()).is_err());
+    }
+
+    /// Keeps the existing current-contract default explicit and rejects undeclared future contracts.
+    #[test]
+    fn preserves_manifest_default_and_rejects_future_contracts() {
+        let manifest = parseToolPkgManifest(
+            r#"{"toolpkg_id":"current_fixture","main":"main.js"}"#,
+            "manifest.json",
+        )
+        .expect("current manifest must parse");
+        assert_eq!(manifest.apiVersion, "2.0.0");
+        for version in ["1.0.2", "2.0.1", "3.0.0"] {
+            assert!(requireSupportedToolPkgApiVersion(version).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    use super::*;
+
+    /// Loads a minimal indexed package using actual public API manifest validation.
+    fn load_public_fixture(path: Option<&str>, source: Option<&str>, methods: usize) -> Result<ToolPkgLoadResult, String> {
+        let mut manifest = serde_json::json!({
+            "toolpkg_id": "public_fixture", "api_version": "2.0.0", "main": "main.js"
+        });
+        if let Some(path) = path {
+            manifest["public_api"] = Value::String(path.to_string());
+        }
+        let mut entries = BTreeMap::from([
+            ("manifest.json".to_string(), manifest.to_string()),
+            ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+        ]);
+        if let Some(source) = source {
+            entries.insert("sdk/api.ts".to_string(), source.to_string());
+        }
+        let index = ToolPkgEntryIndex {
+            entryNames: entries.keys().cloned().collect(),
+            entryNamesByNormalizedLowercase: entries.keys().map(|name| (name.clone(), name.clone())).collect(),
+        };
+        ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
+            &index, |name| entries.get(name).cloned(), |_| None,
+            ToolPkgSourceType::EXTERNAL, "public_fixture.toolpkg", false,
+            |_, _| panic!("fixture has no subpackages"),
+            |_, _, _, _| ToolPkgMainRegistrationParseResult::Success {
+                registration: ToolPkgMainRegistration {
+                    publicApis: (0..methods).map(|_| ToolPkgRegisteredFunctionHook {
+                        id: "run".to_string(), function: "runExport".to_string(), ..Default::default()
+                    }).collect(),
+                    ..Default::default()
+                },
+            },
+            |name, message| panic!("unexpected package error {name}: {message}"),
+        )
+    }
+
+    /// Verifies the distributed client and callable metadata survive archive loading.
+    #[test]
+    fn loads_declared_client_and_public_method() {
+        let loaded = load_public_fixture(Some("sdk/api.ts"), Some("export interface Api {}"), 1).unwrap();
+        assert_eq!(loaded.containerRuntime.publicApi.as_deref(), Some("sdk/api.ts"));
+        assert_eq!(loaded.containerRuntime.publicApis[0].function, "runExport");
+        assert!(!loaded.containerRuntime.manifestExtensions.contains_key("public_api"));
+    }
+
+    /// Rejects missing, empty, unsafe clients and duplicate public names before enabling the package.
+    #[test]
+    fn rejects_invalid_public_contracts() {
+        for path in ["../api.ts", "/sdk/api.ts", "C:/api.ts", "sdk/missing.ts", "sdk/api.js"] {
+            assert!(load_public_fixture(Some(path), Some("export {}"), 1).is_err());
+        }
+        assert!(load_public_fixture(Some("sdk/api.ts"), None, 1).is_err());
+        assert!(load_public_fixture(Some("sdk/api.ts"), Some(""), 1).is_err());
+        assert!(load_public_fixture(None, None, 1).is_err());
+        assert!(load_public_fixture(Some("sdk/api.ts"), Some("export {}"), 2).is_err());
     }
 }

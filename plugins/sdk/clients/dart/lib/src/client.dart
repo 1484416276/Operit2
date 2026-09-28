@@ -22,48 +22,48 @@ final class OperitPluginSdkClient {
 
   /// Calls one generated Core object method through Link IPC.
   Future<Object?> call(
-    int targetObjectId,
+    String target,
     String methodName,
     Object? args,
   ) async {
-    final response = await _connection.call(targetObjectId, methodName, args);
+    final response = await _connection.call(target, methodName, args);
     return response['value'];
   }
 
   /// Calls one route and decodes its typed result.
   Future<T> callTyped<T>(
-    int targetObjectId,
+    String target,
     String methodName,
     Object? args,
     T Function(Object? value) decode,
   ) async {
-    final value = await call(targetObjectId, methodName, args);
+    final value = await call(target, methodName, args);
     return decode(value);
   }
 
   /// Watches one generated Core object property through Link IPC.
   Stream<PluginSdkEvent> watch(
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
-  ) => _connection.watch(targetObjectId, propertyName, args);
+  ) => _connection.watch(target, propertyName, args);
 
   /// Watches one route and decodes each event value.
   Stream<T> watchTyped<T>(
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(Object? value) decode,
   ) => watch(
-    targetObjectId,
+    target,
     propertyName,
     args,
   ).map((event) => decode(event.value));
 
   /// Opens one generated caller-owned Core input stream through Link IPC.
   Future<PluginSdkPushSink> push(
-    int targetObjectId,
+    String target,
     String methodName,
     Object? args,
-  ) => _connection.push(targetObjectId, methodName, args);
+  ) => _connection.push(target, methodName, args);
 }

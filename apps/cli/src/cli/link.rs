@@ -15,7 +15,7 @@ use operit_access_runtime::{
 use operit_core_application::CoreRemoteLinkServerConfig;
 use operit_link::{
     CoreEvent, CoreEventKind, CoreEventStream, CoreLinkSharedClient, CoreStreamDescriptor,
-    CoreValue, CoreWatchRequest, CORE_STREAM_POOL_OBJECT_ID,
+    CoreValue, CoreWatchRequest, CORE_STREAM_TARGET,
 };
 use operit_model::PromptTurn::PromptTurn;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
@@ -891,8 +891,8 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let targetObjectId =
-        operit_proxy_local::LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+    let target =
+        operit_proxy_local::LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
             .ok_or_else(|| "generated object id missing: chatRuntimeHolderMain".to_string())?;
     let flowArgs = CoreValue::Map(BTreeMap::from([
         ("chatId".to_string(), CoreValue::String(chatId.clone())),
@@ -905,7 +905,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         .localClient()
         .watch(CoreWatchRequest::new(
             format!("route-probe-flow-{chatId}"),
-            targetObjectId,
+            target,
             "routeProbeChatMessagesFlow",
             flowArgs,
         ))
@@ -935,10 +935,10 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     if !json_mode {
         println!(
             "Probe stream descriptor {} -> {}.{}",
-            descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName
+            descriptor.streamId, descriptor.target, descriptor.propertyName
         );
     }
-    if descriptor.targetObjectId != CORE_STREAM_POOL_OBJECT_ID
+    if descriptor.target != CORE_STREAM_TARGET
         || descriptor.propertyName != "openCoreStream"
     {
         return Err("probe stream descriptor does not target the Core stream pool".to_string());
@@ -948,7 +948,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         .localClient()
         .watch(CoreWatchRequest::new(
             format!("route-probe-embedded-{chatId}"),
-            CORE_STREAM_POOL_OBJECT_ID,
+            CORE_STREAM_TARGET,
             "openCoreStream",
             descriptor.args.clone(),
         ))
@@ -1312,9 +1312,9 @@ fn discovered_device_for_link_record<'a>(
 async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Result<(), String> {
     let session = PairedRemoteSession::fromRecord(record.clone())?;
     let info = session.sessionInfo().await?;
-    if info.protocolVersion != 3 {
+    if info.protocolVersion != 4 {
         return Err(format!(
-            "remote Link protocol version is {}, expected 3",
+            "remote Link protocol version is {}, expected 4",
             info.protocolVersion
         ));
     }

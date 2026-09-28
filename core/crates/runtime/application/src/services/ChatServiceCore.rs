@@ -2174,7 +2174,7 @@ impl ChatServiceCore {
                     sender
                         .send(CoreEvent {
                             requestId: Some(request.requestId.clone()),
-                            targetObjectId: request.targetObjectId,
+                            target: request.target.clone(),
                             propertyName: request.propertyName.clone(),
                             kind: CoreEventKind::Changed,
                             value: operit_link::toCoreValue(event)
@@ -2187,7 +2187,7 @@ impl ChatServiceCore {
                         sender
                             .send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value: operit_link::toCoreValue(event)
@@ -2199,7 +2199,7 @@ impl ChatServiceCore {
                 sender
                     .send(CoreEvent {
                         requestId: Some(request.requestId.clone()),
-                        targetObjectId: request.targetObjectId,
+                        target: request.target.clone(),
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Completed,
                         value: operit_link::toCoreValue(markdownStream.completed())

@@ -46,3 +46,18 @@ benchmark-only and are not exported by the product protocol.
 
 `protocol_codec_bench.rs` measures the final Link codec for small calls and
 native binary browser frame payloads.
+
+## Stable targets (breaking protocol change)
+
+Calls, watches, pushes, events and embedded stream descriptors carry a string
+`target`, not an object-pool index. Generated Proxy and SDK targets are
+`core/<schema_key>`; Space route targets are `space/<target_type>/<method>`.
+These names are public contracts: adding or reordering declarations cannot alter
+existing addresses. Renaming a schema or exported route is a breaking API change.
+MessagePack remains the only encoding; binary payloads remain native `bin` values.
+
+The stream resource manager remains internal. Its protocol target is
+`$core.stream.open`; the annotation wrapper target is `$core.internal`.
+Neither uses a numeric sentinel. Request/subscription/push IDs identify sessions,
+not API endpoints. Peer access protocol version is now 4. Old numeric SDK/Link
+messages are rejected; no legacy map or protocol downgrade is provided.

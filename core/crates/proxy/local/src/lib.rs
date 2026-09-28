@@ -54,15 +54,15 @@ impl LocalCoreProxy {
     pub fn hostManager(&self) -> &HostManager {
         &self.hostManager
     }
-    /// Resolves one generated schema key to its process-local numeric object id.
+    /// Resolves one generated schema key to its stable string target.
     #[allow(non_snake_case)]
-    pub fn generatedObjectIdForSchema(schema: &str) -> Option<u32> {
-        generated_object_id_for_schema(schema)
+    pub fn generatedTargetForSchema(schema: &str) -> Option<&'static str> {
+        generated_target_for_schema(schema)
     }
 
     /// Returns the generated local object ID for one concrete runtime type.
-    pub fn generatedObjectIdForType(typeName: &str) -> Option<u32> {
-        generated_object_id_for_type(typeName)
+    pub fn generatedTargetForType(typeName: &str) -> Option<&'static str> {
+        generated_target_for_type(typeName)
     }
 
     /// Installs the server-side CoreNode tool capability without taking the application dispatch lock.
@@ -145,7 +145,7 @@ impl LocalCoreProxy {
     /// Creates the server-internal client that dispatches only to the local application object.
     #[allow(non_snake_case)]
     pub fn localApplicationSharedClient(&self) -> Arc<dyn CoreLinkSharedClient + Send + Sync> {
-        Arc::new(LocalApplicationSharedClient::new(Arc::new(self.clone()), 0))
+        Arc::new(LocalApplicationSharedClient::new(Arc::new(self.clone()), "core/application"))
     }
 
     /// Builds the native server capability container for this local Core.
@@ -171,7 +171,7 @@ impl LocalCoreProxy {
             sharedClient,
             applicationClient,
             self.runtimeStorageHost(),
-            Arc::new(LocalCoreProxy::generatedObjectIdForSchema),
+            Arc::new(LocalCoreProxy::generatedTargetForSchema),
             bindCoreNodeToolRuntime,
             openPush,
             spaceRuntime,
@@ -230,7 +230,7 @@ impl CoreLinkSharedClient for LocalCoreProxy {
     async fn watchSnapshot(&self, request: CoreWatchRequest) -> Result<CoreEvent, CoreLinkError> {
         let context = format!(
             "watchSnapshot request={} object={} property={}",
-            request.requestId.0, request.targetObjectId, request.propertyName
+            request.requestId.0, request.target, request.propertyName
         );
         let (result, attachments) = operit_link::withCoreStreamCapture(
             generated_dispatch_core_proxy_watch_snapshot_async(self, request),
@@ -244,12 +244,12 @@ impl CoreLinkSharedClient for LocalCoreProxy {
     }
 
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == operit_link::CORE_STREAM_TARGET {
             return self.openCoreStreamWatch(request);
         }
         let context = format!(
             "watch request={} object={} property={}",
-            request.requestId.0, request.targetObjectId, request.propertyName
+            request.requestId.0, request.target, request.propertyName
         );
         generated_dispatch_core_proxy_watch_async(self, request)
             .await
@@ -279,12 +279,12 @@ impl LocalApplicationBridgeTarget for LocalCoreProxy {
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
         let propertyName = request.propertyName.clone();
-        let targetObjectId = request.targetObjectId;
+        let target = request.target.clone();
         let mut application = self.application.lock().await;
         let value = generated_dispatch_application_watch_snapshot(&mut application, &request)?;
         Ok(CoreEvent {
             requestId: Some(request.requestId),
-            targetObjectId,
+            target,
             propertyName,
             kind: CoreEventKind::Snapshot,
             value,
@@ -338,7 +338,7 @@ impl LocalCoreProxy {
 
     #[allow(non_snake_case)]
     fn dispatchWatch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
-        if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {
+        if request.target == operit_link::CORE_STREAM_TARGET {
             return self.openCoreStreamWatch(request);
         }
         generated_dispatch_core_proxy_watch(self, request)
@@ -367,7 +367,7 @@ mod tests {
         NativeRuntimeStorageHost, PosixFileSystemHost,
     };
     use operit_link::{
-        CoreEventKind, CoreStreamAttachment, CoreStreamSource, CORE_STREAM_POOL_OBJECT_ID,
+        CoreEventKind, CoreStreamAttachment, CoreStreamSource, CORE_STREAM_TARGET,
     };
     use operit_util::RuntimeStorageLayout::{RUNTIME_ROOT_DIR_PATH, WORKSPACE_DIR_PATH};
     use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
@@ -398,7 +398,7 @@ mod tests {
             Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
         let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(hostManager));
         let package_manager_id =
-            LocalCoreProxy::generatedObjectIdForSchema("application.packageManager")
+            LocalCoreProxy::generatedTargetForSchema("application.packageManager")
                 .expect("package manager must be generated");
         let application_guard = proxy.application.lock().await;
         let mut pending_watch = Box::pin(CoreLinkSharedClient::watch(
@@ -431,7 +431,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId.clone()),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName.clone(),
                     kind: CoreEventKind::Changed,
                     value: CoreValue::String("stream-pool-opened".to_string()),
@@ -440,7 +440,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName,
                     kind: CoreEventKind::Completed,
                     value: CoreValue::Null,
@@ -459,7 +459,7 @@ mod tests {
             &proxy,
             CoreWatchRequest::new(
                 "generated-dispatch-core-stream-watch",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 CoreValue::Map(args),
             ),

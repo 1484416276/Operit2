@@ -9,14 +9,14 @@ import 'host.dart';
 final class PluginSdkEvent {
   const PluginSdkEvent({
     required this.requestId,
-    required this.targetObjectId,
+    required this.target,
     required this.propertyName,
     required this.kind,
     required this.value,
   });
 
   final String? requestId;
-  final int targetObjectId;
+  final String target;
   final String propertyName;
   final String kind;
   final Object? value;
@@ -90,7 +90,7 @@ final class PluginSdkIpcConnection {
 
   /// Reads one Core call response.
   Future<Map<String, Object?>> call(
-    int targetObjectId,
+    String target,
     String methodName,
     Object? args,
   ) {
@@ -101,7 +101,7 @@ final class PluginSdkIpcConnection {
       'type': 'Call',
       'body': <String, Object?>{
         'requestId': requestId,
-        'targetObjectId': targetObjectId,
+        'target': target,
         'methodName': methodName,
         'args': args,
       },
@@ -111,7 +111,7 @@ final class PluginSdkIpcConnection {
 
   /// Opens one Core watch stream.
   Stream<PluginSdkEvent> watch(
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
   ) {
@@ -130,7 +130,7 @@ final class PluginSdkIpcConnection {
         'subscriptionId': requestId,
         'request': <String, Object?>{
           'requestId': requestId,
-          'targetObjectId': targetObjectId,
+          'target': target,
           'propertyName': propertyName,
           'args': args,
         },
@@ -148,7 +148,7 @@ final class PluginSdkIpcConnection {
 
   /// Opens one Core push stream.
   Future<PluginSdkPushSink> push(
-    int targetObjectId,
+    String target,
     String methodName,
     Object? args,
   ) async {
@@ -159,7 +159,7 @@ final class PluginSdkIpcConnection {
       'type': 'PushOpen',
       'body': <String, Object?>{
         'requestId': pushId,
-        'targetObjectId': targetObjectId,
+        'target': target,
         'methodName': methodName,
         'args': args ?? const <String, Object?>{},
       },
@@ -245,7 +245,7 @@ final class PluginSdkIpcConnection {
         controller.add(
           PluginSdkEvent(
             requestId: _requestIdOrNull(event['requestId']),
-            targetObjectId: event['targetObjectId'] as int,
+            target: event['target'] as String,
             propertyName: event['propertyName'] as String,
             kind: event['kind'].toString(),
             value: event['value'],

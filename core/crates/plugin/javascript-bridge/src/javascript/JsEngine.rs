@@ -1276,12 +1276,17 @@ impl JsEngineState {
         });
 
         let mut effectiveParams = params.clone();
-        if let Some(context) = self.toolPkgContext.as_ref() {
-            effectiveParams.insert(
-                "__operit_toolpkg_api_version".to_string(),
-                Value::String(context.api_version.clone()),
-            );
-        }
+        // Standalone scripts use the current SDK contract; ToolPkg engines retain their manifest contract.
+        let apiVersion = match self.toolPkgContext.as_ref() {
+            Some(context) => context.api_version.clone(),
+            None => {
+                operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION.to_string()
+            }
+        };
+        effectiveParams.insert(
+            "__operit_toolpkg_api_version".to_string(),
+            Value::String(apiVersion),
+        );
         let explicitLanguage = effectiveParams
             .get("__operit_package_lang")
             .and_then(Value::as_str)
@@ -1960,6 +1965,10 @@ impl JsEngineState {
         let toolExecutionHost = self.executionHost.clone();
         let toolAsyncCallbackSink = asyncCallbackSink.clone();
         let timerCallbackSink = asyncCallbackSink.clone();
+        let dependencyHost = self.executionHost.clone();
+        let dependencySink = asyncCallbackSink.clone();
+        let dependencyContext = self.toolPkgContext.clone();
+        let ipcContext = self.toolPkgContext.clone();
         let voidFunctions: Vec<(&str, HostJavaScriptVoidCallback)> = vec![
             (
                 "__operitSendIntermediateResult",
@@ -2033,7 +2042,12 @@ impl JsEngineState {
                             "__operitNativeInvokeToolPkgIpcAsync",
                             arguments,
                         )?;
+                    let context = ipcContext.as_ref().ok_or_else(|| HostError::new("ToolPkg IPC requires a bound package context"))?;
+                    if packageTarget != context.container_package_name {
+                        return Err(HostError::new("Package-private IPC cannot target another package"));
+                    }
                     dispatchToolPkgIpcAsync(
+                        None,
                         executionHost.clone(),
                         asyncCallbackSink.clone(),
                         callbackId,
@@ -2042,6 +2056,29 @@ impl JsEngineState {
                         targetContextKey,
                         targetRuntime,
                         channel,
+                        payloadJson,
+                    );
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeCallDependencyAsync",
+                Arc::new(move |arguments| {
+                    let [callbackId, packageTarget, methodName, payloadJson] =
+                        exactHostJavaScriptArguments("__operitNativeCallDependencyAsync", arguments)?;
+                    let context = dependencyContext.as_ref().ok_or_else(|| {
+                        HostError::new("Dependency calls require a bound ToolPkg context")
+                    })?;
+                    dispatchToolPkgIpcAsync(
+                        Some(context.container_package_name.clone()),
+                        dependencyHost.clone(),
+                        dependencySink.clone(),
+                        callbackId,
+                        packageTarget,
+                        context.context_key.clone(),
+                        String::new(),
+                        "main".to_string(),
+                        methodName,
                         payloadJson,
                     );
                     Ok(())
@@ -2178,6 +2215,7 @@ fn buildToolPkgIpcFailure(message: &str) -> String {
 /// Submits ToolPkg IPC through the execution host and reports completion to the source engine.
 #[allow(non_snake_case)]
 fn dispatchToolPkgIpcAsync(
+    dependencyCaller: Option<String>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
     callbackSink: JsAsyncCallbackSink,
     callbackId: String,
@@ -2192,7 +2230,7 @@ fn dispatchToolPkgIpcAsync(
     if normalizedCallbackId.is_empty() {
         return;
     }
-    let request = match buildToolPkgIpcRequest(
+    let mut request = match buildToolPkgIpcRequest(
         packageTarget,
         callerContextKey,
         targetContextKey,
@@ -2210,6 +2248,7 @@ fn dispatchToolPkgIpcAsync(
             return;
         }
     };
+    request.dependency_caller = dependencyCaller;
     let Some(executionHost) = executionHost else {
         callbackSink(JsAsyncCallback {
             callbackId: normalizedCallbackId,
@@ -2306,6 +2345,7 @@ fn buildToolPkgIpcRequest(
         })?
     };
     Ok(JsToolPkgIpcRequest {
+        dependency_caller: None,
         package_target: normalizedTarget,
         caller_context_key: callerContextKey.trim().to_string(),
         target_context_key: normalizeOptionalString(&targetContextKey),

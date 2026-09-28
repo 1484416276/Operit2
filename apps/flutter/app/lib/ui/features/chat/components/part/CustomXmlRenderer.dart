@@ -72,6 +72,11 @@ class CustomXmlRenderer extends StatelessWidget {
       return pluginRender;
     }
     return _ToolPkgXmlRenderBridge(
+      key: ValueKey((
+        parsed.tagName,
+        ChatRuntimeScope.maybeOf(context),
+        ChatRuntimeScope.maybeChatIdOf(context),
+      )),
       tagName: parsed.tagName,
       xmlContent: xmlContent,
       isStreaming: isStreaming,
@@ -187,6 +192,7 @@ class CustomXmlRenderer extends StatelessWidget {
 
 class _ToolPkgXmlRenderBridge extends StatefulWidget {
   const _ToolPkgXmlRenderBridge({
+    super.key,
     required this.tagName,
     required this.xmlContent,
     required this.isStreaming,
@@ -244,9 +250,9 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
     return FutureBuilder<Object?>(
       future: _renderFuture,
       builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done ||
-            snapshot.hasError ||
-            snapshot.data == null) {
+        // A new XML chunk must not unmount the resolved DSL host while its
+        // replacement is pending. FutureBuilder retains the previous data.
+        if (snapshot.hasError || snapshot.data == null) {
           return widget.defaultBuilder(context);
         }
         final data = snapshot.data;
@@ -276,6 +282,7 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
                 : _requiredJsonObject(data['moduleSpec'], 'moduleSpec');
             return SelectionContainer.disabled(
               child: _ToolPkgXmlComposeDslRender(
+                key: ValueKey((containerPackageName, screen)),
                 clients: _clients,
                 containerPackageName: containerPackageName,
                 screen: screen,
@@ -295,6 +302,7 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
 
 class _ToolPkgXmlComposeDslRender extends StatefulWidget {
   const _ToolPkgXmlComposeDslRender({
+    super.key,
     required this.clients,
     required this.containerPackageName,
     required this.screen,

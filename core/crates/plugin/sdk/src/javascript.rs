@@ -99,6 +99,8 @@ pub struct JsToolNameResolutionRequest {
 /// Describes one ToolPkg runtime-to-runtime IPC request.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct JsToolPkgIpcRequest {
+    /// Identifies a dependency caller injected by the engine, never by JavaScript arguments.
+    pub dependency_caller: Option<String>,
     pub package_target: String,
     pub caller_context_key: String,
     pub target_context_key: Option<String>,
@@ -319,6 +321,8 @@ pub struct ToolPkgMainRegistrationCapture {
     pub aiProviders: Vec<String>,
     #[serde(rename = "manifestExtensions", default)]
     pub manifestExtensions: Vec<String>,
+    #[serde(rename = "publicApis", default)]
+    pub publicApis: Vec<String>,
 }
 
 /// Resolves UTF-8 module resources for ToolPkg JavaScript execution contexts.

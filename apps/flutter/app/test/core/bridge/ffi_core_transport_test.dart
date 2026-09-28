@@ -120,7 +120,7 @@ class _HostConnection {
     id,
     encodeCoreLink([
       subscription,
-      [null, 7, 'items', 'Snapshot', value],
+      [null, 'core/test7', 'items', 'Snapshot', value],
     ]),
   );
 }
@@ -189,7 +189,7 @@ void _submit(
         connection.closedPushes.add(utf8.decode(bytes));
         connection.reply(id, null);
       case 4:
-        connection.reply(id, [null, 7, 'items', 'Snapshot', 'snapshot']);
+        connection.reply(id, [null, 'core/test7', 'items', 'Snapshot', 'snapshot']);
       case 5:
         final watch = decodeCoreLink<List<Object?>>(bytes);
         final subscription = watch[0] as String;
@@ -225,7 +225,7 @@ void _submit(
 CoreCallRequest _call(String id, String method, Object? args) =>
     CoreCallRequest(
       requestId: id,
-      targetObjectId: 7,
+      target: 'core/test7',
       methodName: method,
       args: args,
     );
@@ -233,7 +233,7 @@ CoreCallRequest _call(String id, String method, Object? args) =>
 /// Creates a watch whose property selects the test host's stream behavior.
 CoreWatchRequest _watch(String property) => CoreWatchRequest(
   requestId: 'watch',
-  targetObjectId: 7,
+  target: 'core/test7',
   propertyName: property,
   args: null,
 );
@@ -313,7 +313,7 @@ void main() {
       final push = await proxy.push(
         const CorePushRequest(
           requestId: 'push',
-          targetObjectId: 7,
+          target: 'core/test7',
           methodName: 'input',
         ),
       );

@@ -20,9 +20,9 @@ pub struct JsToolApiVariant {
     pub namespace: &'static str,
     /// Contains the public method name controlled by the gate.
     pub method: &'static str,
-    /// Contains the ToolPkg API version that selects this implementation.
+    /// Contains the first version selecting this implementation within its API family.
     pub since: &'static str,
-    /// Contains the exclusive upper ToolPkg API version for this implementation.
+    /// Contains an exclusive upper bound; None ends at the next major API family.
     pub until: Option<&'static str>,
     /// Contains an optional variant-specific JavaScript parameter list.
     pub arguments: Option<&'static [&'static str]>,
@@ -167,10 +167,19 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
 ];
 
 /// Contains every versioned implementation applied to generated Tools methods.
-pub const JS_TOOL_API_VARIANTS: &[JsToolApiVariant] = &[JsToolApiVariant {
-    namespace: "Chat",
-    method: "call",
-    since: "2.0.0",
-    until: None,
-    arguments: None,
-}];
+pub const JS_TOOL_API_VARIANTS: &[JsToolApiVariant] = &[
+    JsToolApiVariant {
+        namespace: "Chat",
+        method: "call",
+        since: "1.0.1",
+        until: Some("2.0.0"),
+        arguments: None,
+    },
+    JsToolApiVariant {
+        namespace: "Chat",
+        method: "call",
+        since: "2.0.0",
+        until: None,
+        arguments: None,
+    },
+];

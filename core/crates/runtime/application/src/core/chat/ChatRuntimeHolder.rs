@@ -81,7 +81,7 @@ pub struct ChatRuntimeHolder {
 impl ChatRuntimeHolder {
     /// Resolves one generated proxy object id to the main chat service core.
     #[allow(non_snake_case)]
-    pub fn coreForObjectId(&mut self, _objectId: u32) -> Option<&mut ChatServiceCore> {
+    pub fn coreForTarget(&mut self, _target: &str) -> Option<&mut ChatServiceCore> {
         Some(self.getCore(ChatRuntimeSlot::MAIN))
     }
 

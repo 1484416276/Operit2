@@ -506,7 +506,7 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
                     );
                     if let Some(until) = &variant.until {
                         output.push_str(&format!(
-                            ".range(\"{}\", \"{}\", {})",
+                            ".between(\"{}\", \"{}\", {})",
                             variant.since, until, function
                         ));
                     } else {
@@ -528,6 +528,16 @@ function __operitInvokeToolsBinding(namespace, method, toolName, overloads, args
     }
     if chat_namespace_open {
         output.push_str("});\n");
+    }
+    // Embed the handwritten legacy adapters after the canonical Tools namespace exists.
+    for relative_path in [
+        "compat/v1/files.js",
+        "compat/v1/chat.js",
+        "compat/v1/workflow.js",
+        "compat/v1/install.js",
+    ] {
+        output.push('\n');
+        output.push_str(&fs::read_to_string(sdk_src.join(relative_path))?);
     }
     validate_javascript_syntax(&output)?;
     fs::write(output_path, output)?;

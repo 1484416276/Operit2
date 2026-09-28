@@ -349,7 +349,7 @@ src/lib.rs
 职责：
 
 ```text
-targetObjectId
+target
 CoreCallRequest
 CoreCallResponse
 CoreWatchRequest
@@ -1346,7 +1346,7 @@ Access signed headers：
 
 ```text
 content-type: application/msgpack
-x-operit-link-version: 3
+x-operit-link-version: 4
 x-operit-session
 x-operit-device
 x-operit-signature

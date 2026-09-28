@@ -45,7 +45,7 @@ abstract class OperitRuntimeBridge {
   /// Opens one embedded stream through the generic Core property route.
   Stream<T> openEmbeddedCoreStream<T>(
     String streamId,
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,
@@ -58,14 +58,14 @@ abstract class OperitRuntimeBridge {
     if (cached != null) {
       debugPrint(
         'CoreStreamTrace dart.embedded.reuse streamId=$streamId '
-        'target=$targetObjectId property=$propertyName done=${cached.isDone}',
+        'target=$target property=$propertyName done=${cached.isDone}',
       );
       return cached.stream as Stream<T>;
     }
 
     debugPrint(
       'CoreStreamTrace dart.embedded.create streamId=$streamId '
-      'target=$targetObjectId property=$propertyName',
+      'target=$target property=$propertyName',
     );
     final embedded = _EmbeddedCoreStream<T>(
       streamId,
@@ -74,12 +74,12 @@ abstract class OperitRuntimeBridge {
             'embedded-core-stream-${DateTime.now().microsecondsSinceEpoch}';
         debugPrint(
           'CoreStreamTrace dart.embedded.open streamId=$streamId '
-          'requestId=$requestId target=$targetObjectId property=$propertyName',
+          'requestId=$requestId target=$target property=$propertyName',
         );
         return watchStream(
           CoreWatchRequest(
             requestId: requestId,
-            targetObjectId: targetObjectId,
+            target: target,
             propertyName: propertyName,
             args: args,
           ),
@@ -93,7 +93,7 @@ abstract class OperitRuntimeBridge {
         return decodeCoreLink<T>(
           valueBytes,
           decode: decode,
-          targetObjectId: event.targetObjectId,
+          target: event.target,
           embeddedStreamFactory: openEmbeddedCoreStream,
         );
       },
@@ -109,7 +109,7 @@ abstract class OperitRuntimeBridge {
     return call(
       CoreCallRequest(
         requestId: 'flutter-${DateTime.now().microsecondsSinceEpoch}',
-        targetObjectId: 0,
+        target: 'core/application',
         methodName: methodName,
         args: args,
       ),
@@ -199,7 +199,7 @@ class _EmbeddedCoreStream<T> {
       final completeValueBytes = _valueDecoder.completeValueBytes(event);
       final completeEvent = CoreEvent.raw(
         requestId: event.requestId,
-        targetObjectId: event.targetObjectId,
+        target: event.target,
         propertyName: event.propertyName,
         kind: event.kind,
         valueBytes: completeValueBytes,

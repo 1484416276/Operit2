@@ -325,7 +325,7 @@ mod native_call_codec_tests {
         let request = decode_native_call_request(&bytes).expect("compact request must decode");
 
         assert_eq!(request.requestId.0, "request-1");
-        assert_eq!(request.targetObjectId, 6);
+        assert_eq!(request.target, 6);
         assert_eq!(request.methodName, "getCards");
         assert_eq!(request.args, operit_link::CoreValue::Bool(true));
     }
@@ -338,7 +338,7 @@ mod native_call_codec_tests {
         let push_request =
             decode_native_push_open_request(&push_open).expect("compact push open must decode");
         assert_eq!(push_request.requestId.0, "push-1");
-        assert_eq!(push_request.targetObjectId, 7);
+        assert_eq!(push_request.target, 7);
         assert_eq!(push_request.methodName, "interact");
 
         let push_item = operit_link::encodeLink((
@@ -433,7 +433,7 @@ mod native_call_codec_tests {
     fn encodes_compact_watch_tuples() {
         let event = CoreEvent {
             requestId: Some(operit_link::CoreRequestId::new("watch-1")),
-            targetObjectId: 8,
+            target: "core/test8".into(),
             propertyName: "cards".to_string(),
             kind: CoreEventKind::Snapshot,
             value: operit_link::CoreValue::String("card-1".to_string()),

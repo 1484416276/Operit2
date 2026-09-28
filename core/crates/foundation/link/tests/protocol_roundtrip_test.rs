@@ -21,7 +21,7 @@ fn core_map(entries: impl IntoIterator<Item = (&'static str, CoreValue)>) -> Cor
 fn call_request_roundtrip_preserves_registry_key() {
     let request = CoreCallRequest::new(
         "roundtrip-call",
-        7,
+        "core/test",
         "send",
         core_map([("message", CoreValue::String("hello".to_string()))]),
     );
@@ -29,7 +29,7 @@ fn call_request_roundtrip_preserves_registry_key() {
     let bytes = encodeLink(&request).unwrap();
     let decoded = decodeLink::<CoreCallRequest>(&bytes).unwrap();
 
-    assert_eq!(decoded.registryKey(), "7::send");
+    assert_eq!(decoded.registryKey(), "core/test::send");
     assert_eq!(decoded, request);
 }
 
@@ -52,7 +52,7 @@ fn call_response_roundtrip_preserves_result() {
 fn watch_event_roundtrip_preserves_stream_identity() {
     let event = CoreEvent {
         requestId: Some(CoreRequestId::new("roundtrip-watch")),
-        targetObjectId: 7,
+        target: "core/test".to_string(),
         propertyName: "stream".to_string(),
         kind: CoreEventKind::Changed,
         value: core_map([("delta", CoreValue::String("hello".to_string()))]),
@@ -150,4 +150,27 @@ fn integer_vectors_remain_message_pack_arrays() {
     let bytes = encodeLink(vec![1_i32, 2_i32]).unwrap();
 
     assert_eq!(bytes, vec![0x92, 1, 2]);
+}
+
+/// Rejects the removed numeric target protocol rather than guessing an object mapping.
+#[test]
+fn numeric_and_legacy_targets_are_rejected() {
+    for field in ["target", "targetObjectId"] {
+        let wire = core_map([
+            ("requestId", CoreValue::String("old-sdk".into())),
+            (field, CoreValue::Unsigned(5)),
+            ("methodName", CoreValue::String("activatePackage".into())),
+            ("args", CoreValue::emptyMap()),
+        ]);
+        assert!(decodeLink::<CoreCallRequest>(&encodeLink(wire).unwrap()).is_err());
+    }
+}
+
+/// Makes the stable target visible as an ordinary MessagePack string field.
+#[test]
+fn target_is_a_named_messagepack_string() {
+    let call = CoreCallRequest::new("sdk", "core/application.packageManager", "activatePackage", CoreValue::emptyMap());
+    let CoreValue::Map(wire) = decodeLink::<CoreValue>(&encodeLink(call).unwrap()).unwrap() else { panic!("request must be a map") };
+    assert_eq!(wire.get("target"), Some(&CoreValue::String("core/application.packageManager".into())));
+    assert!(!wire.contains_key("targetObjectId"));
 }

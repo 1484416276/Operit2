@@ -19,7 +19,7 @@ fn render_schema_objects(objects: &[SourceObject]) -> String {
             format!(
                 "{}:{{\"objectId\":{},\"methods\":{}}}",
                 json_string(&object.schema_key),
-                object.object_id,
+                json_string(&object.object_id),
                 render_schema_methods(&object.methods)
             )
         })

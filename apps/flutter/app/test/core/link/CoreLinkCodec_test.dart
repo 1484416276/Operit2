@@ -91,7 +91,7 @@ void main() {
   test('native core call uses a fixed MessagePack tuple', () {
     const request = CoreCallRequest(
       requestId: 'request-1',
-      targetObjectId: 15,
+      target: 'core/test15',
       methodName: 'getCards',
       args: <String, Object?>{'includeArchived': false},
     );
@@ -102,7 +102,7 @@ void main() {
     expect(encoded.first, 0x94);
     expect(decoded, <Object?>[
       'request-1',
-      15,
+      'core/test15',
       'getCards',
       <String, Object?>{'includeArchived': false},
     ]);
@@ -151,13 +151,13 @@ void main() {
   test('native push and watch requests use fixed MessagePack tuples', () {
     const request = CorePushRequest(
       requestId: 'push-1',
-      targetObjectId: 41,
+      target: 'core/test41',
       methodName: 'interact',
     );
 
     expect(decodeCoreLink(encodeNativeCorePushOpenRequest(request)), <Object?>[
       'push-1',
-      41,
+      'core/test41',
       'interact',
       <String, Object?>{},
     ]);
@@ -168,19 +168,19 @@ void main() {
 
     const watchRequest = CoreWatchRequest(
       requestId: 'watch-1',
-      targetObjectId: 15,
+      target: 'core/test15',
       propertyName: 'cards',
       args: null,
     );
     expect(
       decodeCoreLink(encodeNativeCoreWatchSnapshotRequest(watchRequest)),
-      <Object?>['watch-1', 15, 'cards', null],
+      <Object?>['watch-1', 'core/test15', 'cards', null],
     );
     expect(
       decodeCoreLink(
         encodeNativeCoreWatchStreamRequest('subscription-1', watchRequest),
       ),
-      <Object?>['subscription-1', 'watch-1', 15, 'cards', null],
+      <Object?>['subscription-1', 'watch-1', 'core/test15', 'cards', null],
     );
   });
 
@@ -211,7 +211,7 @@ void main() {
         0,
         <Object?>[
           'watch-1',
-          15,
+          'core/test15',
           'cards',
           'Snapshot',
           <Object?>['card-1'],
@@ -219,13 +219,13 @@ void main() {
       ]),
     );
     expect(snapshot.requestId, 'watch-1');
-    expect(snapshot.targetObjectId, 15);
+    expect(snapshot.target, 'core/test15');
     expect(snapshot.kind, 'Snapshot');
 
     final frame = decodeNativeCoreWatchFrame(
       encodeCoreLink(<Object?>[
         'subscription-1',
-        <Object?>[null, 15, 'cards', 'Completed', null],
+        <Object?>[null, 'core/test15', 'cards', 'Completed', null],
       ]),
     );
     expect(frame.subscriptionId, 'subscription-1');
@@ -286,7 +286,7 @@ void main() {
               'value': <String, Object?>{
                 r'$coreStream': <String, Object?>{
                   'streamId': 'stream-ai',
-                  'targetObjectId': 64,
+                  'target': 'core/test64',
                   'propertyName': 'openCoreStream',
                   'args': <String, Object?>{'streamId': 'stream-ai'},
                 },
@@ -315,7 +315,7 @@ void main() {
 CoreEvent _rawCoreEvent({required String kind, required Object? value}) {
   return CoreEvent.raw(
     requestId: 'watch-1',
-    targetObjectId: 7,
+    target: 'core/test7',
     propertyName: 'chatMessagesFlow',
     kind: kind,
     valueBytes: encodeCoreLink(value),
@@ -350,7 +350,7 @@ class _EmbeddedStreamFactoryRecorder {
   /// Opens one deterministic test stream for an embedded descriptor.
   Stream<T> open<T>(
     String streamId,
-    int targetObjectId,
+    String target,
     String propertyName,
     Object? args,
     T Function(CoreLinkValueReader reader) decode,

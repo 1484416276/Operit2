@@ -1465,7 +1465,7 @@ CoreEvent _rawGeneratedEvent(
 ) {
   return CoreEvent.raw(
     requestId: request.requestId,
-    targetObjectId: request.targetObjectId,
+    target: request.target,
     propertyName: request.propertyName,
     kind: kind,
     valueBytes: encodeCoreLink(value),
@@ -1519,7 +1519,7 @@ Map<String, Object?> _streamDescriptorLinkValue(String streamId) {
   return <String, Object?>{
     r'$coreStream': <String, Object?>{
       'streamId': streamId,
-      'targetObjectId': 4294967295,
+      'target': '$core.stream.open',
       'propertyName': 'openCoreStream',
       'args': <String, Object?>{'streamId': streamId},
     },

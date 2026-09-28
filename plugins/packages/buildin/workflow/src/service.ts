@@ -117,7 +117,7 @@ async function record(db: Database, run: Run): Promise<void> {
 }
 
 /** Executes a saved workflow independently of its UI route lifetime. */
-async function runWorkflow(workflowId: string, triggerId: string | null, extras: Record<string, string>, observer?: (run: Run) => Promise<void>, reserved = false): Promise<void> {
+async function runWorkflow(workflowId: string, triggerId: string | null, extras: Record<string, string>, observer?: (run: Run) => Promise<void>, reserved = false): Promise<Run> {
   const db = await load();
   if (!reserved) editable(workflowId);
   const workflow = copy(find(db, workflowId));
@@ -125,7 +125,7 @@ async function runWorkflow(workflowId: string, triggerId: string | null, extras:
   const control = { cancelled: false };
   active.set(workflowId, control);
   try {
-    await execute(workflow, triggerId, extras, {
+    return await execute(workflow, triggerId, extras, {
       /** Invokes host tools with their existing permission and error contracts. */
       call: async (name, params) => output(await toolCall(name, params)),
       /** Executes explicitly authored JavaScript with async host tool access. */
@@ -255,4 +255,20 @@ export async function trigger(kind: "schedule" | "app_open" | "event", topic = "
       }
     }
   }
+}
+
+/** Applies a public API mutation to a copied graph set before committing it to plugin storage. */
+export async function publicTransaction<T>(mutate: (workflows: Workflow[]) => T, workflowId?: string): Promise<T> {
+  const db = await load();
+  if (workflowId !== undefined) editable(workflowId);
+  const workflows = copy(db.workflows);
+  const result = mutate(workflows);
+  db.workflows = workflows;
+  await persist(db);
+  return result;
+}
+
+/** Returns the exact run requested by a public caller without selecting a history entry by time. */
+export async function publicRun(workflowId: string): Promise<Run> {
+  return runWorkflow(workflowId, null, {});
 }

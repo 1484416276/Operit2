@@ -208,8 +208,10 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
         )
     }));
     objects.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
-    for (object_id, object) in objects.iter_mut().enumerate() {
-        object.object_id = object_id as u32;
+    let mut routes = HashSet::new();
+    for object in &mut objects {
+        object.object_id = stable_target(&object.schema_key);
+        assert!(routes.insert(object.object_id.clone()), "Duplicate Core target: {}", object.object_id);
     }
     CoreProxyScanOutput {
         proxy_manifest_dir,
@@ -233,5 +235,27 @@ fn emit_source_tree_rerun_if_changed(path: &Path) {
         } else {
             println!("cargo:rerun-if-changed={}", entry_path.display());
         }
+    }
+}
+
+/// Encodes the public schema name directly, without a registry index or hash.
+fn stable_target(schema_key: &str) -> String {
+    format!("core/{schema_key}")
+}
+
+#[cfg(test)]
+mod stable_target_tests {
+    use super::*;
+
+    /// Keeps existing addresses unchanged when declarations are added or reordered.
+    #[test]
+    fn insertion_and_order_do_not_change_targets() {
+        let original = ["application", "application.packageManager"];
+        let expanded = ["z.new", "application.packageManager", "a.new", "application"];
+        let targets: HashMap<_, _> = expanded.into_iter().map(|key| (key, stable_target(key))).collect();
+        for key in original {
+            assert_eq!(targets[key], stable_target(key));
+        }
+        assert_eq!(stable_target("application.packageManager"), "core/application.packageManager");
     }
 }

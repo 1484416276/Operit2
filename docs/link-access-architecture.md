@@ -72,7 +72,7 @@ Link Access 只提供控制面和 PeerLink carrier：
 
 | 模块 | 负责 | 不负责 |
 | --- | --- | --- |
-| `operit-proxy-local` | 生成本地 Proxy、对象 id 和本地 dispatch | Space 路由、设备信任、远程 session |
+| `operit-proxy-local` | 生成本地 Proxy、字符串 target 和本地 dispatch | Space 路由、设备信任、远程 session |
 | `operit-node-runtime` | `CoreNodeRouter`、Space 路由、Binding 同步和本地 Core 目标解析 | Flutter/CLI 入口协议 |
 | `operit-access-runtime` | 配对控制面、session、签名验证、PeerLink HTTP/WebSocket carrier | 本地 Proxy 调用投影 |
 | `operit-edge-contract` | Edge Service object/property address contract | Host implementation、Link dispatch、Access session |
@@ -91,7 +91,7 @@ RoutedCoreRequest<T> {
   spaceId
   targetNodeId
   ttl
-  routeKind: ObjectId | SpaceRoute
+  routeKind: Target | SpaceRoute
   payload: T
 }
 ```
@@ -110,8 +110,9 @@ PeerRequest::PushItem(CorePushItem)
 PeerRequest::PushClose(PeerPushCloseRequest)
 ```
 
-`targetObjectId` 是生成器分配的对象地址。SpaceRoute 由 route 注解生成的注册表
-解析；本地 Proxy 的对象 id 不会被当成远程链路入口。不存在分段对象路径或手写对象路径。
+`target` 是稳定字符串地址：本地 Proxy/SDK 使用 `core/<schema_key>`，SpaceRoute 使用
+`space/<target_type>/<method>`。两者都不再按声明顺序分配编号。路由名属于公共协议，
+新增声明不改变已有地址；改名属于破坏性变更。Peer 协议版本为 4，不接受旧数字寻址。
 
 ## 5. PeerFrame 载体
 

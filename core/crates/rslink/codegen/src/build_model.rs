@@ -24,7 +24,7 @@ impl SourceRoot {
 
 #[derive(Clone, Debug)]
 pub struct ObjectSpec {
-    pub object_id: u32,
+    pub object_id: String,
     pub schema_key: String,
     pub dispatch_name: String,
     pub type_name: String,
@@ -138,7 +138,7 @@ impl TypeRegistry {
 
 #[derive(Clone, Debug)]
 pub struct SourceObject {
-    pub object_id: u32,
+    pub object_id: String,
     pub schema_key: String,
     pub dispatch_name: String,
     pub full_type: String,

@@ -17,7 +17,7 @@ use operit_host_native_common::{
 use operit_link::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreEvent, CoreEventKind, CoreEventStream,
     CoreLinkSharedClient, CoreStream, CoreStreamSource, CoreValue, CoreWatchRequest,
-    CORE_STREAM_POOL_OBJECT_ID,
+    CORE_STREAM_TARGET,
 };
 use operit_model::ChatMessage::ChatMessage;
 use operit_proxy_local::LocalCoreProxy;
@@ -240,14 +240,14 @@ fn proxy_test_markdown_stream_source(chat_id: String, text: String) -> Arc<CoreS
         let value = toCoreValue(event).expect("Markdown stream event must encode");
         let _ = sender.send(CoreEvent {
             requestId: Some(request.requestId.clone()),
-            targetObjectId: request.targetObjectId,
+            target: request.target.clone(),
             propertyName: request.propertyName.clone(),
             kind: CoreEventKind::Changed,
             value,
         });
         let _ = sender.send(CoreEvent {
             requestId: Some(request.requestId),
-            targetObjectId: request.targetObjectId,
+            target: request.target.clone(),
             propertyName: request.propertyName,
             kind: CoreEventKind::Completed,
             value: CoreValue::Null,
@@ -285,7 +285,7 @@ async fn preferences_watch_bypasses_unrelated_resolved_holder() {
             let proxy = LocalCoreProxy::new(application);
             let _holderGuard = holder.lock().await;
             let character_group_manager_id =
-                LocalCoreProxy::generatedObjectIdForSchema("preferences.characterGroupCardManager")
+                LocalCoreProxy::generatedTargetForSchema("preferences.characterGroupCardManager")
                     .expect("character group manager object id must be generated");
 
             let event = tokio::time::timeout(
@@ -329,12 +329,12 @@ async fn shared_core_accepts_nested_owner_response() {
             let proxy = Arc::new(LocalCoreProxy::new(OperitApplication::newWithContext(
                 host_manager,
             )));
-            let runtime_host_interaction_service_id = LocalCoreProxy::generatedObjectIdForSchema(
+            let runtime_host_interaction_service_id = LocalCoreProxy::generatedTargetForSchema(
                 "services.runtimeHostInteractionService",
             )
             .expect("runtime host interaction service object id must be generated");
             let runtime_browser_service_id =
-                LocalCoreProxy::generatedObjectIdForSchema("services.runtimeBrowserService")
+                LocalCoreProxy::generatedTargetForSchema("services.runtimeBrowserService")
                     .expect("runtime browser service object id must be generated");
             let mut owner_events = CoreLinkSharedClient::watch(
                 proxy.as_ref(),
@@ -458,7 +458,7 @@ async fn generated_proxy_chat_messages_flow_opens_local_flow() {
                 Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
             let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
             let chat_object_id =
-                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
                     .expect("chatRuntimeHolderMain object id must be generated");
             let mut messages_stream = CoreLinkSharedClient::watch(
                 &proxy,
@@ -497,7 +497,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                 Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
             let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
             let chat_object_id =
-                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
                     .expect("chatRuntimeHolderMain object id must be generated");
             let detached_slot_id = "window-slot-a";
 
@@ -505,7 +505,7 @@ async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let main_core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 main_core.createNewChat(None, None, false, true, None);
                 let main_chat_id = main_core
@@ -597,13 +597,13 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
             let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
             let chat_object_id =
-                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
                     .expect("chatRuntimeHolderMain object id must be generated");
             let chat_id = {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 core.createNewChat(None, None, false, true, None);
                 core.chatHistoryDelegate
@@ -639,7 +639,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 core.chatHistoryDelegate
                     .addMessageToChat(message, Some(chat_id.clone()));
@@ -656,7 +656,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 &proxy,
                 CoreWatchRequest::new(
                     "proxy-local-live-chat-content-stream",
-                    CORE_STREAM_POOL_OBJECT_ID,
+                    CORE_STREAM_TARGET,
                     "openCoreStream",
                     stream.descriptor.args.clone(),
                 ),
@@ -678,7 +678,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 core.chatHistoryDelegate
                     .addMessageToChat(completed_message, Some(chat_id.clone()));
@@ -704,7 +704,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 core.chatHistoryDelegate
                     .addMessageToChat(second_message, Some(chat_id.clone()));
@@ -720,7 +720,7 @@ async fn local_chat_messages_flow_update_opens_embedded_stream() {
                 &proxy,
                 CoreWatchRequest::new(
                     "proxy-local-live-chat-content-stream-second",
-                    CORE_STREAM_POOL_OBJECT_ID,
+                    CORE_STREAM_TARGET,
                     "openCoreStream",
                     second_stream.descriptor.args.clone(),
                 ),
@@ -757,13 +757,13 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
                 Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
             let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
             let chat_object_id =
-                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
                     .expect("chatRuntimeHolderMain object id must be generated");
             let chat_id = {
                 let holder = proxy.chatRuntimeHolder();
                 let mut holder = holder.lock().await;
                 let core = holder
-                    .coreForObjectId(chat_object_id)
+                    .coreForTarget(chat_object_id)
                     .expect("chat runtime holder main core must exist");
                 core.createNewChat(None, None, false, true, None);
                 core.chatHistoryDelegate
@@ -801,7 +801,7 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
                     let holder = proxy.chatRuntimeHolder();
                     let mut holder = holder.lock().await;
                     let core = holder
-                        .coreForObjectId(chat_object_id)
+                        .coreForTarget(chat_object_id)
                         .expect("chat runtime holder main core must exist");
                     core.chatHistoryDelegate
                         .addMessageToChat(message, Some(chat_id.clone()));
@@ -818,7 +818,7 @@ async fn local_chat_messages_flow_update_inside_async_capture_opens_embedded_str
                     &proxy,
                     CoreWatchRequest::new(
                         "proxy-local-live-chat-content-stream-nested-capture",
-                        CORE_STREAM_POOL_OBJECT_ID,
+                        CORE_STREAM_TARGET,
                         "openCoreStream",
                         stream.descriptor.args.clone(),
                     ),
@@ -861,7 +861,7 @@ async fn shared_core_serializes_application_child_access() {
                 host_manager,
             )));
             let package_manager_id =
-                LocalCoreProxy::generatedObjectIdForSchema("application.packageManager")
+                LocalCoreProxy::generatedTargetForSchema("application.packageManager")
                     .expect("package manager object id must be generated");
             let barrier = Arc::new(tokio::sync::Barrier::new(16));
             let mut calls = Vec::with_capacity(16);
@@ -907,7 +907,7 @@ async fn shared_core_serializes_application_child_access() {
 mod annotated_route_tests {
     use super::*;
     use operit_link::{
-        CoreCallResponse, CoreLinkError, CoreRouteRuntime, CORE_INTERNAL_ROUTE_OBJECT_ID,
+        CoreCallResponse, CoreLinkError, CoreRouteRuntime, CORE_INTERNAL_TARGET,
     };
     use std::future::Future;
     use std::pin::Pin;
@@ -936,7 +936,7 @@ mod annotated_route_tests {
             Box::pin(async move {
                 let route = operit_node_runtime::generated_space_call_route(&request)
                     .expect("proxy calls must use the annotation route namespace");
-                assert_eq!(request.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_eq!(request.target, CORE_INTERNAL_TARGET);
                 assert_eq!(route.bindingKey(&request.args).unwrap(), "proxy-route-chat");
                 CoreCallResponse::ok(request.requestId, request.args)
             })
@@ -949,23 +949,23 @@ mod annotated_route_tests {
         ) -> Pin<Box<dyn Future<Output = Result<CoreEventStream, CoreLinkError>>>> {
             let closed_watches = self.closed_watches.clone();
             Box::pin(async move {
-                if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID {
+                if request.target == CORE_STREAM_TARGET {
                     let args = operit_rslink_runtime::object_args(request.args.clone())?;
                     assert_eq!(args.get(operit_link::CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT), Some(&CoreValue::String("chatMessagesFlow".into())));
                     assert_eq!(args.get(operit_link::CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT).unwrap().clone(), toCoreValue(json!({"chatId":"proxy-route-chat", "__core_instance_id":"detached-route-slot"})).unwrap());
                     let (sender, stream) = CoreEventStream::channel();
-                    sender.send(CoreEvent { requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName: request.propertyName, kind: CoreEventKind::Changed, value: CoreValue::String("remote content".into()) }).unwrap();
+                    sender.send(CoreEvent { requestId: Some(request.requestId), target: request.target.clone(), propertyName: request.propertyName, kind: CoreEventKind::Changed, value: CoreValue::String("remote content".into()) }).unwrap();
                     return Ok(stream);
                 }
                 let route = operit_node_runtime::generated_space_watch_route(&request)
                     .expect("proxy watches must use the annotation route namespace");
-                assert_eq!(request.targetObjectId, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_eq!(request.target, CORE_INTERNAL_TARGET);
                 assert_eq!(route.bindingKey(&request.args).unwrap(), "proxy-route-chat");
                 let (sender, stream) = CoreEventStream::channel();
                 sender
                     .send(CoreEvent {
                         requestId: Some(request.requestId),
-                        targetObjectId: request.targetObjectId,
+                        target: request.target.clone(),
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Snapshot,
                         value: {
@@ -1010,7 +1010,7 @@ mod annotated_route_tests {
         let messages: Vec<ChatMessage> = fromCoreValue(value).unwrap();
         let descriptor = &messages[0].contentStream.as_ref().unwrap().descriptor;
         let mut content = CoreLinkSharedClient::watch(proxy, CoreWatchRequest::new(
-            "remote-content-probe", descriptor.targetObjectId, &descriptor.propertyName, descriptor.args.clone(),
+            "remote-content-probe", &descriptor.target, &descriptor.propertyName, descriptor.args.clone(),
         )).await.expect("remote source must be registered before the message is visible");
         assert_eq!(receive_proxy_test_event(&mut content).await.value, CoreValue::String("remote content".into()));
     }
@@ -1032,9 +1032,9 @@ mod annotated_route_tests {
                 host_manager.hostRuntimeTaskSchedulerHost =
                     Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
                 let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
-                let object_id = LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                let object_id = LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
                     .expect("chat proxy object must be registered");
-                assert_ne!(object_id, CORE_INTERNAL_ROUTE_OBJECT_ID);
+                assert_ne!(object_id, CORE_INTERNAL_TARGET);
                 let runtime = Arc::new(AnnotatedRouteRuntime::default());
                 let _route_scope = RouteRuntimeScope::new(runtime.clone());
                 let args = toCoreValue(json!({

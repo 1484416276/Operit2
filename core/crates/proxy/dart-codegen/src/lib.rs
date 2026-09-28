@@ -213,18 +213,18 @@ fn render_dart_clients(
         ));
         output.push_str(&format!(
             "  {class_name} get {getter_name} => {class_name}._(bridge, {});\n",
-            object.object_id
+            format!("{:?}", object.object_id)
         ));
         if object.schema_key == "chatRuntimeHolderMain" {
             output.push_str(&format!(
                 "  /// Returns the generated proxy for one detached chat runtime.\n  {class_name} chatRuntimeHolderMainForSlot(String slotId) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': slotId}});\n",
-                object.object_id
+                format!("{:?}", object.object_id)
             ));
         }
         if object.schema_key == "repository.memoryRepository" {
             output.push_str(&format!(
                 "  /// Returns the generated proxy for one memory owner.\n  {class_name} repositoryMemoryRepositoryForOwner(String ownerKey) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': ownerKey}});\n",
-                object.object_id
+                format!("{:?}", object.object_id)
             ));
         }
     }
@@ -326,7 +326,7 @@ fn render_dart_namespace_class(
             let proxy_class = dart_proxy_class_name(&object.schema_key);
             output.push_str(&format!(
                 "  /// Returns a generated proxy client for `{child_path}`.\n  {proxy_class} get {getter_name} => {proxy_class}._(bridge, {});\n",
-                object.object_id
+                format!("{:?}", object.object_id)
             ));
         }
     }
@@ -360,7 +360,7 @@ fn render_dart_client_class(
         "  const {class_name}._(this.bridge, this.objectId, {{this.objectArgs = const <String, Object?>{{}}}});\n\n"
     ));
     output.push_str("  final OperitRuntimeBridge bridge;\n\n");
-    output.push_str("  final int objectId;\n\n");
+    output.push_str("  final String objectId;\n\n");
     output.push_str("  final Map<String, Object?> objectArgs;\n\n");
     for method in &object.methods {
         if method.factory_protocol().is_some() {
@@ -453,7 +453,7 @@ fn render_dart_reverse_stream_method(
     output.push_str("    final sink = await bridge.push(\n");
     output.push_str("      CorePushRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str("        targetObjectId: objectId,\n");
+    output.push_str("        target: objectId,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
     output.push_str(&format!(
         "        args: _coreProxyArgs(<String, Object?>{{{open_args}}}, objectArgs),\n"
@@ -502,7 +502,7 @@ fn render_dart_call_method(
     ));
     output.push_str("      CoreCallRequest(\n");
     output.push_str("        requestId: _coreProxyRequestId(),\n");
-    output.push_str("        targetObjectId: objectId,\n");
+    output.push_str("        target: objectId,\n");
     output.push_str(&format!("        methodName: '{}',\n", method.name));
     output.push_str(&format!(
         "        args: _coreProxyArgs({args}, objectArgs),\n"
@@ -513,7 +513,7 @@ fn render_dart_call_method(
         output.push_str("    decodeNativeCoreVoidResult(responseBytes);\n");
     } else {
         output.push_str(&format!(
-            "    return decodeNativeCoreResult<{}>(responseBytes, decode: (reader) => {}, targetObjectId: objectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            "    return decodeNativeCoreResult<{}>(responseBytes, decode: (reader) => {}, target: objectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
             return_type,
             dart_message_pack_decode_expr("reader", &return_type, serializable_types)
         ));
@@ -567,14 +567,14 @@ fn render_dart_factory_method(
     } else {
         format!("<String, Object?>{{{constructor_args}}}")
     };
-    let target_object_id = objects
+    let target_route = objects
         .iter()
         .find(|candidate| candidate.schema_key == factory.target_schema_key)
         .expect("factory target object must be generated")
-        .object_id;
+        .object_id.clone();
     let mut output = render_dart_doc_comments(method, "  ");
     output.push_str(&format!(
-        "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}._(bridge, {target_object_id}, objectArgs: {object_args_expr});\n  }}\n\n"
+        "  {class_name} {factory_method_name}({params}) {{\n    return {class_name}._(bridge, {target_route:?}, objectArgs: {object_args_expr});\n  }}\n\n"
     ));
     output
 }
@@ -597,13 +597,13 @@ fn render_dart_watch_method(
     output.push_str("    final eventValueDecoder = CoreLinkEventValueDecoder();\n");
     output.push_str("    return bridge\n");
     output.push_str(&format!(
-        "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), targetObjectId: objectId, propertyName: '{}', args: _coreProxyArgs({args}, objectArgs)))\n",
+        "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), target: objectId, propertyName: '{}', args: _coreProxyArgs({args}, objectArgs)))\n",
         method.name
     ));
     output.push_str("        .where((event) => event.kind != 'Completed')\n");
     output.push_str("        .map((event) {\n");
     output.push_str(&format!(
-            "          return eventValueDecoder.decode<{}>(event, decode: (valueBytes) => decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, targetObjectId: event.targetObjectId, embeddedStreamFactory: bridge.openEmbeddedCoreStream));\n",
+            "          return eventValueDecoder.decode<{}>(event, decode: (valueBytes) => decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, target: event.target, embeddedStreamFactory: bridge.openEmbeddedCoreStream));\n",
         value_type,
         value_type,
         dart_message_pack_decode_expr("reader", &value_type, serializable_types)

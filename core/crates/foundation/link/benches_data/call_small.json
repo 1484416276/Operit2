@@ -1,7 +1,7 @@
 {
   "request": {
     "requestId": "bench-small-call",
-    "targetObjectId": 7,
+    "target": "core/test",
     "methodName": "send",
     "args": {
       "message": "ping",

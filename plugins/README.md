@@ -2,7 +2,8 @@
 
 This directory contains the Operit2 plugin workspace.
 
-- `types/`: shared TypeScript declarations for ToolPkg authors.
+- `types/`: current v2 TypeScript declarations generated from the Rust SDK.
+- `types-v1/`: the independent handwritten v1 declaration snapshot, with source provenance.
 - `packages/buildin/`: ToolPkg sources that are packaged as built-in plugins.
 - `packages/external/`: official bundled ToolPkg sources that are packaged with the app and loaded by the user from "more plugins".
 - `packages/examples/`: sample ToolPkg sources for development and manual testing.

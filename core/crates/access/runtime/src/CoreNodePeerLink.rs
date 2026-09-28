@@ -431,7 +431,7 @@ impl PeerLinkClient {
     ) -> Result<CoreEventStream, CoreLinkError> {
         let subscriptionId = format!("peer-watch-{}", Uuid::new_v4().simple());
         let requestId = request.payload.requestId.0.clone();
-        let targetObjectId = request.payload.targetObjectId;
+        let target = request.payload.target.clone();
         let propertyName = request.payload.propertyName.clone();
         let (sender, receiver) = mpsc::unbounded_channel();
         self.connection
@@ -444,7 +444,7 @@ impl PeerLinkClient {
             &format!(
                 "outgoing_watch_request local={} peer={} subscription={} requestId={} target={} property={}",
                 self.connection.localNodeId, self.connection.peerNodeId,
-                subscriptionId, requestId, targetObjectId, propertyName
+                subscriptionId, requestId, target, propertyName
             ),
         );
         let opened = self
@@ -480,7 +480,7 @@ impl PeerLinkClient {
                 self.connection.peerNodeId,
                 subscriptionId,
                 requestId,
-                targetObjectId,
+                target,
                 propertyName
             ),
         );
@@ -494,7 +494,7 @@ impl PeerLinkClient {
                     connection.peerNodeId,
                     subscriptionId,
                     requestId,
-                    targetObjectId,
+                    target,
                     propertyName
                 ),
             );
@@ -1714,7 +1714,7 @@ async fn openOutboundPeerLinkHttp(
             url: format!("{}/link/peer/channel/events", session.baseUrl),
             method: "POST".to_string(),
             headers: vec![
-                ("x-operit-link-version".to_string(), "3".to_string()),
+                ("x-operit-link-version".to_string(), "4".to_string()),
                 ("x-operit-session".to_string(), session.sessionId.clone()),
                 ("x-operit-device".to_string(), session.deviceId.clone()),
                 ("x-operit-signature".to_string(), signature),

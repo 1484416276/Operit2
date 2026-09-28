@@ -7,7 +7,7 @@ use operit_link::{
     CoreLinkPushSession, CoreRouteRuntime, CoreStreamAttachment, CoreStreamDescriptor,
     CoreStreamSource, CoreValue, CoreWatchRequest, CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT,
     CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT,
-    CORE_STREAM_POOL_OBJECT_ID,
+    CORE_STREAM_TARGET,
 };
 use operit_store::PreferencesDataStore::{Flow, FlowCancellation, StateFlow};
 use operit_util::stream::ReverseStream::{ReverseStream, ReverseStreamSender};
@@ -278,7 +278,7 @@ pub fn core_route_args(fields: impl IntoIterator<Item = (String, CoreValue)>) ->
 pub fn core_route_call_request(method_name: &str, args: CoreValue) -> CoreCallRequest {
     CoreCallRequest::new(
         operit_link::nextCoreRouteRequestId(method_name),
-        operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+        operit_link::CORE_INTERNAL_TARGET,
         method_name,
         args,
     )
@@ -288,7 +288,7 @@ pub fn core_route_call_request(method_name: &str, args: CoreValue) -> CoreCallRe
 pub fn core_route_watch_request(method_name: &str, args: CoreValue) -> CoreWatchRequest {
     CoreWatchRequest::new(
         operit_link::nextCoreRouteRequestId(method_name),
-        operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+        operit_link::CORE_INTERNAL_TARGET,
         method_name,
         args,
     )
@@ -370,7 +370,7 @@ fn send_core_watch_value_with_attachments<T: Serialize>(
     sender: &tokio::sync::mpsc::UnboundedSender<CoreEvent>,
     previous_value: &StdMutex<Option<CoreValue>>,
     request_id: &operit_link::CoreRequestId,
-    target_object_id: u32,
+    target_route: String,
     property_name: &str,
     incremental: bool,
     attachment_adopter: &CoreStreamAttachmentAdopter,
@@ -389,7 +389,7 @@ fn send_core_watch_value_with_attachments<T: Serialize>(
     );
     let _ = sender.send(CoreEvent {
         requestId: Some(request_id.clone()),
-        targetObjectId: target_object_id,
+        target: target_route.clone(),
         propertyName: property_name.to_string(),
         kind,
         value,
@@ -408,7 +408,7 @@ where
     let (sender, receiver) = core_event_stream_channel();
     let incremental = request.acceptsIncrementalValues();
     let request_id = request.requestId;
-    let target_object_id = request.targetObjectId;
+    let target_route = request.target.clone();
     let property_name = request.propertyName;
     let previous_value = Arc::new(StdMutex::new(None::<CoreValue>));
     let previous_for_subscriber = previous_value.clone();
@@ -418,7 +418,7 @@ where
                 &sender,
                 previous_for_subscriber.as_ref(),
                 &request_id,
-                target_object_id,
+                target_route.clone(),
                 &property_name,
                 incremental,
                 &attachment_adopter,
@@ -441,7 +441,7 @@ where
     let (sender, receiver) = core_event_stream_channel();
     let incremental = request.acceptsIncrementalValues();
     let request_id = request.requestId;
-    let target_object_id = request.targetObjectId;
+    let target_route = request.target.clone();
     let property_name = request.propertyName;
     let previous_value = Arc::new(StdMutex::new(None::<CoreValue>));
     let previous_for_subscriber = previous_value.clone();
@@ -451,7 +451,7 @@ where
             &sender,
             previous_for_subscriber.as_ref(),
             &request_id,
-            target_object_id,
+            target_route.clone(),
             &property_name,
             incremental,
             &attachment_adopter,
@@ -504,13 +504,13 @@ where
     AppLogger::i(
         "CoreRouteStream",
         &format!(
-            "state_flow.initial_event requestId={} targetObjectId={} property={} kind={:?} value={} summary={}",
+            "state_flow.initial_event requestId={} target={} property={} kind={:?} value={} summary={}",
             first
                 .requestId
                 .as_ref()
                 .map(|requestId| requestId.0.as_str())
                 .unwrap_or("<none>"),
-            first.targetObjectId,
+            first.target,
             first.propertyName,
             first.kind,
             core_value_shape(&first.value),
@@ -520,13 +520,13 @@ where
     AppLogger::d(
         "CoreRouteStream",
         &format!(
-            "state_flow.first requestId={} targetObjectId={} property={} kind={:?} value={} summary={}",
+            "state_flow.first requestId={} target={} property={} kind={:?} value={} summary={}",
             first
                 .requestId
                 .as_ref()
                 .map(|requestId| requestId.0.as_str())
                 .unwrap_or("<none>"),
-            first.targetObjectId,
+            first.target,
             first.propertyName,
             first.kind,
             core_value_shape(&first.value),
@@ -565,13 +565,13 @@ where
                         AppLogger::v_with_level(
                             "CoreRouteStream",
                             &format!(
-                                "state_flow.event requestId={} targetObjectId={} property={} kind={:?} value={} count={} summary={}",
+                                "state_flow.event requestId={} target={} property={} kind={:?} value={} count={} summary={}",
                                 event
                                     .requestId
                                     .as_ref()
                                     .map(|requestId| requestId.0.as_str())
                                     .unwrap_or("<none>"),
-                                event.targetObjectId,
+                                event.target,
                                 event.propertyName,
                                 event.kind,
                                 core_value_shape(&event.value),
@@ -629,7 +629,7 @@ where
         runtime.clone(), request.propertyName.clone(), request.args.clone(),
     );
     let routed_request = CoreWatchRequest {
-        targetObjectId: operit_link::CORE_INTERNAL_ROUTE_OBJECT_ID,
+        target: operit_link::CORE_INTERNAL_TARGET.to_string(),
         ..request.clone()
     };
     let mut upstream = runtime.watch(routed_request).await?;
@@ -642,7 +642,7 @@ where
     adopt_routed_watch_value(decoder(first.value.clone())?, &adopter)?;
     let mut previous = first.value.clone();
     first.requestId = Some(request.requestId.clone());
-    first.targetObjectId = request.targetObjectId;
+    first.target = request.target.clone();
     let (sender, receiver) = core_event_stream_channel();
     sender.send(first).map_err(|error| CoreLinkError::internal(error.to_string()))?;
     if snapshot {
@@ -678,7 +678,7 @@ where
                     }
                 }
                 event.requestId = Some(request.requestId.clone());
-                event.targetObjectId = request.targetObjectId;
+                event.target = request.target.clone();
                 if sender.send(event).is_err() || completed { break; }
             }
         })),
@@ -876,14 +876,14 @@ fn routed_core_stream_source_for_descriptor(
     source_args: CoreValue,
     descriptor: &CoreStreamDescriptor,
 ) -> Option<Arc<CoreStreamSource>> {
-    if descriptor.targetObjectId != CORE_STREAM_POOL_OBJECT_ID
+    if descriptor.target != CORE_STREAM_TARGET
         || descriptor.propertyName != "openCoreStream"
     {
         AppLogger::i(
             "CoreRouteStream",
             &format!(
-                "route.descriptor.skip streamId={} targetObjectId={} property={}",
-                descriptor.streamId, descriptor.targetObjectId, descriptor.propertyName
+                "route.descriptor.skip streamId={} target={} property={}",
+                descriptor.streamId, descriptor.target, descriptor.propertyName
             ),
         );
         return None;
@@ -953,7 +953,7 @@ fn core_route_embedded_stream_source(
                 Box::new(move || {
                     Box::pin(async move {
                         let request_id = routed_open_request.requestId.clone();
-                        let target_object_id = routed_open_request.targetObjectId;
+                        let target_route = routed_open_request.target.clone();
                         let property_name = routed_open_request.propertyName.clone();
                         let stream_id = core_stream_id_argument(&routed_open_request.args)
                             .unwrap_or_else(|| "<missing>".to_string());
@@ -1032,7 +1032,7 @@ fn core_route_embedded_stream_source(
                                 );
                                 let _ = sender.send(CoreEvent {
                                     requestId: Some(request_id),
-                                    targetObjectId: target_object_id,
+                                    target: target_route.clone(),
                                     propertyName: property_name,
                                     kind: CoreEventKind::Completed,
                                     value: CoreValue::Null,
@@ -1250,7 +1250,7 @@ where
                         .collect(&mut |value| {
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value: CoreValue::String(value),
@@ -1259,7 +1259,7 @@ where
                         .await;
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
-                        targetObjectId: request.targetObjectId,
+                        target: request.target.clone(),
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Completed,
                         value: CoreValue::Null,
@@ -1288,7 +1288,7 @@ where
                             let value = to_core_value(item).expect("stream item must serialize");
                             let _ = sender.send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value,
@@ -1297,7 +1297,7 @@ where
                         .await;
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
-                        targetObjectId: request.targetObjectId,
+                        target: request.target.clone(),
                         propertyName: request.propertyName,
                         kind: CoreEventKind::Completed,
                         value: CoreValue::Null,
@@ -1328,7 +1328,7 @@ mod tests {
         HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
     };
     use operit_link::{
-        CoreEventKind, CoreRequestId, CoreRouteRuntime, CoreStream, CORE_INTERNAL_ROUTE_OBJECT_ID,
+        CoreEventKind, CoreRequestId, CoreRouteRuntime, CoreStream, CORE_INTERNAL_TARGET,
     };
     use serde::{Deserialize, Serialize};
     use std::pin::Pin;
@@ -1448,7 +1448,7 @@ mod tests {
         {
             let openedEmbeddedStream = self.openedEmbeddedStream.clone();
             Box::pin(async move {
-                if request.targetObjectId == CORE_INTERNAL_ROUTE_OBJECT_ID
+                if request.target == CORE_INTERNAL_TARGET
                     && request.propertyName == "chatMessagesFlow"
                 {
                     let source = Arc::new(CoreStreamSource::new(|request| {
@@ -1456,7 +1456,7 @@ mod tests {
                         sender
                             .send(CoreEvent {
                                 requestId: Some(request.requestId.clone()),
-                                targetObjectId: request.targetObjectId,
+                                target: request.target.clone(),
                                 propertyName: request.propertyName.clone(),
                                 kind: CoreEventKind::Changed,
                                 value: CoreValue::String("unused-source".to_string()),
@@ -1474,7 +1474,7 @@ mod tests {
                     sender
                         .send(CoreEvent {
                             requestId: Some(request.requestId),
-                            targetObjectId: request.targetObjectId,
+                            target: request.target.clone(),
                             propertyName: request.propertyName,
                             kind: CoreEventKind::Snapshot,
                             value,
@@ -1483,7 +1483,7 @@ mod tests {
                     return Ok(receiver);
                 }
 
-                if request.targetObjectId == CORE_STREAM_POOL_OBJECT_ID
+                if request.target == CORE_STREAM_TARGET
                     && request.propertyName == "openCoreStream"
                 {
                     openedEmbeddedStream.store(true, Ordering::Release);
@@ -1503,7 +1503,7 @@ mod tests {
                     sender
                         .send(CoreEvent {
                             requestId: Some(request.requestId.clone()),
-                            targetObjectId: request.targetObjectId,
+                            target: request.target.clone(),
                             propertyName: request.propertyName.clone(),
                             kind: CoreEventKind::Changed,
                             value: CoreValue::String("route-chunk".to_string()),
@@ -1512,7 +1512,7 @@ mod tests {
                     sender
                         .send(CoreEvent {
                             requestId: Some(request.requestId),
-                            targetObjectId: request.targetObjectId,
+                            target: request.target.clone(),
                             propertyName: request.propertyName,
                             kind: CoreEventKind::Completed,
                             value: CoreValue::Null,
@@ -1561,7 +1561,7 @@ mod tests {
         let mut stream = streamPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 CoreRequestId::new("embedded-open").0,
-                streamDescriptor.targetObjectId,
+                streamDescriptor.target,
                 streamDescriptor.propertyName,
                 streamDescriptor.args,
             ))
@@ -1585,7 +1585,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId.clone()),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName.clone(),
                     kind: CoreEventKind::Changed,
                     value: CoreValue::String("first-source".to_string()),
@@ -1594,7 +1594,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName,
                     kind: CoreEventKind::Completed,
                     value: CoreValue::Null,
@@ -1607,7 +1607,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId.clone()),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName.clone(),
                     kind: CoreEventKind::Changed,
                     value: CoreValue::String("second-source".to_string()),
@@ -1616,7 +1616,7 @@ mod tests {
             sender
                 .send(CoreEvent {
                     requestId: Some(request.requestId),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName,
                     kind: CoreEventKind::Completed,
                     value: CoreValue::Null,
@@ -1639,7 +1639,7 @@ mod tests {
         let mut stream = streamPool
             .openCoreStreamWatch(CoreWatchRequest::new(
                 "duplicate-logical-open",
-                CORE_STREAM_POOL_OBJECT_ID,
+                CORE_STREAM_TARGET,
                 "openCoreStream",
                 CoreValue::Map(BTreeMap::from([(
                     "streamId".to_string(),

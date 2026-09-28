@@ -96,7 +96,7 @@ impl EdgeNode {
     /// Dispatches one Link call to the registered Edge Service.
     pub fn dispatchCall(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
-        let result = match request.targetObjectId {
+        let result = match request.target {
             EDGE_DEVICE_IO_OBJECT_ID => match request.methodName.as_str() {
                 "setDigitalOutput" => self.setDigitalOutput(request.args),
                 "getDigitalOutput" => self.getDigitalOutput(request.args),
@@ -125,7 +125,7 @@ impl EdgeNode {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
-        match request.targetObjectId {
+        match request.target {
             EDGE_DEVICE_IO_OBJECT_ID => {
                 self.validateDeviceIoWatch(&request)?;
                 let pin = decodePin(request.args)?;
@@ -135,7 +135,7 @@ impl EdgeNode {
                     .map_err(serviceError)?;
                 Ok(CoreEvent {
                     requestId: Some(request.requestId),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName,
                     kind: CoreEventKind::Snapshot,
                     value: toCoreValue(state)
@@ -150,7 +150,7 @@ impl EdgeNode {
                     .map_err(serviceError)?;
                 Ok(CoreEvent {
                     requestId: Some(request.requestId),
-                    targetObjectId: request.targetObjectId,
+                    target: request.target.clone(),
                     propertyName: request.propertyName,
                     kind: CoreEventKind::Snapshot,
                     value: toCoreValue(state)
@@ -167,7 +167,7 @@ impl EdgeNode {
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
-        match request.targetObjectId {
+        match request.target {
             EDGE_DEVICE_IO_OBJECT_ID => self.dispatchDeviceIoWatch(request),
             EDGE_ROBOT_FACE_OBJECT_ID => self.dispatchRobotFaceWatch(request),
             _ => Err(CoreLinkError::watchNotFound(&request.registryKey())),
@@ -187,7 +187,7 @@ impl EdgeNode {
             .map_err(serviceError)?;
         let sourceClose = source.closeHandle();
         let requestId = request.requestId;
-        let targetObjectId = request.targetObjectId;
+        let target = request.target.clone();
         let propertyName = request.propertyName;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         std::thread::spawn(move || {
@@ -200,7 +200,7 @@ impl EdgeNode {
                 if sender
                     .send(CoreEvent {
                         requestId: Some(requestId.clone()),
-                        targetObjectId,
+                        target,
                         propertyName: propertyName.clone(),
                         kind: kind.clone(),
                         value,
@@ -219,7 +219,7 @@ impl EdgeNode {
 
     /// Validates the Edge device watch address and property name.
     fn validateDeviceIoWatch(&self, request: &CoreWatchRequest) -> Result<(), CoreLinkError> {
-        if request.targetObjectId != EDGE_DEVICE_IO_OBJECT_ID
+        if request.target != EDGE_DEVICE_IO_OBJECT_ID
             || request.propertyName != EDGE_DEVICE_IO_STATE_PROPERTY
         {
             return Err(CoreLinkError::watchNotFound(&request.registryKey()));
@@ -239,7 +239,7 @@ impl EdgeNode {
             .map_err(serviceError)?;
         let sourceClose = source.closeHandle();
         let requestId = request.requestId;
-        let targetObjectId = request.targetObjectId;
+        let target = request.target.clone();
         let propertyName = request.propertyName;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         std::thread::spawn(move || {
@@ -252,7 +252,7 @@ impl EdgeNode {
                 if sender
                     .send(CoreEvent {
                         requestId: Some(requestId.clone()),
-                        targetObjectId,
+                        target,
                         propertyName: propertyName.clone(),
                         kind: kind.clone(),
                         value,
@@ -271,7 +271,7 @@ impl EdgeNode {
 
     /// Validates the Edge robot face watch address and property name.
     fn validateRobotFaceWatch(&self, request: &CoreWatchRequest) -> Result<(), CoreLinkError> {
-        if request.targetObjectId != EDGE_ROBOT_FACE_OBJECT_ID
+        if request.target != EDGE_ROBOT_FACE_OBJECT_ID
             || request.propertyName != EDGE_ROBOT_FACE_STATE_PROPERTY
         {
             return Err(CoreLinkError::watchNotFound(&request.registryKey()));

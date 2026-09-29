@@ -28,6 +28,11 @@
 	<string>MainMenu</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Operit2 uses the camera to capture photos for chat attachments.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsForMedia</key>
+		<true/>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Operit2 records speech for text recognition.</string>
 	<key>NSPrincipalClass</key>

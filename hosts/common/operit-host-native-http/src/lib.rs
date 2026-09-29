@@ -310,10 +310,15 @@ fn executeHttpByteStream(
         } else if !request.body.is_empty() {
             httpRequest = httpRequest.body(request.body);
         }
-        let mut response = httpRequest
-            .send()
-            .await
-            .map_err(|error| HostError::new(error.to_string()))?;
+        let mut response = tokio::select! {
+            changed = cancelReceiver.changed() => {
+                changed.map_err(|error| HostError::new(error.to_string()))?;
+                return Ok(());
+            }
+            response = httpRequest.send() => {
+                response.map_err(|error| HostError::new(error.to_string()))?
+            }
+        };
         if !response.status().is_success() {
             let status = response.status();
             let body = response
@@ -341,6 +346,11 @@ fn executeHttpByteStream(
 }
 
 impl HttpHost for NativeHttpHost {
+    /// Delivers image bytes through cancellable HTTP streams.
+    fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+        operit_host_api::HttpImageDelivery::Bytes
+    }
+
     /// Executes a buffered request with a shared policy-specific connection pool.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
         let clients = self.httpClients.clone();

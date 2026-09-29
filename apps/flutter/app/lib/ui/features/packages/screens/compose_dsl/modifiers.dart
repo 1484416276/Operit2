@@ -274,21 +274,18 @@ Widget _withModifier(
         break;
       case 'fillMaxWidth':
       case 'fillmaxwidth':
-        if (modifierScope != _ComposeDslModifierScope.row) {
-          current = SizedBox(width: double.infinity, child: current);
-        }
-        break;
       case 'fillMaxHeight':
       case 'fillmaxheight':
-        current = SizedBox(height: double.infinity, child: current);
-        break;
       case 'fillMaxSize':
       case 'fillmaxsize':
-        if (modifierScope == _ComposeDslModifierScope.row) {
-          current = SizedBox(height: double.infinity, child: current);
-        } else {
-          current = SizedBox.expand(child: current);
-        }
+        current = ComposeDslFill(
+          fillWidth:
+              name != 'fillmaxheight' &&
+              modifierScope != _ComposeDslModifierScope.row,
+          fillHeight: name != 'fillmaxwidth',
+          fraction: math.max(0, _number(args.firstOrNull) ?? 1),
+          child: current,
+        );
         break;
       case 'width':
       case 'requiredWidth':
@@ -465,17 +462,23 @@ Widget _withDirectModifierProps(
     current = SizedBox(width: width, height: height, child: current);
   }
   if (_bool(props['fillMaxSize'])) {
-    if (modifierScope == _ComposeDslModifierScope.row) {
-      current = SizedBox(height: double.infinity, child: current);
-    } else {
-      current = SizedBox.expand(child: current);
-    }
-  } else if (_bool(props['fillMaxWidth'])) {
-    if (modifierScope != _ComposeDslModifierScope.row) {
-      current = SizedBox(width: double.infinity, child: current);
-    }
+    current = ComposeDslFill(
+      fillWidth: modifierScope != _ComposeDslModifierScope.row,
+      fillHeight: true,
+      child: current,
+    );
   } else if (_bool(props['fillMaxHeight'])) {
-    current = SizedBox(height: double.infinity, child: current);
+    current = ComposeDslFill(
+      fillWidth: false,
+      fillHeight: true,
+      child: current,
+    );
+  } else if (_bool(props['fillMaxWidth'])) {
+    current = ComposeDslFill(
+      fillWidth: modifierScope != _ComposeDslModifierScope.row,
+      fillHeight: false,
+      child: current,
+    );
   }
   final padding = _commonPaddingFromProps(props);
   if (padding != null) {

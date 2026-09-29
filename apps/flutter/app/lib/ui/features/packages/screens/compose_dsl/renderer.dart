@@ -2,12 +2,34 @@
 
 part of '../ToolPkgUiLauncherScreen.dart';
 
+/// Exposes the production DSL renderer for isolated widget regression tests.
+@visibleForTesting
+Widget buildComposeDslLayoutForTest({
+  required Map<String, Object?> node,
+  required ComposeDslWebViewHostContext hostContext,
+  required MarkdownContentSplitter splitMarkdownContent,
+  required Future<Object?> Function(String actionId, String text) onTextInput,
+}) {
+  final parsed = _ComposeDslNode.parse(node);
+  if (parsed == null) {
+    throw const FormatException('A valid Compose DSL test node is required');
+  }
+  return _ComposeDslRenderer(
+    node: parsed,
+    onAction: hostContext.dispatchAction,
+    onTextInput: onTextInput,
+    webViewHostContext: hostContext,
+    splitMarkdownContent: splitMarkdownContent,
+  );
+}
+
 class _ComposeDslRenderer extends StatelessWidget {
   /// Creates the compose dsl renderer instance.
   const _ComposeDslRenderer({
     super.key,
     required this.node,
     required this.onAction,
+    required this.onTextInput,
     required this.webViewHostContext,
     required this.splitMarkdownContent,
     this.nodePath = 'root',
@@ -19,6 +41,8 @@ class _ComposeDslRenderer extends StatelessWidget {
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+  /// Dispatches text edits through the page-wide ordered text queue.
+  final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;
   final MarkdownContentSplitter splitMarkdownContent;
   final String nodePath;

@@ -502,6 +502,11 @@ mod tests {
     }
 
     impl HttpHost for TestHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Records one broker request and returns the next configured response.
         fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
             self.requests

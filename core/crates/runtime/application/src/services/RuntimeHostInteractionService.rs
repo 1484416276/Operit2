@@ -936,6 +936,208 @@ impl ChatToolPermissionBroker {
 /// Service facade for publishing and responding to host interaction requests.
 pub struct RuntimeHostInteractionService {
     systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+    httpHost: Option<Arc<dyn operit_host_api::HttpHost>>,
+}
+
+/// A terminal image download result transported through the runtime proxy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeImageData {
+    #[serde(with = "serde_bytes")]
+    pub bytes: Vec<u8>,
+    pub displayUrl: Option<String>,
+    pub error: Option<String>,
+}
+
+/// A cold image source whose collection lifetime owns any host byte request.
+pub struct RuntimeImageStream {
+    url: String,
+    host: Option<Arc<dyn operit_host_api::HttpHost>>,
+}
+
+/// Closes the host request when collection completes or is cancelled.
+struct RuntimeImageRequest {
+    id: String,
+    host: Arc<dyn operit_host_api::HttpHost>,
+}
+
+impl Drop for RuntimeImageRequest {
+    /// Releases the request, including when the proxy drops its collector.
+    fn drop(&mut self) {
+        let _ = self.host.closeHttpByteStream(&self.id);
+    }
+}
+
+/// Accumulates at most sixteen MiB without buffering an unbounded chunk queue.
+#[derive(Default)]
+struct RuntimeImageBuffer {
+    bytes: Vec<u8>,
+    completion: Option<oneshot::Sender<Result<Vec<u8>, String>>>,
+}
+
+impl RuntimeImageBuffer {
+    /// Accepts a chunk or terminates the request when its byte budget is exceeded.
+    fn push(&mut self, chunk: Vec<u8>) {
+        if self.completion.is_none() {
+            return;
+        }
+        if chunk.len() > 16 * 1024 * 1024 - self.bytes.len() {
+            self.finish(Err("Image exceeded 16 MiB size limit".to_string()));
+            return;
+        }
+        self.bytes.extend_from_slice(&chunk);
+    }
+
+    /// Publishes exactly one terminal result and releases the buffered bytes.
+    fn finish(&mut self, result: Result<(), String>) {
+        if let Some(completion) = self.completion.take() {
+            let bytes = std::mem::take(&mut self.bytes);
+            let result = result.and_then(|()| {
+                if bytes.is_empty() {
+                    Err("Image response was empty".to_string())
+                } else {
+                    Ok(bytes)
+                }
+            });
+            let _ = completion.send(result);
+        }
+    }
+}
+
+#[cfg(test)]
+mod runtimeImageBufferTests {
+    use super::RuntimeImageBuffer;
+    use tokio::sync::oneshot;
+
+    /// Verifies the byte limit rejects excess data before retaining it.
+    #[test]
+    fn rejectsOversizedImage() {
+        let (sender, mut receiver) = oneshot::channel();
+        let mut buffer = RuntimeImageBuffer {
+            bytes: vec![0; 16 * 1024 * 1024],
+            completion: Some(sender),
+        };
+        buffer.push(vec![1]);
+        assert_eq!(
+            receiver.try_recv().unwrap().unwrap_err(),
+            "Image exceeded 16 MiB size limit"
+        );
+        assert!(buffer.bytes.is_empty());
+        buffer.push(vec![2]);
+        assert!(buffer.bytes.is_empty());
+    }
+
+    /// Verifies ordered chunks are delivered only after successful completion.
+    #[test]
+    fn completesOrderedImage() {
+        let (sender, mut receiver) = oneshot::channel();
+        let mut buffer = RuntimeImageBuffer {
+            bytes: Vec::new(),
+            completion: Some(sender),
+        };
+        buffer.push(vec![1, 2]);
+        buffer.push(vec![3]);
+        buffer.finish(Ok(()));
+        assert_eq!(receiver.try_recv().unwrap().unwrap(), vec![1, 2, 3]);
+    }
+
+    /// Verifies an empty successful response cannot become an image result.
+    #[test]
+    fn rejectsEmptyImage() {
+        let (sender, mut receiver) = oneshot::channel();
+        let mut buffer = RuntimeImageBuffer {
+            bytes: Vec::new(),
+            completion: Some(sender),
+        };
+        buffer.finish(Ok(()));
+        assert_eq!(
+            receiver.try_recv().unwrap().unwrap_err(),
+            "Image response was empty"
+        );
+    }
+}
+
+impl RuntimeImageStream {
+    /// Resolves image delivery through the host and bounds byte-stream downloads.
+    async fn load(&self) -> Result<RuntimeImageData, String> {
+        let url = url::Url::parse(&self.url).map_err(|error| error.to_string())?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err("Image URL must use HTTP or HTTPS".to_string());
+        }
+        let host = self.host.clone().ok_or("HTTP host is not registered")?;
+        match host.imageDelivery() {
+            operit_host_api::HttpImageDelivery::DisplayUrl => {
+                return Ok(RuntimeImageData {
+                    bytes: Vec::new(),
+                    displayUrl: Some(url.to_string()),
+                    error: None,
+                });
+            }
+            operit_host_api::HttpImageDelivery::Bytes => {}
+        }
+        let request = RuntimeImageRequest {
+            id: format!("markdown-image-{}", Uuid::new_v4()),
+            host,
+        };
+        let (sender, receiver) = oneshot::channel();
+        let buffer = Arc::new(Mutex::new(RuntimeImageBuffer {
+            bytes: Vec::new(),
+            completion: Some(sender),
+        }));
+        let chunkBuffer = buffer.clone();
+        request
+            .host
+            .openHttpByteStream(
+                request.id.clone(),
+                operit_host_api::HttpRequestData {
+                    url: url.to_string(),
+                    method: "GET".to_string(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    formFields: Vec::new(),
+                    fileParts: Vec::new(),
+                    connectTimeoutSeconds: 20,
+                    readTimeoutSeconds: 30,
+                    followRedirects: true,
+                    ignoreSsl: false,
+                    proxyHost: String::new(),
+                    proxyPort: 0,
+                },
+                Arc::new(|| {}),
+                Arc::new(move |chunk| chunkBuffer.lock().expect("image buffer lock").push(chunk)),
+                Arc::new(move |result| buffer.lock().expect("image buffer lock").finish(result)),
+            )
+            .map_err(|error| error.message)?;
+        let scheduler = defaultHostRuntimeTaskSchedulerHost();
+        let timeout = scheduler.waitForHostRuntimeDelay(30_000);
+        let bytes = tokio::select! {
+            result = receiver => result.map_err(|error| error.to_string())?,
+            _ = timeout => Err("Image download timed out after 30 seconds".to_string()),
+        }?;
+        Ok(RuntimeImageData {
+            bytes,
+            displayUrl: None,
+            error: None,
+        })
+    }
+}
+
+impl Stream for RuntimeImageStream {
+    type Item = RuntimeImageData;
+
+    /// Emits one result and cancels the HTTP request when collection is dropped.
+    fn collect<'a>(&'a mut self, collector: &'a mut dyn FnMut(Self::Item)) -> CollectFuture<'a> {
+        Box::pin(async move {
+            let result = match self.load().await {
+                Ok(data) => data,
+                Err(error) => RuntimeImageData {
+                    bytes: Vec::new(),
+                    displayUrl: None,
+                    error: Some(error),
+                },
+            };
+            collector(result);
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -993,6 +1195,15 @@ impl RuntimeHostInteractionService {
     pub fn getInstance(context: &HostManager) -> Self {
         Self {
             systemOperationHost: context.systemOperationHost.clone(),
+            httpHost: context.httpHost.clone(),
+        }
+    }
+
+    /// Creates a cancellable image download through the active runtime HTTP host.
+    pub fn imageBytes(&self, url: String) -> RuntimeImageStream {
+        RuntimeImageStream {
+            url,
+            host: self.httpHost.clone(),
         }
     }
 

@@ -11,6 +11,7 @@ class _ComposeHost extends StatefulWidget {
     required this.renderResult,
     required this.showLoadingIndicator,
     required this.onAction,
+    required this.onTextInput,
     required this.webViewHostContext,
     required this.splitMarkdownContent,
     this.dialogTitle,
@@ -24,6 +25,8 @@ class _ComposeHost extends StatefulWidget {
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
+  /// Dispatches text edits through the page-wide ordered text queue.
+  final Future<Object?> Function(String actionId, String text) onTextInput;
   final ComposeDslWebViewHostContext webViewHostContext;
   final MarkdownContentSplitter splitMarkdownContent;
 
@@ -100,6 +103,7 @@ class _ComposeHostState extends State<_ComposeHost> {
     return _ComposeDslRenderer(
       node: tree,
       onAction: widget.onAction,
+      onTextInput: widget.onTextInput,
       webViewHostContext: widget.webViewHostContext,
       splitMarkdownContent: widget.splitMarkdownContent,
       embedDialog: widget.dialogTitle != null,

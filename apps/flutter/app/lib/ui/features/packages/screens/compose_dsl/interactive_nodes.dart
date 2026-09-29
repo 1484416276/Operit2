@@ -334,6 +334,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
                       slots: const {},
                     ),
                     onAction: onAction,
+                    onTextInput: onTextInput,
                     webViewHostContext: webViewHostContext,
                     splitMarkdownContent: splitMarkdownContent,
                   ),
@@ -412,7 +413,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
       border: type == 'TextField'
           ? const OutlineInputBorder()
           : const OutlineInputBorder(),
-      onChanged: (value) => onAction(
+      onChanged: (value) => onTextInput(
         _requiredActionId(node.props['onValueChange'], 'onValueChange'),
         value,
       ),
@@ -499,6 +500,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
     return _ComposeDslRenderer(
       node: nodes.single,
       onAction: onAction,
+      onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
       nodePath: '$nodePath:$name/0',
@@ -535,6 +537,7 @@ extension _ComposeInteractiveNodes on _ComposeDslRenderer {
             : ValueKey(nodes[index].props['key']),
         node: nodes[index],
         onAction: onAction,
+        onTextInput: onTextInput,
         webViewHostContext: webViewHostContext,
         splitMarkdownContent: splitMarkdownContent,
         nodePath: '$nodePath:content/$index',

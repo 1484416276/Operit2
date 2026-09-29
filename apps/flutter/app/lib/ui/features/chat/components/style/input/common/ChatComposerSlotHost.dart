@@ -101,6 +101,7 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
                   clients: widget.viewModel.clients,
                   plugin: contribution.containerRuntime,
                   initialRouteId: contribution.contributionId,
+                  embeddedScreenPath: contribution.screen,
                   showLauncherChrome: false,
                   showLoadingIndicator: false,
                   initialState: <String, Object?>{

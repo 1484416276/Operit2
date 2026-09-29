@@ -725,12 +725,12 @@ class _MarketListPaneState extends State<_MarketListPane> {
     );
   }
 
+  /// Installs a marketplace entry from the browse list.
   Future<void> _installEntry(core_proxy.MarketEntrySummary item) async {
     setState(() {
       _busyEntryIds.add(item.id);
     });
     try {
-      ensureMarketEntryVersionSupported(entry: item);
       if (item.type == 'skill') {
         await _installSkill(item);
       } else if (item.type == 'mcp') {

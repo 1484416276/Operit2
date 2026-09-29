@@ -8,6 +8,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../components/EmptyState.dart';
+import '../market/ArtifactMarketSupport.dart';
 
 class RepoMarketPublishContext {
   const RepoMarketPublishContext({
@@ -42,15 +43,15 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _detailController = TextEditingController();
   final TextEditingController _sourceUrlController = TextEditingController();
-  final TextEditingController _refNameController =
-      TextEditingController(text: 'main');
+  final TextEditingController _refNameController = TextEditingController(
+    text: 'main',
+  );
   final TextEditingController _installConfigController =
       TextEditingController();
-  final TextEditingController _versionController =
-      TextEditingController(text: '1.0.0');
+  final TextEditingController _versionController = TextEditingController(
+    text: '1.0.0',
+  );
   final TextEditingController _formatVerController = TextEditingController();
-  final TextEditingController _minAppVerController = TextEditingController();
-  final TextEditingController _maxAppVerController = TextEditingController();
   final TextEditingController _changelogController = TextEditingController();
 
   bool _loading = true;
@@ -91,12 +92,11 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
     _installConfigController.dispose();
     _versionController.dispose();
     _formatVerController.dispose();
-    _minAppVerController.dispose();
-    _maxAppVerController.dispose();
     _changelogController.dispose();
     super.dispose();
   }
 
+  /// Loads editable metadata for publishing another repository version.
   void _seedFromEntry(core_proxy.MarketEntrySummary entry) {
     final repoVersion = entry.repoVersion;
     final latestVersion = entry.latestVersion;
@@ -111,15 +111,12 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
         ? repoVersion!.refName.trim()
         : 'main';
     _installConfigController.text =
-        repoVersion?.installConfig ??
-        latestVersion?.installConfig ??
-        '';
+        repoVersion?.installConfig ?? latestVersion?.installConfig ?? '';
     _versionController.clear();
-    _formatVerController.text = latestVersion?.formatVer.trim().isNotEmpty == true
+    _formatVerController.text =
+        latestVersion?.formatVer.trim().isNotEmpty == true
         ? latestVersion!.formatVer.trim()
         : '${entry.type}_v2';
-    _minAppVerController.text = latestVersion?.minAppVer ?? '';
-    _maxAppVerController.text = latestVersion?.maxAppVer ?? '';
     _changelogController.clear();
     _allowPublicUpdates = entry.allowPublicUpdates;
     _categoryId = entry.categoryId;
@@ -137,8 +134,9 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
       }
       setState(() {
         _categories = manifest.categories;
-        _categoryId ??=
-            manifest.categories.isEmpty ? null : manifest.categories.first.id;
+        _categoryId ??= manifest.categories.isEmpty
+            ? null
+            : manifest.categories.first.id;
         _loading = false;
       });
     } catch (error, stackTrace) {
@@ -153,6 +151,7 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
     }
   }
 
+  /// Submits the repository version to the marketplace.
   Future<void> _publish() async {
     if (_publishing) {
       return;
@@ -166,8 +165,6 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
     final installConfig = _installConfigController.text.trim();
     final version = _versionController.text.trim();
     final formatVer = _formatVerController.text.trim();
-    final minAppVer = _minAppVerController.text.trim();
-    final maxAppVer = _emptyToNull(_maxAppVerController.text);
     final changelog = _emptyToNull(_changelogController.text);
     final missing = <String>[
       if (_canEditEntry && title.isEmpty) '名称',
@@ -179,7 +176,6 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
       if (installConfig.isEmpty) '安装配置',
       if (version.isEmpty) '版本号',
       if (formatVer.isEmpty) '格式版本',
-      if (minAppVer.isEmpty) '最低支持版本',
     ];
     if (missing.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -199,8 +195,8 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
               entryId: widget.publishContext!.entry.id,
               version: version,
               formatVer: formatVer,
-              minAppVer: minAppVer,
-              maxAppVer: maxAppVer,
+              minAppVer: marketMinimumAppVersion,
+              maxAppVer: marketMaximumAppVersion,
               changelog: changelog,
               refType: _refType,
               refName: refName,
@@ -209,8 +205,9 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
               entryDescription: _canEditEntry ? description : null,
               entryDetail: _canEditEntry ? detail : null,
               entryCategoryId: _canEditEntry ? categoryId : null,
-              entryAllowPublicUpdates:
-                  _canEditEntry ? _allowPublicUpdates : null,
+              entryAllowPublicUpdates: _canEditEntry
+                  ? _allowPublicUpdates
+                  : null,
             )
           : await _market.publishRepoEntry(
               type: widget.type,
@@ -225,8 +222,8 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
               installConfig: installConfig,
               version: version,
               formatVer: formatVer,
-              minAppVer: minAppVer,
-              maxAppVer: maxAppVer,
+              minAppVer: marketMinimumAppVersion,
+              maxAppVer: marketMaximumAppVersion,
               changelog: changelog,
             );
       if (!mounted) {
@@ -441,23 +438,6 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _minAppVerController,
-                enabled: versionFieldsEnabled,
-                decoration: const InputDecoration(
-                  labelText: '最低支持版本',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _maxAppVerController,
-                enabled: versionFieldsEnabled,
-                decoration: const InputDecoration(
-                  labelText: '最高支持版本（可选）',
-                  border: OutlineInputBorder(),
-                ),
-              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _changelogController,

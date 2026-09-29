@@ -357,6 +357,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
     return _ComposeDslRenderer(
       node: child,
       onAction: onAction,
+      onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
       nodePath: childPath,

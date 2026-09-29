@@ -1,14 +1,14 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::commands::util::read_content_arg;
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
 use operit_providers::market::MarketStatsApiService::{
-    MarketComment, MarketEntryAsset, MarketEntrySummary, MarketEntryVersion, MarketListPage,
-    MarketNotification, MarketStatsApiService,
+    MarketEntryAsset, MarketEntrySummary, MarketListPage, MarketStatsApiService,
+    MARKET_MAX_APP_VERSION, MARKET_MIN_APP_VERSION,
 };
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::preferences::GitHubAuthPreferences::GitHubAuthPreferences;
@@ -157,13 +157,10 @@ pub fn run_market_command(
         "publish" => run_publish(core, &args[1..], output),
         "install" => {
             let entry_id = args.get(1).ok_or_else(|| {
-                "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
+                "usage: operit2 market install <entryId> [versionId]".to_string()
             })?;
-            let client_app_version = args.get(2).ok_or_else(|| {
-                "usage: operit2 market install <entryId> <clientAppVersion> [versionId]".to_string()
-            })?;
-            let version_id = args.get(3).map(String::as_str);
-            install_entry(core, entry_id, client_app_version, version_id, output)
+            let version_id = args.get(2).map(String::as_str);
+            install_entry(core, entry_id, version_id, output)
         }
         "download" => {
             let asset_id = args
@@ -197,12 +194,12 @@ fn print_usage(output: &mut CoreCommandOutput) {
         "comment: operit2 market comment <entryId> <body-or-@file>",
         "comment edit: operit2 market comment edit <commentId> <body-or-@file>",
         "comment delete: operit2 market comment delete <commentId>",
-        "publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]",
-        "publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->",
-        "publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]",
-        "publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
+        "publish artifact: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]",
+        "publish repo: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <changelog-or->",
+        "publish version artifact: operit2 market publish version artifact <entryId> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]",
+        "publish version repo: operit2 market publish version repo <entryId> <version> <formatVer> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]",
         "publish update-entry: operit2 market publish update-entry <entryId> <title-or-> <description-or-@file-or-> <detail-or-@file-or-> <categoryId-or-> <allowPublicUpdates-or->",
-        "install: operit2 market install <entryId> <clientAppVersion> [versionId]",
+        "install: operit2 market install <entryId> [versionId]",
         "download: operit2 market download <assetId>",
     ];
     for line in &lines {
@@ -631,14 +628,13 @@ fn publish_artifact_cli(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.len() < 20 {
-        return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]".to_string());
+    if args.len() < 18 {
+        return Err("usage: operit2 market publish artifact <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [apiVersion-or-]".to_string());
     }
     require_login(core)?;
     let description = read_content_arg(&args[2])?;
     let detail = read_content_arg(&args[3])?;
-    let max_app_ver = parse_optional_string(&args[9]);
-    let changelog = parse_optional_content_arg(&args[10])?;
+    let changelog = parse_optional_content_arg(&args[8])?;
     let resp = core.api().publish_artifact(
         &args[0],
         &args[1],
@@ -648,9 +644,11 @@ fn publish_artifact_cli(
         parse_bool_arg(&args[5])?,
         &args[6],
         &args[7],
-        &args[8],
-        max_app_ver,
+        MARKET_MIN_APP_VERSION,
+        Some(MARKET_MAX_APP_VERSION.to_string()),
         changelog,
+        &args[9],
+        &args[10],
         &args[11],
         &args[12],
         &args[13],
@@ -658,9 +656,7 @@ fn publish_artifact_cli(
         &args[15],
         &args[16],
         &args[17],
-        &args[18],
-        &args[19],
-        parse_optional_string_arg(args.get(20)),
+        parse_optional_string_arg(args.get(18)),
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -672,8 +668,8 @@ fn publish_repo_cli(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.len() < 14 {
-        return Err("usage: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or->".to_string());
+    if args.len() < 12 {
+        return Err("usage: operit2 market publish repo <type> <title> <description-or-@file> <detail-or-@file> <categoryId> <allowPublicUpdates> <sourceUrl> <refType> <refName> <installConfig-or-@file> <version> <formatVer> <changelog-or->".to_string());
     }
     require_login(core)?;
     let description = read_content_arg(&args[2])?;
@@ -692,9 +688,9 @@ fn publish_repo_cli(
         &install_config,
         &args[10],
         &args[11],
-        &args[12],
-        parse_optional_string(&args[13]),
-        parse_optional_content_arg(args.get(14).map(String::as_str).unwrap_or("-"))?,
+        MARKET_MIN_APP_VERSION,
+        Some(MARKET_MAX_APP_VERSION.to_string()),
+        parse_optional_content_arg(args.get(12).map(String::as_str).unwrap_or("-"))?,
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -719,17 +715,19 @@ fn publish_artifact_version_cli(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.len() < 15 {
-        return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]".to_string());
+    if args.len() < 13 {
+        return Err("usage: operit2 market publish version artifact <entryId> <version> <formatVer> <changelog-or-> <projectId> <runtimePackageId> <assetKind> <assetUrl> <ghOwner> <ghRepo> <ghReleaseTag> <assetName> <sha256> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-] [apiVersion-or-]".to_string());
     }
     require_login(core)?;
     let resp = core.api().publish_artifact_version(
         &args[0],
         &args[1],
         &args[2],
-        &args[3],
-        parse_optional_string(&args[4]),
-        parse_optional_content_arg(&args[5])?,
+        MARKET_MIN_APP_VERSION,
+        Some(MARKET_MAX_APP_VERSION.to_string()),
+        parse_optional_content_arg(&args[3])?,
+        &args[4],
+        &args[5],
         &args[6],
         &args[7],
         &args[8],
@@ -737,14 +735,12 @@ fn publish_artifact_version_cli(
         &args[10],
         &args[11],
         &args[12],
-        &args[13],
-        &args[14],
-        parse_optional_string_arg(args.get(15)),
-        parse_optional_content_arg(args.get(16).map(String::as_str).unwrap_or("-"))?,
-        parse_optional_content_arg(args.get(17).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_string_arg(args.get(13)),
+        parse_optional_content_arg(args.get(14).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(args.get(15).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_string_arg(args.get(16)),
+        parse_optional_bool_arg(args.get(17))?,
         parse_optional_string_arg(args.get(18)),
-        parse_optional_bool_arg(args.get(19))?,
-        parse_optional_string_arg(args.get(20)),
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -756,26 +752,26 @@ fn publish_repo_version_cli(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.len() < 9 {
-        return Err("usage: operit2 market publish version repo <entryId> <version> <formatVer> <minAppVer> <maxAppVer-or-> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
+    if args.len() < 7 {
+        return Err("usage: operit2 market publish version repo <entryId> <version> <formatVer> <changelog-or-> <refType> <refName> <installConfig-or-@file> [entryTitle|-] [entryDescription-or-] [entryDetail-or-] [entryCategoryId|-] [entryAllowPublicUpdates|-]".to_string());
     }
     require_login(core)?;
-    let install_config = read_content_arg(&args[8])?;
+    let install_config = read_content_arg(&args[6])?;
     let resp = core.api().publish_repo_version(
         &args[0],
         &args[1],
         &args[2],
-        &args[3],
-        parse_optional_string(&args[4]),
-        parse_optional_content_arg(&args[5])?,
-        &args[6],
-        &args[7],
+        MARKET_MIN_APP_VERSION,
+        Some(MARKET_MAX_APP_VERSION.to_string()),
+        parse_optional_content_arg(&args[3])?,
+        &args[4],
+        &args[5],
         &install_config,
-        parse_optional_string_arg(args.get(9)),
-        parse_optional_content_arg(args.get(10).map(String::as_str).unwrap_or("-"))?,
-        parse_optional_content_arg(args.get(11).map(String::as_str).unwrap_or("-"))?,
-        parse_optional_string_arg(args.get(12)),
-        parse_optional_bool_arg(args.get(13))?,
+        parse_optional_string_arg(args.get(7)),
+        parse_optional_content_arg(args.get(8).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_content_arg(args.get(9).map(String::as_str).unwrap_or("-"))?,
+        parse_optional_string_arg(args.get(10)),
+        parse_optional_bool_arg(args.get(11))?,
     )?;
     write_publish_response(resp, output);
     Ok(())
@@ -833,129 +829,16 @@ fn write_update_entry_response(
 fn install_entry(
     core: &mut MarketCommand,
     entry_id: &str,
-    client_app_version: &str,
     version_id: Option<&str>,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let entry = core.api().get_entry_by_id(entry_id)?;
-    ensure_entry_app_version_supported(&entry, client_app_version, version_id)?;
     match entry.r#type.as_str() {
         "skill" => install_skill_from_entry(core, entry, output),
         "mcp" => install_mcp_from_entry(core, entry, output),
         "package" | "script" => install_artifact_from_entry(core, entry, version_id, output),
         other => Err(format!("unknown market type: {other}")),
     }
-}
-
-/// Describes the numeric app version used by marketplace compatibility metadata.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct MarketAppVersion {
-    major: u64,
-    minor: u64,
-    patch: u64,
-    build: u64,
-}
-
-/// Rejects an installation when the selected marketplace version excludes the client version.
-fn ensure_entry_app_version_supported(
-    entry: &MarketEntrySummary,
-    client_app_version: &str,
-    version_id: Option<&str>,
-) -> Result<(), String> {
-    let client_version = parse_market_app_version(client_app_version, "客户端版本")?;
-    let target_version = resolve_market_install_version(entry, version_id)?;
-
-    let minimum_value = target_version.min_app_ver.trim();
-    if !minimum_value.is_empty() {
-        let minimum_version = parse_market_app_version(minimum_value, "最低支持版本")?;
-        if client_version < minimum_version {
-            return Err(format!(
-                "无法下载：客户端版本 {client_app_version} 低于该资源要求的最低版本 {minimum_value}。请更新客户端后再下载。"
-            ));
-        }
-    }
-
-    if let Some(maximum_value) = target_version
-        .max_app_ver
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let maximum_version = parse_market_app_version(maximum_value, "最高支持版本")?;
-        if client_version > maximum_version {
-            return Err(format!(
-                "无法下载：客户端版本 {client_app_version} 高于该资源最高支持的版本 {maximum_value}。请使用受支持的客户端版本。"
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-/// Resolves the precise marketplace version requested for one installation.
-fn resolve_market_install_version<'a>(
-    entry: &'a MarketEntrySummary,
-    version_id: Option<&str>,
-) -> Result<&'a MarketEntryVersion, String> {
-    match version_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(requested_version_id) => entry
-            .versions
-            .iter()
-            .find(|version| version.id == requested_version_id)
-            .ok_or_else(|| {
-                format!(
-                    "market entry has no version metadata for requested version: {requested_version_id}"
-                )
-            }),
-        None => entry
-            .latest_version
-            .as_ref()
-            .ok_or_else(|| "market entry has no latest version metadata".to_string()),
-    }
-}
-
-/// Parses one marketplace app-version value using x.y.z or x.y.z+n notation.
-fn parse_market_app_version(value: &str, label: &str) -> Result<MarketAppVersion, String> {
-    let normalized = value.trim();
-    let mut version_parts = normalized.split('+');
-    let core = version_parts
-        .next()
-        .ok_or_else(|| format!("{label} must use x.y.z or x.y.z+n format"))?;
-    let build = match (version_parts.next(), version_parts.next()) {
-        (None, None) => 0,
-        (Some(value), None) => parse_market_app_version_component(Some(value), label, "build")?,
-        (_, Some(_)) => return Err(format!("{label} must use x.y.z or x.y.z+n format: {value}")),
-    };
-    let mut parts = core.split('.');
-    let major = parse_market_app_version_component(parts.next(), label, "major")?;
-    let minor = parse_market_app_version_component(parts.next(), label, "minor")?;
-    let patch = parse_market_app_version_component(parts.next(), label, "patch")?;
-    if parts.next().is_some() {
-        return Err(format!("{label} must use x.y.z or x.y.z+n format: {value}"));
-    }
-    Ok(MarketAppVersion {
-        major,
-        minor,
-        patch,
-        build,
-    })
-}
-
-/// Parses one numeric component from marketplace compatibility metadata.
-fn parse_market_app_version_component(
-    value: Option<&str>,
-    label: &str,
-    component: &str,
-) -> Result<u64, String> {
-    let value = value.ok_or_else(|| format!("{label} must use x.y.z or x.y.z+n format"))?;
-    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(format!(
-            "{label} {component} component must be numeric: {value}"
-        ));
-    }
-    value
-        .parse::<u64>()
-        .map_err(|error| format!("{label} {component} component is invalid: {error}"))
 }
 
 /// Installs a skill marketplace entry from its repository source.
@@ -1417,6 +1300,11 @@ mod tests {
     struct ReqwestTestHttpHost;
 
     impl HttpHost for ReqwestTestHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Executes one test HTTP request through reqwest.
         fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
             let method = reqwest::Method::from_bytes(request.method.as_bytes())

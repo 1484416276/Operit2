@@ -23,6 +23,8 @@ import '../../../main/navigation/AppNavigationModels.dart';
 import '../../chat/screens/AIChatScreen.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'ToolPkgComposeDslWebView.dart';
+import 'compose_dsl/fill_layout.dart';
+import 'compose_dsl/action_scheduler.dart';
 
 part 'compose_dsl/compose_host.dart';
 part 'compose_dsl/dialog_host.dart';
@@ -49,6 +51,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     required this.clients,
     required this.plugin,
     this.initialRouteId,
+    this.embeddedScreenPath,
     this.showLauncherChrome = true,
     this.showLoadingIndicator = true,
     this.dialogTitle,
@@ -60,6 +63,9 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
   final GeneratedCoreProxyClients clients;
   final core_proxy.ToolPkgContainerRuntime plugin;
   final String? initialRouteId;
+
+  /// Identifies an embedded script independently of plugin-provided module metadata.
+  final String? embeddedScreenPath;
   final bool showLauncherChrome;
   final bool showLoadingIndicator;
 
@@ -89,7 +95,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   String _currentLanguageTag = 'en';
   ColorScheme? _themeScheme;
   String? _error;
-  Future<Object?> _actionTail = Future<Object?>.value();
+  final _actionScheduler = ComposeDslActionScheduler();
   Future<void> _renderTail = Future<void>.value();
   final Set<StreamSubscription<String>> _detachedComposeEventSubscriptions = {};
 
@@ -107,9 +113,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   @override
   void didUpdateWidget(covariant ToolPkgUiLauncherScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!mapEquals(oldWidget.initialState, widget.initialState) ||
-        !mapEquals(oldWidget.initialMemo, widget.initialMemo) ||
-        !mapEquals(oldWidget.initialModuleSpec, widget.initialModuleSpec)) {
+    if (!_composeInputEquals(oldWidget.initialState, widget.initialState) ||
+        !_composeInputEquals(oldWidget.initialMemo, widget.initialMemo) ||
+        (widget.embeddedScreenPath == null &&
+            !_composeInputEquals(oldWidget.initialModuleSpec, widget.initialModuleSpec))) {
       unawaited(_loadRoute(updateInputs: true));
     }
   }
@@ -398,28 +405,46 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     super.dispose();
   }
 
-  /// Preserves edit order and makes later button actions observe settled input.
+  /// Waits for text synchronization without serializing ordinary UI actions.
   Future<Object?> _dispatchAction(String actionId, [Object? payload]) {
     final routeGeneration = _routeLoadGeneration;
-    _actionTail = _actionTail.then((_) {
-      if (!mounted || routeGeneration != _routeLoadGeneration) return null;
+    return _actionScheduler.dispatchAction(() {
+      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
       return _dispatchActionCore(
         actionId,
         payload,
         reportAndSuppressErrors: true,
       );
     });
-    return _actionTail;
   }
 
+  /// Preserves keystroke order across all text fields in this page.
+  Future<Object?> _dispatchTextInput(String actionId, String text) {
+    final routeGeneration = _routeLoadGeneration;
+    return _actionScheduler.dispatchTextInput(() {
+      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
+      return _dispatchActionCore(
+        actionId,
+        text,
+        reportAndSuppressErrors: true,
+      );
+    });
+  }
+
+  /// Gives WebView actions the same text barrier while preserving error delivery.
   Future<Object?> _dispatchWebViewAction(String actionId, [Object? payload]) {
-    return _dispatchActionCore(
-      actionId,
-      payload,
-      reportAndSuppressErrors: false,
-    );
+    final routeGeneration = _routeLoadGeneration;
+    return _actionScheduler.dispatchAction(() {
+      if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
+      return _dispatchActionCore(
+        actionId,
+        payload,
+        reportAndSuppressErrors: false,
+      );
+    });
   }
 
+  /// Streams render updates and settles the individual action on completion.
   Future<Object?> _dispatchActionCore(
     String actionId,
     Object? payload, {
@@ -608,18 +633,15 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     return 'toolpkg_compose_dsl:$container:$module:$route:$_executionOwnerId';
   }
 
-  /// Returns the explicit screen resource path for an embedded XML renderer.
+  /// Reads the embedded screen path without consulting optional module metadata.
   String? _embeddedScreenPath() {
-    final moduleSpec = widget.initialModuleSpec;
-    if (moduleSpec == null) {
-      return null;
+    final path = widget.embeddedScreenPath;
+    if (path == null) return null;
+    final normalized = path.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(path, 'embeddedScreenPath', 'must not be blank');
     }
-    final screen = moduleSpec['screen'];
-    if (screen is! String) {
-      return null;
-    }
-    final normalized = screen.trim();
-    return normalized.isEmpty ? null : normalized;
+    return normalized;
   }
 
   String _currentLanguage() {
@@ -729,6 +751,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             showLoadingIndicator: widget.showLoadingIndicator,
             dialogTitle: widget.dialogTitle,
             onAction: _dispatchAction,
+            onTextInput: _dispatchTextInput,
             webViewHostContext: webViewHostContext,
             splitMarkdownContent: (content) => widget
                 .clients

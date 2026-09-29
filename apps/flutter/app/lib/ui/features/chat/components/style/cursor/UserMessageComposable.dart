@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
-import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../../util/ChatMarkupRegex.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
@@ -26,17 +25,16 @@ class UserMessageComposable extends StatefulWidget {
 }
 
 class _UserMessageComposableState extends State<UserMessageComposable> {
+  /// Builds the user message content without a prompt heading.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context);
     final colorScheme = theme.colorScheme;
     final textColor = colorScheme.onPrimaryContainer;
     final parseResult = parseMessageContent(widget.message.displayText);
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
-    final showUserName = themePreferenceSnapshot.showUserName;
     final bubbleColor =
         _optionalColor(
           widget.useBubbleStyle
@@ -213,24 +211,6 @@ class _UserMessageComposableState extends State<UserMessageComposable> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
-                            if (showUserName) ...<Widget>[
-                              Text(
-                                parseResult.proxySenderName == null
-                                    ? (l10n?.chatMessagePrompt ?? 'Prompt')
-                                    : (l10n?.chatMessagePromptBy(
-                                            parseResult.proxySenderName!,
-                                          ) ??
-                                          'Prompt by ${parseResult.proxySenderName}'),
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: effectiveTextColor.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                  fontFamily: messageFontFamily,
-                                  fontFamilyFallback: messageFontFamilyFallback,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                            ],
                             SelectableText(
                               parseResult.processedText,
                               style: theme.textTheme.bodyMedium?.copyWith(
@@ -355,6 +335,7 @@ class _AttachmentMatch {
   final RegExpMatch match;
 }
 
+/// Extracts message decorations and trims the remaining display text.
 MessageParseResult parseMessageContent(String content) {
   var cleanedContent = content.replaceAll(ChatMarkupRegex.memoryTag, '').trim();
 
@@ -531,7 +512,7 @@ MessageParseResult parseMessageContent(String content) {
     messageText.write(cleanedContent.substring(lastIndex));
   }
   return MessageParseResult(
-    processedText: messageText.toString(),
+    processedText: messageText.toString().trim(),
     trailingAttachments: <AttachmentData>[
       ...workspaceAttachments,
       ...mediaLinkAttachments,

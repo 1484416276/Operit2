@@ -568,9 +568,12 @@ class _AiBubbleBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final body = Padding(
       padding: contentPadding,
-      child: forceExpandedWidth
-          ? SizedBox(width: double.infinity, child: messageBody)
-          : messageBody,
+      // Kotlin changes the width modifier without replacing the content owner.
+      // Keep the same Flutter element path when parsed XML requests full width.
+      child: SizedBox(
+        width: forceExpandedWidth ? double.infinity : null,
+        child: messageBody,
+      ),
     );
     return BubbleSurface(
       color: backgroundColor,

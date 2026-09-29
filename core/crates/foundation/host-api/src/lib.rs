@@ -1374,7 +1374,17 @@ pub trait WebSocketHost: Send + Sync {
     fn closeWebSocket(&self, streamId: &str) -> HostResult<()>;
 }
 
+/// Declares how the host delivers remote images to its presentation surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpImageDelivery {
+    Bytes,
+    DisplayUrl,
+}
+
 pub trait HttpHost: HttpStreamHost + Send + Sync {
+    /// Selects image delivery before any request is started.
+    fn imageDelivery(&self) -> HttpImageDelivery;
+
     /// Executes one buffered HTTP request.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;
 

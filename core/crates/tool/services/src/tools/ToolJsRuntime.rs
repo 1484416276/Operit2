@@ -173,7 +173,18 @@ pub fn materializeToolPkgResource(
             "ToolPkg resource not found: {target}/{resourceKey}"
         ));
     }
-    Ok(outputFile.to_string_lossy().to_string())
+    let storageDirectory = if request.internal {
+        OperitPaths::RUNTIME_TOOLPKG_RESOURCE_EXPORTS_INTERNAL_DIR_PATH
+    } else {
+        OperitPaths::RUNTIME_TOOLPKG_RESOURCE_EXPORTS_DIR_PATH
+    };
+    let relativeDirectory = storageDirectory
+        .strip_prefix(operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX)
+        .expect("ToolPkg exports must belong to runtime storage");
+    let exportRoot = crate::files::PathMapper::PathMapper::joinVfsPath(
+        "/app/data", relativeDirectory,
+    )?;
+    crate::files::PathMapper::PathMapper::joinVfsPath(&exportRoot, safeName)
 }
 
 /// Resolves one JavaScript tool name through concrete package state.

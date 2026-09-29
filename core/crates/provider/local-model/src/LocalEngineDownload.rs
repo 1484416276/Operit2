@@ -833,6 +833,11 @@ mod tests {
     struct RejectingHttpHost;
 
     impl HttpHost for RejectingHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Rejects buffered HTTP because embedded engine installation must remain offline.
         fn executeHttpRequest(&self, _request: HttpRequestData) -> HostResult<HttpResponseData> {
             panic!("embedded engine installation called executeHttpRequest")

@@ -57,13 +57,19 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   int _mcpReloadRevision = 0;
   PackageManagerSnapshot _snapshot = PackageManagerSnapshot.empty();
   Timer? _searchDebounce;
+  StreamSubscription<void>? _catalogSubscription;
+  int _snapshotGeneration = 0;
 
   GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
       widget.clients.application.packageManager();
 
+  /// Subscribes to installed catalog changes before loading the initial list.
   @override
   void initState() {
     super.initState();
+    _catalogSubscription = ToolPkgCatalogChangeBus.listen(() {
+      unawaited(_loadSnapshot(rescan: false));
+    });
     _loadSnapshot();
   }
 
@@ -77,22 +83,27 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     }
   }
 
+  /// Releases catalog and search listeners when the page is removed.
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _catalogSubscription?.cancel();
     super.dispose();
   }
 
   /// Loads the current package manager state into the screen.
-  Future<void> _loadSnapshot() async {
+  Future<void> _loadSnapshot({bool rescan = true}) async {
     if (!mounted) {
       return;
     }
+    final generation = ++_snapshotGeneration;
     setState(() {
       _loading = true;
     });
     try {
-      await _packageManager.loadAvailablePackages();
+      if (rescan) {
+        await _packageManager.loadAvailablePackages();
+      }
       final results = await Future.wait<Object>(<Future<Object>>[
         _packageManager.getExecutableAvailablePackages(),
         _packageManager.getEnabledPackageNames(),
@@ -117,7 +128,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         bundledExternalToolPkgContainers,
       );
       final enabledPackageNameSet = enabledPackages.toSet();
-      if (!mounted) {
+      if (!mounted || generation != _snapshotGeneration) {
         return;
       }
       setState(() {
@@ -141,7 +152,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       debugPrint(
         'Failed to load package manager snapshot: $error\n$stackTrace',
       );
-      if (!mounted) {
+      if (!mounted || generation != _snapshotGeneration) {
         return;
       }
       final loadIssue = core_proxy.ToolPkgLoadIssue(

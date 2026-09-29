@@ -496,6 +496,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         clients: widget.clients,
         plugin: plugin,
         initialRouteId: dialog.screen,
+        embeddedScreenPath: dialog.screen,
         showLauncherChrome: false,
         dialogTitle: dialogTitle,
         initialState: state,

@@ -1267,23 +1267,26 @@ where
     S::Item: serde::Serialize,
 {
     let (sender, receiver) = core_event_stream_channel();
+    let (cancel, mut cancelled) = oneshot::channel();
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeAsyncTask(
             "core-rslinkrs-json-events",
             Box::new(move || {
                 Box::pin(async move {
-                    stream
-                        .collect(&mut |item| {
-                            let value = to_core_value(item).expect("stream item must serialize");
-                            let _ = sender.send(CoreEvent {
-                                requestId: Some(request.requestId.clone()),
-                                target: request.target.clone(),
-                                propertyName: request.propertyName.clone(),
-                                kind: CoreEventKind::Changed,
-                                value,
-                            });
-                        })
-                        .await;
+                    let mut collector = |item| {
+                        let value = to_core_value(item).expect("stream item must serialize");
+                        let _ = sender.send(CoreEvent {
+                            requestId: Some(request.requestId.clone()),
+                            target: request.target.clone(),
+                            propertyName: request.propertyName.clone(),
+                            kind: CoreEventKind::Changed,
+                            value,
+                        });
+                    };
+                    tokio::select! {
+                        _ = &mut cancelled => return,
+                        _ = stream.collect(&mut collector) => {},
+                    }
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
                         target: request.target.clone(),
@@ -1295,7 +1298,9 @@ where
             }),
         )
         .expect("Core JSON event task must be scheduled");
-    receiver
+    receiver.withOnClose(move || {
+        let _ = cancel.send(());
+    })
 }
 
 /// Creates one typed reverse stream channel for generated Rust-to-Link-to-Rust calls.

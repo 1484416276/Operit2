@@ -1068,6 +1068,11 @@ mod tests {
     }
 
     impl HttpHost for TestHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Rejects buffered HTTP requests in registry-only tests.
         fn executeHttpRequest(&self, _request: HttpRequestData) -> HostResult<HttpResponseData> {
             Err(HostError::new("test HTTP request is not configured"))
@@ -1085,6 +1090,11 @@ mod tests {
     }
 
     impl HttpHost for FixtureArchiveHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Rejects buffered HTTP requests in archive installer tests.
         fn executeHttpRequest(&self, _request: HttpRequestData) -> HostResult<HttpResponseData> {
             Err(HostError::new("test HTTP request is not configured"))

@@ -43,6 +43,11 @@ impl WindowsHttpHost {
 }
 
 impl HttpHost for WindowsHttpHost {
+    /// Declares the image delivery supported by this HTTP host.
+    fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+        self.inner.imageDelivery()
+    }
+
     /// Executes one buffered HTTP request through the native host implementation.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
         self.inner.executeHttpRequest(request)

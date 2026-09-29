@@ -669,6 +669,7 @@ class _AttachmentMatch {
   final RegExpMatch match;
 }
 
+/// Extracts message decorations and trims the remaining display text.
 MessageParseResult parseMessageContent(String content) {
   var cleanedContent = content.replaceAll(ChatMarkupRegex.memoryTag, '').trim();
 
@@ -846,7 +847,7 @@ MessageParseResult parseMessageContent(String content) {
   }
 
   return MessageParseResult(
-    processedText: messageText.toString(),
+    processedText: messageText.toString().trim(),
     trailingAttachments: <AttachmentData>[
       ...workspaceAttachments,
       ...mediaLinkAttachments,

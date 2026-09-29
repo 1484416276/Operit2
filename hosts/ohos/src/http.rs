@@ -43,6 +43,11 @@ impl OhosHttpHost {
 }
 
 impl HttpHost for OhosHttpHost {
+    /// Declares the image delivery supported by this HTTP host.
+    fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+        self.inner.imageDelivery()
+    }
+
     /// Executes an HTTP request through the OpenHarmony native networking stack.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
         self.inner.executeHttpRequest(request)

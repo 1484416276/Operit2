@@ -239,6 +239,13 @@ pub const EXTENSIONS_PLUGIN_CONFIGS: RuntimeStoragePathDefinition =
         RuntimeStorageOwnership::Space,
     );
 pub const EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH: &str = EXTENSIONS_PLUGIN_CONFIGS.path;
+/// Owns persistent files written through legacy shared-storage paths.
+pub const EXTENSIONS_PLUGIN_DATA: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree(
+        "runtime/extensions/plugins/data",
+        RuntimeStorageOwnership::Space,
+    );
+pub const EXTENSIONS_PLUGIN_DATA_DIR_PATH: &str = EXTENSIONS_PLUGIN_DATA.path;
 pub const EXTENSIONS_MCP_DIR_PATH: &str = "runtime/extensions/mcp";
 
 pub const RUNTIME_CLEAN_ON_EXIT: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
@@ -404,6 +411,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     EXTENSIONS_SKILLS,
     EXTENSIONS_PACKAGES,
     EXTENSIONS_PLUGIN_CONFIGS,
+    EXTENSIONS_PLUGIN_DATA,
     RUNTIME_CLEAN_ON_EXIT,
     RUNTIME_SYNC,
     RUNTIME_IMPORTED_OPERIT1_FILES,

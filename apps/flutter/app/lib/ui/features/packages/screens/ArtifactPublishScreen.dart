@@ -13,6 +13,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
+import '../market/ArtifactMarketSupport.dart';
 
 const String _forgeRepoName = 'OperitForge';
 const List<String> _artifactMarketTypes = <String>['script', 'package'];
@@ -56,8 +57,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _detailController = TextEditingController();
   final TextEditingController _versionController = TextEditingController();
-  final TextEditingController _minVersionController = TextEditingController();
-  final TextEditingController _maxVersionController = TextEditingController();
   final TextEditingController _githubRepositoryController =
       TextEditingController();
 
@@ -97,8 +96,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     _descriptionController.dispose();
     _detailController.dispose();
     _versionController.dispose();
-    _minVersionController.dispose();
-    _maxVersionController.dispose();
     _githubRepositoryController.dispose();
     super.dispose();
   }
@@ -155,6 +152,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     }
   }
 
+  /// Selects the source package and fills its publishable metadata.
   void _selectSource(core_proxy.PublishablePackageSource source) {
     final context = _publishContext;
     final initialEntry = context?.initialEntry;
@@ -178,8 +176,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
           source.inferredVersion?.trim().isNotEmpty == true
           ? source.inferredVersion!.trim()
           : '1.0.0';
-      _minVersionController.text = initialEntry?.latestVersion?.minAppVer ?? '';
-      _maxVersionController.text = initialEntry?.latestVersion?.maxAppVer ?? '';
       _allowPublicUpdates = initialEntry?.allowPublicUpdates ?? true;
     });
   }
@@ -239,6 +235,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
     );
   }
 
+  /// Publishes the selected package and registers its market version.
   Future<void> _publish({required bool allowCreateForgeRepo}) async {
     final source = _selectedSource;
     if (source == null || _publishing) {
@@ -268,8 +265,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
         allowPublicUpdates: _allowPublicUpdates,
         publishAssetSource: publishAssetSource,
         version: _versionController.text,
-        minSupportedAppVersion: _minVersionController.text,
-        maxSupportedAppVersion: _maxVersionController.text,
         publishContext: _publishContext,
         allowCreateForgeRepo: allowCreateForgeRepo,
         onProgress: (message) {
@@ -759,23 +754,6 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _minVersionController,
-                enabled: !_publishing,
-                decoration: const InputDecoration(
-                  labelText: '最低支持版本',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _maxVersionController,
-                enabled: !_publishing,
-                decoration: const InputDecoration(
-                  labelText: '最高支持版本',
-                  border: OutlineInputBorder(),
-                ),
-              ),
               if (error != null) ...<Widget>[
                 const SizedBox(height: 12),
                 _PublishErrorPanel(message: error),
@@ -1217,8 +1195,6 @@ Future<_PublishResult> _publishArtifact({
   required bool allowPublicUpdates,
   required _PublishArtifactSource publishAssetSource,
   required String version,
-  required String minSupportedAppVersion,
-  required String maxSupportedAppVersion,
   required ArtifactPublishClusterContext? publishContext,
   required bool allowCreateForgeRepo,
   required ValueChanged<String> onProgress,
@@ -1240,13 +1216,6 @@ Future<_PublishResult> _publishArtifact({
     throw StateError('分类不能为空');
   }
   final cleanVersion = _normalizeArtifactVersion(version);
-  final normalizedMinVersion = _normalizeAppVersionOrNull(
-    minSupportedAppVersion,
-  );
-  final normalizedMaxVersion = _normalizeAppVersionOrNull(
-    maxSupportedAppVersion,
-  );
-  _validateAppVersionRange(normalizedMinVersion, normalizedMaxVersion);
 
   onProgress('正在读取 GitHub 账号');
   final currentUser = await clients.providersMarketStatsApiService
@@ -1311,8 +1280,6 @@ Future<_PublishResult> _publishArtifact({
         runtimePackageId: source.packageName,
         displayName: resolvedDisplayName,
         version: cleanVersion,
-        minSupportedAppVersion: normalizedMinVersion,
-        maxSupportedAppVersion: normalizedMaxVersion,
       ),
     );
     onProgress(publishAssetSource.minifyArtifact ? '正在压缩并处理插件脚本' : '正在处理插件资源');
@@ -1395,8 +1362,6 @@ Future<_PublishResult> _publishArtifact({
     'description': trimmedDescription,
     'sourceFileName': source.sourceFileName,
     'apiVersion': source.apiVersion,
-    'minSupportedAppVersion': normalizedMinVersion,
-    'maxSupportedAppVersion': normalizedMaxVersion,
   };
 
   onProgress('正在登记市场');
@@ -1628,8 +1593,6 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
   final detail = payload['detail']?.toString() ?? '';
   final categoryId = payload['categoryId']?.toString() ?? '';
   final version = payload['version']?.toString() ?? '';
-  final minAppVer = payload['minSupportedAppVersion']?.toString() ?? '';
-  final maxAppVer = _emptyToNull(payload['maxSupportedAppVersion']?.toString());
   final projectId = payload['projectId']?.toString() ?? '';
   final runtimePackageId = payload['runtimePackageId']?.toString() ?? '';
   final assetUrl = payload['downloadUrl']?.toString() ?? '';
@@ -1640,8 +1603,8 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
       entryId: publishContext.entryId,
       version: version,
       formatVer: _artifactMarketFormatVersion(type),
-      minAppVer: minAppVer,
-      maxAppVer: maxAppVer,
+      minAppVer: marketMinimumAppVersion,
+      maxAppVer: marketMaximumAppVersion,
       changelog: null,
       projectId: projectId,
       runtimePackageId: runtimePackageId,
@@ -1671,8 +1634,8 @@ Future<core_proxy.MarketPublishResponse> _registerMarketEntry({
     allowPublicUpdates: payload['allowPublicUpdates'] == true,
     version: version,
     formatVer: _artifactMarketFormatVersion(type),
-    minAppVer: minAppVer,
-    maxAppVer: maxAppVer,
+    minAppVer: marketMinimumAppVersion,
+    maxAppVer: marketMaximumAppVersion,
     changelog: null,
     projectId: projectId,
     runtimePackageId: runtimePackageId,
@@ -1832,8 +1795,6 @@ String _buildReleaseBody({
   required String runtimePackageId,
   required String displayName,
   required String version,
-  required String? minSupportedAppVersion,
-  required String? maxSupportedAppVersion,
 }) {
   final lines = <String>[
     '${_artifactTitleLabel(type)} artifact published by OperitForge.',
@@ -1842,7 +1803,6 @@ String _buildReleaseBody({
     'Runtime package ID: $runtimePackageId',
     'Display name: $displayName',
     'Version: $version',
-    'Supported app versions: ${_formatSupportedAppVersions(minSupportedAppVersion, maxSupportedAppVersion)}',
     '',
   ];
   return lines.join('\n');
@@ -1851,57 +1811,6 @@ String _buildReleaseBody({
 String _normalizeArtifactVersion(String value) {
   final normalized = value.trim().replaceFirst(RegExp(r'^[vV]'), '');
   return normalized.isEmpty ? '1.0.0' : normalized;
-}
-
-String? _normalizeAppVersionOrNull(String value) {
-  final trimmed = value.trim();
-  if (trimmed.isEmpty) {
-    return null;
-  }
-  final match = RegExp(
-    r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$',
-  ).firstMatch(trimmed);
-  if (match == null) {
-    throw StateError('版本格式应为 1.2.3 或 1.2.3+4');
-  }
-  final build = match.group(4);
-  return build == null
-      ? '${match.group(1)}.${match.group(2)}.${match.group(3)}'
-      : '${match.group(1)}.${match.group(2)}.${match.group(3)}+$build';
-}
-
-void _validateAppVersionRange(String? minVersion, String? maxVersion) {
-  if (minVersion == null || maxVersion == null) {
-    return;
-  }
-  if (_compareAppVersions(minVersion, maxVersion) > 0) {
-    throw StateError('最低支持版本不能大于最高支持版本');
-  }
-}
-
-int _compareAppVersions(String left, String right) {
-  final leftParts = _appVersionParts(left);
-  final rightParts = _appVersionParts(right);
-  for (var index = 0; index < leftParts.length; index += 1) {
-    final order = leftParts[index].compareTo(rightParts[index]);
-    if (order != 0) {
-      return order;
-    }
-  }
-  return 0;
-}
-
-List<int> _appVersionParts(String value) {
-  final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?$').firstMatch(value);
-  if (match == null) {
-    throw StateError('版本格式应为 1.2.3 或 1.2.3+4');
-  }
-  return <int>[
-    int.parse(match.group(1)!),
-    int.parse(match.group(2)!),
-    int.parse(match.group(3)!),
-    int.parse(match.group(4) ?? '0'),
-  ];
 }
 
 void _validateStandaloneArtifactRuntimePackageId(String runtimePackageId) {
@@ -1984,19 +1893,4 @@ String _artifactContentType(String type, String extension) {
     'hjson' => 'application/hjson',
     _ => 'application/octet-stream',
   };
-}
-
-String _formatSupportedAppVersions(String? minVersion, String? maxVersion) {
-  final minValue = minVersion?.trim() ?? '';
-  final maxValue = maxVersion?.trim() ?? '';
-  if (minValue.isNotEmpty && maxValue.isNotEmpty) {
-    return '$minValue - $maxValue';
-  }
-  if (minValue.isNotEmpty) {
-    return '>= $minValue';
-  }
-  if (maxValue.isNotEmpty) {
-    return '<= $maxValue';
-  }
-  return '未声明';
 }

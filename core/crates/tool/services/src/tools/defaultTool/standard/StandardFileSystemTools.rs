@@ -1481,7 +1481,8 @@ fn pluginConfigStoragePath(vfsPath: &str) -> Result<Option<String>, String> {
         .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
         .expect("plugin configuration layout must be below runtime");
     let vfsRoot = PathMapper::joinVfsPath("/app/data", relativeRoot)?;
-    let Some(relativePath) = PathMapper::relativePath(&vfsRoot, vfsPath)? else {
+    let canonicalPath = PathMapper::canonicalizeVfsPath(vfsPath)?;
+    let Some(relativePath) = PathMapper::relativePath(&vfsRoot, &canonicalPath)? else {
         return Ok(None);
     };
     if relativePath.is_empty() {

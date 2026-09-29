@@ -3545,14 +3545,30 @@ impl RuntimePackageManager {
                 "market_artifact",
             );
         }
-        let temporaryFile = self.storePaths.packages_dir().join(format!(
-            ".market-download-{}-{fileName}",
+        let temporaryDirectory = self.storePaths.toolpkg_cache_dir().join(format!(
+            ".market-download-{}-{normalizedSha256}",
             currentTimeMillis()
         ));
         if let Err(error) = self
             .fileSystemHost
+            .makeDirectory(&hostPath(&temporaryDirectory), true)
+        {
+            return self.recordAndReturnPackageError(
+                fileName,
+                "market_import_failed",
+                &format!("Error preparing market artifact download: {error}"),
+                "market_artifact",
+            );
+        }
+        // Keep staging outside scanned packages and preserve the final archive name.
+        let temporaryFile = temporaryDirectory.join(fileName);
+        if let Err(error) = self
+            .fileSystemHost
             .writeFileBytes(&hostPath(&temporaryFile), &bytes)
         {
+            let _ = self
+                .fileSystemHost
+                .deleteFile(&hostPath(&temporaryDirectory), true);
             return self.recordAndReturnPackageError(
                 &fileName,
                 "market_import_failed",
@@ -3564,7 +3580,7 @@ impl RuntimePackageManager {
             .addPackageFileFromExternalStorageResultInternal(&temporaryFile.to_string_lossy());
         let _ = self
             .fileSystemHost
-            .deleteFile(&hostPath(&temporaryFile), false);
+            .deleteFile(&hostPath(&temporaryDirectory), true);
         match result {
             Ok(importResult) => {
                 self.clearManualToolPkgLoadIssues(fileName, None);

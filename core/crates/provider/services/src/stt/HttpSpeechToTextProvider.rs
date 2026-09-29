@@ -187,6 +187,11 @@ mod tests {
     }
 
     impl HttpHost for CapturingHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Captures one buffered HTTP request and returns a valid STT response.
         fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
             *self.request.lock().unwrap() = Some(request);

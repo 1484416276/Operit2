@@ -16,9 +16,9 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     modifierScope: modifierScope,
   );
 
-  /// Builds children column for the Compose DSL renderer.
+  /// Keeps Compose content start-aligned without forcing a cross-axis size.
   Widget _childrenColumn() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
+    crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: _children(modifierScope: _ComposeDslModifierScope.column),
   );
@@ -40,6 +40,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
       return _ComposeDslRenderer(
         node: slot.first,
         onAction: onAction,
+        onTextInput: onTextInput,
         webViewHostContext: webViewHostContext,
         splitMarkdownContent: splitMarkdownContent,
         nodePath: '$nodePath:$name/0',
@@ -49,7 +50,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     return Text(text.isEmpty ? name : text);
   }
 
-  /// Builds slot or children for the Compose DSL renderer.
+  /// Lays out slot content with the same start alignment as direct children.
   Widget _slotOrChildren(String name) {
     final slotChildren = _slotChildren(
       name,
@@ -57,7 +58,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     );
     if (slotChildren.isNotEmpty) {
       return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: slotChildren,
       );
@@ -100,6 +101,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
                 : ValueKey(entry.value.props['key']),
             node: entry.value,
             onAction: onAction,
+            onTextInput: onTextInput,
             webViewHostContext: webViewHostContext,
             splitMarkdownContent: splitMarkdownContent,
             nodePath: '$pathPrefix/${entry.key}',
@@ -142,9 +144,9 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     return nodes.any((child) => _rowFlexSpec(child.props) != null);
   }
 
-  /// Builds slot column for the Compose DSL renderer.
+  /// Lets slot children request their own widths through explicit modifiers.
   Widget _slotColumn(String name) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
+    crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: _slotChildren(
       name,
@@ -189,7 +191,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     );
   }
 
-  /// Builds tinted slot column for the Compose DSL renderer.
+  /// Applies slot color without introducing implicit cross-axis stretching.
   Widget _tintedSlotColumn(
     BuildContext context,
     String name, {
@@ -199,7 +201,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     return _withSlotColor(
       context,
       Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: _slotChildren(
           name,
@@ -240,6 +242,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
     return _ComposeDslRenderer(
       node: slot.first,
       onAction: onAction,
+      onTextInput: onTextInput,
       webViewHostContext: webViewHostContext,
       splitMarkdownContent: splitMarkdownContent,
       nodePath: '$nodePath:$name/0',

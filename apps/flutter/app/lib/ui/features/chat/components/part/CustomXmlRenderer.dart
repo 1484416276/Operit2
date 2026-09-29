@@ -378,6 +378,7 @@ class _ToolPkgXmlComposeDslRenderState
           clients: widget.clients,
           plugin: plugin,
           initialRouteId: 'xml_render',
+          embeddedScreenPath: widget.screen,
           showLauncherChrome: false,
           initialState: widget.initialState,
           initialMemo: widget.initialMemo,

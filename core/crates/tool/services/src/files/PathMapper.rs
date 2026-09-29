@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use operit_host_api::FileEntry;
-use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
+use operit_util::RuntimeStorageLayout::{
+    EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, EXTENSIONS_PLUGIN_DATA_DIR_PATH,
+    RUNTIME_ROOT_PATH_PREFIX, WORKSPACE_DIR_PATH,
+};
 
 const ROOT_APP: &str = "app";
 const ROOT_MNT: &str = "mnt";
@@ -61,6 +64,28 @@ impl PathMapper {
     #[allow(non_snake_case)]
     pub fn normalizeVfsPath(path: &str) -> Result<String, String> {
         normalizeAbsoluteVfsPath(path)
+    }
+
+    /// Converts legacy shared-storage aliases into identity-owned plugin storage paths.
+    #[allow(non_snake_case)]
+    pub fn canonicalizeVfsPath(path: &str) -> Result<String, String> {
+        let normalized = normalizeAbsoluteVfsPath(path)?;
+        let segments = pathSegments(&normalized);
+        let rest = match segments.as_slice() {
+            [ROOT_SDCARD, rest @ ..] | ["storage", "emulated", "0", rest @ ..] => rest,
+            _ => return Ok(normalized),
+        };
+        let (storageRoot, relative) = match rest {
+            ["Download", "Operit", "plugins", relative @ ..] =>
+                (EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, relative),
+            ["Download", "Operit", relative @ ..] =>
+                (EXTENSIONS_PLUGIN_DATA_DIR_PATH, relative),
+            relative => (EXTENSIONS_PLUGIN_DATA_DIR_PATH, relative),
+        };
+        let root = storageRoot.strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
+            .expect("plugin storage must belong to runtime");
+        let root = Self::joinVfsPath("/app/data", root)?;
+        Self::joinVfsPath(&root, &relative.join("/"))
     }
 
     /// Normalizes a user-selected workspace binding path.
@@ -156,7 +181,7 @@ impl PathMapper {
 
     /// Resolves a normalized VFS path into its host physical path.
     pub fn resolve(&self, path: &str) -> Result<ResolvedVfsPath, String> {
-        let normalizedPath = normalizeAbsoluteVfsPath(path)?;
+        let normalizedPath = Self::canonicalizeVfsPath(path)?;
         let segments = pathSegments(&normalizedPath);
         match segments.as_slice() {
             [] => Err("VFS root is a virtual directory".to_string()),
@@ -213,15 +238,6 @@ impl PathMapper {
                 Ok(ResolvedVfsPath {
                     vfsPath: joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
-                })
-            }
-            [ROOT_SDCARD, rest @ ..] => {
-                if !androidSdcardMounted() {
-                    return Err("/sdcard is not mounted".to_string());
-                }
-                Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[ROOT_SDCARD], rest),
-                    physicalPath: physicalPathString(joinUnixPhysical("/sdcard", rest)),
                 })
             }
             [ROOT_DATA, rest @ ..] => {
@@ -368,7 +384,8 @@ fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String
         [ROOT_MNT, MNT_MACOS, rest @ ..] => {
             Ok(Some(joinNormalizedSegments(&[ROOT_MNT, MNT_MACOS], rest)))
         }
-        [ROOT_SDCARD, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_SDCARD], rest))),
+        [ROOT_SDCARD, ..] | ["storage", "emulated", "0", ..] =>
+            Ok(Some(PathMapper::canonicalizeVfsPath(path)?)),
         [ROOT_DATA, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_DATA], rest))),
         ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
         [ROOT_APP, ..] | [ROOT_MNT, ..] => Err(format!(
@@ -695,7 +712,7 @@ mod tests {
                     .resolve("/sdcard/Download/Operit")
                     .unwrap()
                     .physicalPath,
-                "/sdcard/Download/Operit"
+                "D:/operit/extensions/plugins/data"
             );
             assert_eq!(
                 mapper().resolve("/data/local/tmp").unwrap().physicalPath,
@@ -704,7 +721,7 @@ mod tests {
         }
         #[cfg(not(target_os = "android"))]
         {
-            assert!(mapper().resolve("/sdcard/Download/Operit").is_err());
+            assert_eq!(mapper().resolve("/sdcard/Download/Operit").unwrap().physicalPath, "D:/operit/extensions/plugins/data");
             assert!(mapper().resolve("/data/local/tmp").is_err());
         }
     }
@@ -735,7 +752,7 @@ mod tests {
         );
         assert_eq!(
             PathMapper::normalizeWorkspaceBindingPath("/storage/emulated/0/Download").unwrap(),
-            "/mnt/android/sdcard/Download"
+            "/app/data/extensions/plugins/data/Download"
         );
         assert!(PathMapper::normalizeWorkspaceBindingPath("/workspace").is_err());
         assert!(PathMapper::normalizeWorkspaceBindingPath("relative/path").is_err());

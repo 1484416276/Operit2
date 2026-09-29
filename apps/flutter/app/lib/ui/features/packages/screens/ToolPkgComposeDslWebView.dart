@@ -7,12 +7,14 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:mime/mime.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'ToolPkgComposeDslWebViewResourceServer.dart';
 
 const String composeDslWebViewInternalBridgeName =
@@ -140,11 +142,13 @@ class ComposeDslWebViewHostRegistry {
     _hostInteractionRegistered = true;
   }
 
+  /// Binds a controller and its owner-aware navigation resolver.
   static void bind({
     required String executionContextKey,
     required String routeInstanceId,
     required String controllerKey,
     required WebViewController controller,
+    required Future<Uri> Function(String url) resolveNavigationUri,
     required ComposeDslWebViewStateSnapshot state,
   }) {
     if (executionContextKey.trim().isEmpty || controllerKey.trim().isEmpty) {
@@ -162,6 +166,7 @@ class ComposeDslWebViewHostRegistry {
       executionContextKey: executionContextKey,
       controllerKey: controllerKey,
       controller: controller,
+      resolveNavigationUri: resolveNavigationUri,
       state: state,
       javascriptInterfaceActionIds: registeredInterfaces.map(
         (name, methods) => MapEntry(name, Map<String, String>.of(methods)),
@@ -416,7 +421,7 @@ class ComposeDslWebViewHostRegistry {
             );
           }
           await controller.loadRequest(
-            Uri.parse(url),
+            await binding.resolveNavigationUri(url),
             headers: _toStringMap(commandPayload['headers']),
           );
           return _bridgeSuccess(null);
@@ -575,6 +580,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   _ComposeDslWebViewControllerDescriptor? _boundControllerDescriptor;
   String? _boundExecutionContextKey;
   ComposeDslWebViewResourceServer? _resourceServer;
+  bool _servingVfsFiles = false;
   Brightness? _brightness;
   Future<void> _themeUpdate = Future<void>.value();
 
@@ -916,7 +922,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         server.matchesCurrentOrigin(url)) {
       return server.localUriFor(url, isMainFrame: true);
     }
-    return Uri.parse(url);
+    return _webViewUriFor(url, isMainFrame: true);
   }
 
   void _scheduleLoad() {
@@ -945,20 +951,28 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     });
   }
 
+  /// Routes VFS resources and explicit interception through the resource server.
   bool get _usesResourceServer {
-    return _callbackIds.onInterceptRequest != null &&
-        widget.hostContext != null;
+    return _servingVfsFiles ||
+        (_callbackIds.onInterceptRequest != null && widget.hostContext != null);
   }
 
   ComposeDslWebViewResourceServer _ensureResourceServer() {
     return _resourceServer ??= ComposeDslWebViewResourceServer(
       dispatchDecision: _dispatchInterceptRequestDecision,
+      readFileBytes: (path) async =>
+          base64.decode(await _readVfsFileBase64(path)),
     );
   }
 
+  /// Dispatches local resources to VFS and network resources to the plugin callback.
   Future<Object?> _dispatchInterceptRequestDecision(
     Map<String, Object?> payload,
   ) async {
+    final uri = Uri.parse(_string(payload['url']));
+    if (uri.scheme == 'file') {
+      return _readVfsResource(uri, _string(payload['method']));
+    }
     final actionId = _callbackIds.onInterceptRequest;
     final hostContext = widget.hostContext;
     if (actionId == null || hostContext == null) {
@@ -975,9 +989,57 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     return result.actionResult;
   }
 
+  /// Reads local browser resources through the core VFS and host file API.
+  Future<Object?> _readVfsResource(Uri uri, String method) async {
+    if (uri.host.isNotEmpty || (method != 'GET' && method != 'HEAD')) {
+      throw StateError('VFS WebView resources require a local GET or HEAD URL');
+    }
+    final contentBase64 = await _readVfsFileBase64(uri.path);
+    return <String, Object?>{
+      'action': 'respond',
+      'response': <String, Object?>{
+        'statusCode': 200,
+        'mimeType':
+            lookupMimeType(uri.path) ??
+            (throw StateError('Unknown resource MIME type')),
+        'base64': method == 'HEAD' ? '' : contentBase64,
+      },
+    };
+  }
+
+  /// Reads resource paths through the shared VFS and host file API.
+  Future<String> _readVfsFileBase64(String path) async {
+    final result = await _runtimeClients.application
+        .aiToolHandler()
+        .executeTool(
+          tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
+            name: 'read_file_binary',
+            parameters: [
+              core_proxy.CoreOperitToolsToolExecutionManagerToolParameter(
+                name: 'path',
+                value: path,
+              ),
+            ],
+          ),
+        );
+    if (!result.success) {
+      throw StateError('VFS resource $path: ${result.error}');
+    }
+    final data = result.result.value;
+    if (data is! core_proxy.BinaryFileContentData) {
+      throw StateError('VFS resource did not return binary file content');
+    }
+    return data.contentBase64;
+  }
+
+  /// Resolves every local navigation through the VFS resource server.
   Future<Uri> _webViewUriFor(String url, {required bool isMainFrame}) async {
+    _servingVfsFiles = Uri.parse(url).scheme == 'file';
     if (!_usesResourceServer) {
       return Uri.parse(url);
+    }
+    if (_servingVfsFiles) {
+      await _refreshComposeDslJavascriptInterfaces(_controller);
     }
     return _ensureResourceServer().localUriFor(url, isMainFrame: isMainFrame);
   }
@@ -1098,6 +1160,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       routeInstanceId: hostContext.routeInstanceId,
       controllerKey: descriptor.key,
       controller: _controller,
+      resolveNavigationUri: (url) => _webViewUriFor(url, isMainFrame: true),
       state: _stateSnapshot(),
     );
   }
@@ -1430,6 +1493,7 @@ class _ComposeDslWebViewControllerBinding {
     required this.executionContextKey,
     required this.controllerKey,
     required this.controller,
+    required this.resolveNavigationUri,
     required this.state,
     required this.javascriptInterfaceActionIds,
   });
@@ -1438,6 +1502,7 @@ class _ComposeDslWebViewControllerBinding {
   final String executionContextKey;
   final String controllerKey;
   final WebViewController controller;
+  final Future<Uri> Function(String url) resolveNavigationUri;
   ComposeDslWebViewStateSnapshot state;
   final Map<String, Map<String, String>> javascriptInterfaceActionIds;
 }

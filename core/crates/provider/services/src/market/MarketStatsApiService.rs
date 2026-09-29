@@ -1265,25 +1265,29 @@ fn now_iso() -> String {
         .to_string()
 }
 
+/// Client version recorded as the minimum for all marketplace publications.
+pub const MARKET_MIN_APP_VERSION: &str = "2.0.0";
+/// Client version recorded as the maximum for all marketplace publications.
+pub const MARKET_MAX_APP_VERSION: &str = "2.99.99";
+
 fn entry_downloads(entry: &MarketEntrySummary) -> i32 {
     entry.download_count.max(entry.downloads)
 }
 
+/// Builds published marketplace version metadata with the fixed client range.
 fn market_base_version_json(
     version: &str,
     format_ver: &str,
-    min_app_ver: &str,
-    max_app_ver: Option<String>,
+    _min_app_ver: &str,
+    _max_app_ver: Option<String>,
     changelog: Option<String>,
 ) -> serde_json::Value {
     let mut json = serde_json::json!({
         "version": version,
         "formatVer": format_ver,
-        "minAppVer": min_app_ver,
+        "minAppVer": MARKET_MIN_APP_VERSION,
+        "maxAppVer": MARKET_MAX_APP_VERSION,
     });
-    if let Some(max) = max_app_ver.filter(|value| !value.trim().is_empty()) {
-        json["maxAppVer"] = serde_json::Value::String(max);
-    }
     if let Some(text) = changelog.filter(|value| !value.trim().is_empty()) {
         json["changelog"] = serde_json::Value::String(text);
     }
@@ -1431,6 +1435,11 @@ mod tests {
     }
 
     impl HttpHost for ReqwestTestHttpHost {
+        /// Declares the image delivery supported by this HTTP host.
+        fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+            operit_host_api::HttpImageDelivery::Bytes
+        }
+
         /// Executes one test HTTP request through reqwest.
         fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
             let method = reqwest::Method::from_bytes(request.method.as_bytes())

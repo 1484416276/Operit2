@@ -38,6 +38,11 @@ impl WebHttpHost {
 }
 
 impl HttpHost for WebHttpHost {
+    /// Uses image elements so display does not require a CORS-readable Fetch response.
+    fn imageDelivery(&self) -> operit_host_api::HttpImageDelivery {
+        operit_host_api::HttpImageDelivery::DisplayUrl
+    }
+
     /// Executes one buffered HTTP request through the installed JavaScript host bridge.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData> {
         js_http_response(call_http(

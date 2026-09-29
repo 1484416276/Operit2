@@ -1,5 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit2/ui/common/markdown/XmlRenderPluginRegistry.dart';
+import 'package:operit2/ui/features/chat/components/style/bubble/BubbleAiMessageComposable.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -21,6 +25,184 @@ import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
+
+  testWidgets('bubble rebuild retains the XML plugin engine and action state', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    final clients = GeneratedCoreProxyClients(bridge);
+    final plugin = _pluginRuntime();
+    XmlRenderPluginRegistry.register(({
+      required tagName,
+      required xmlContent,
+      required textColor,
+      required isStreaming,
+      required xmlStream,
+    }) {
+      if (tagName != 'lifecycle_test') return null;
+      return ToolPkgUiLauncherScreen(
+        clients: clients,
+        plugin: plugin,
+        showLauncherChrome: false,
+      );
+    });
+    final rawMessage = _translationMessage('ai').toJson();
+    rawMessage['parts'] = [
+      core_proxy.MessagePart(
+        partId: 'badge',
+        sequence: 0,
+        kind: core_proxy.MessagePartKind.markdown,
+        content: '<lifecycle_test></lifecycle_test>',
+        toolCallId: null,
+        toolName: null,
+        attributes: const {},
+      ).toJson(),
+    ];
+    final message = core_proxy.ChatMessage.fromJson(rawMessage);
+
+    /// Rebuilds the real AI bubble while changing only its available width.
+    Widget screen(double width) => OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
+      unconfiguredChildEnabled: true,
+      hostInteractionHostsEnabled: false,
+      child: Scaffold(
+        body: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            child: BubbleAiMessageComposable(
+              message: message,
+              backgroundColor: Colors.white,
+              textColor: Colors.black,
+              splitMarkdownContent: (content) async => [
+                for (final type in [
+                  'markdownBlockStart',
+                  'markdownBlockChunk',
+                  'markdownBlockEnd',
+                ])
+                  core_proxy.MarkdownStreamEvent(
+                    chatId: 'test',
+                    eventType: type,
+                    value: type == 'markdownBlockChunk' ? content : null,
+                    id: null,
+                    blockId: 1,
+                    inlineId: null,
+                    parentBlockId: null,
+                    nodeType: 'XmlBlock',
+                    headerLevel: null,
+                    xml: null,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(screen(760));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    final state = tester.state(find.byType(ToolPkgUiLauncherScreen));
+    await tester.pumpWidget(screen(560));
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(ToolPkgUiLauncherScreen)), same(state));
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'executeToolPkgComposeDslScript',
+      ),
+      hasLength(1),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('equal nested XML inputs do not execute the script again', (
+    tester,
+  ) async {
+    final bridge = _ToolPkgDslTestBridge();
+    final clients = GeneratedCoreProxyClients(bridge);
+    final plugin = _pluginRuntime();
+
+    /// Recreates equal JSON values as an external rebuild does.
+    Widget screen() => MaterialApp(
+      home: ToolPkgUiLauncherScreen(
+        clients: clients,
+        plugin: plugin,
+        initialState: {
+          'xmlContent': '<test/>',
+          'items': [
+            {'value': 1},
+          ],
+        },
+        initialMemo: {
+          'nested': {
+            'values': [1, 2],
+          },
+        },
+      ),
+    );
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Increment'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    expect(find.text('Counter: 1'), findsOneWidget);
+    expect(
+      bridge.calls.where(
+        (call) => call.methodName == 'executeToolPkgComposeDslScript',
+      ),
+      hasLength(1),
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'moodlet XML screen stays independent of moduleSpec without screen',
+    (tester) async {
+      final bridge = _ToolPkgDslTestBridge();
+      const spec = {'id': 'silent_badge_fingerprint', 'runtime': 'compose_dsl'};
+      await tester.pumpWidget(
+        _screen(
+          bridge,
+          plugin: _moduleOnlyPluginRuntime(),
+          initialRouteId: 'xml_render',
+          embeddedScreenPath: 'dist/ui/silent_badge.ui.js',
+          initialModuleSpec: spec,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final read = bridge.calls.singleWhere(
+        (call) => call.methodName == 'readToolPkgTextResource',
+      );
+      expect((read.args as Map)['resourcePath'], 'dist/ui/silent_badge.ui.js');
+      expect(
+        bridge.calls.where(
+          (call) => call.methodName == 'getToolPkgComposeDslScript',
+        ),
+        isEmpty,
+      );
+      final execute = bridge.calls.singleWhere(
+        (call) => call.methodName == 'executeToolPkgComposeDslScript',
+      );
+      final args = execute.args as Map;
+      final options = args['runtimeOptions'] as Map;
+      expect(
+        args['contextKey'],
+        startsWith(
+          'toolpkg_xml_render:module_only_toolpkg:dist/ui/silent_badge.ui.js:',
+        ),
+      );
+      expect(options['__operit_script_screen'], 'dist/ui/silent_badge.ui.js');
+      expect(options['uiModuleId'], 'xml_render');
+      expect(options['moduleSpec'], spec);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('streaming inputs preserve the tree and execution context', (
     tester,
@@ -891,6 +1073,7 @@ void main() {
         bridge,
         plugin: _moduleOnlyPluginRuntime(),
         initialRouteId: 'xml_render',
+        embeddedScreenPath: 'ui/planask/index.ui.js',
         initialModuleSpec: <String, Object?>{
           'id': 'xml_render',
           'runtime': 'compose_dsl',
@@ -1813,6 +1996,7 @@ Widget _screen(
   _ToolPkgDslTestBridge bridge, {
   core_proxy.ToolPkgContainerRuntime? plugin,
   String? initialRouteId,
+  String? embeddedScreenPath,
   Map<String, Object?>? initialModuleSpec,
 }) {
   return MaterialApp(
@@ -1820,6 +2004,7 @@ Widget _screen(
       clients: GeneratedCoreProxyClients(bridge),
       plugin: plugin ?? _pluginRuntime(),
       initialRouteId: initialRouteId,
+      embeddedScreenPath: embeddedScreenPath,
       initialModuleSpec: initialModuleSpec,
     ),
   );

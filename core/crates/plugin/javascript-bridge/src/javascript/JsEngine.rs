@@ -1119,6 +1119,18 @@ impl JsEngineState {
             self.initJavaScriptEnvironment()
                 .map_err(JsExecutionError::initialization)?;
             let mut effectiveParams = params;
+            // Async Compose renders and actions need the same API contract as synchronous calls.
+            let apiVersion = match self.toolPkgContext.as_ref() {
+                Some(context) => context.api_version.clone(),
+                None => {
+                    operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
+                        .to_string()
+                }
+            };
+            effectiveParams.insert(
+                "__operit_toolpkg_api_version".to_string(),
+                Value::String(apiVersion),
+            );
             let explicitLanguage = effectiveParams
                 .get("__operit_package_lang")
                 .and_then(Value::as_str)

@@ -8,13 +8,19 @@ typedef ComposeDslWebViewResourceDecisionDispatcher =
     Future<Object?> Function(Map<String, Object?> payload);
 
 class ComposeDslWebViewResourceServer {
-  ComposeDslWebViewResourceServer({required this.dispatchDecision});
+  /// Creates a resource server backed by the application host file API.
+  ComposeDslWebViewResourceServer({
+    required this.dispatchDecision,
+    required this.readFileBytes,
+  });
 
   final ComposeDslWebViewResourceDecisionDispatcher dispatchDecision;
+  final Future<List<int>> Function(String path) readFileBytes;
 
   HttpServer? _server;
   String? _origin;
 
+  /// Preserves local resource paths, queries, and fragments for relative navigation.
   Future<Uri> localUriFor(
     String originalUrl, {
     required bool isMainFrame,
@@ -31,6 +37,7 @@ class ComposeDslWebViewResourceServer {
       scheme: 'http',
       host: server.address.address,
       port: server.port,
+      fragment: originalUri.hasFragment ? originalUri.fragment : null,
       path: originalUri.path.isEmpty ? '/' : originalUri.path,
       queryParameters: queryParameters.isEmpty ? null : queryParameters,
     );
@@ -183,20 +190,16 @@ class ComposeDslWebViewResourceServer {
     );
   }
 
+  /// Reads intercepted file responses through the injected host file reader.
   Future<void> _writeFile(
     HttpResponse response,
     String filePath,
     String mimeType,
   ) async {
-    final file = File(filePath);
-    if (!await file.exists()) {
-      response.statusCode = HttpStatus.notFound;
-      await response.close();
-      return;
-    }
+    final bytes = await readFileBytes(filePath);
     _setContentType(response, mimeType);
-    response.contentLength = await file.length();
-    await response.addStream(file.openRead());
+    response.contentLength = bytes.length;
+    response.add(bytes);
     await response.close();
   }
 

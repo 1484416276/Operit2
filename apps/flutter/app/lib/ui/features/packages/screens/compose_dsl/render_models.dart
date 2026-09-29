@@ -330,3 +330,24 @@ class _NoUiView extends StatelessWidget {
     return const Center(child: Icon(Icons.extension_off_outlined, size: 42));
   }
 }
+
+/// Matches Kotlin Map/List value equality for JSON-backed Compose effect inputs.
+bool _composeInputEquals(Object? left, Object? right) {
+  if (identical(left, right)) return true;
+  if (left is Map && right is Map) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key) ||
+          !_composeInputEquals(entry.value, right[entry.key])) return false;
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (!_composeInputEquals(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  return left == right;
+}

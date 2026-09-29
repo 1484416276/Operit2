@@ -1275,15 +1275,20 @@ class _ChatAreaContentColumn extends StatelessWidget {
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
-    final maxWidth = themePreferenceSnapshot.bubbleWideLayoutEnabled
-        ? chatWideContentMaxWidth
-        : chatContentMaxWidth;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        child: SizedBox(width: double.infinity, child: child),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = resolveChatColumnMaxWidth(
+          constraints.maxWidth,
+          wideLayoutEnabled: themePreferenceSnapshot.bubbleWideLayoutEnabled,
+        );
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: SizedBox(width: double.infinity, child: child),
+          ),
+        );
+      },
     );
   }
 }

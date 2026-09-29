@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -52,6 +53,8 @@ class _TabletLayoutState extends State<TabletLayout> {
 
   late bool _isSidebarWidthExpanded;
   late bool _isSidebarContentExpanded;
+  double? _customSidebarWidth;
+  bool _resizing = false;
   Timer? _contentSwitchTimer;
   Timer? _widthSwitchTimer;
 
@@ -109,17 +112,29 @@ class _TabletLayoutState extends State<TabletLayout> {
   @override
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
+    final maxExpandedWidth = math.min(
+      360.0,
+      math.max(260.0, MediaQuery.sizeOf(context).width * 0.36),
+    );
+    final expandedWidth = (_customSidebarWidth ?? widget.tabletSidebarWidth)
+        .clamp(200.0, maxExpandedWidth)
+        .toDouble();
     final targetSidebarWidth = _isSidebarWidthExpanded
-        ? widget.tabletSidebarWidth
+        ? expandedWidth
         : widget.collapsedTabletSidebarWidth;
 
     return Row(
       children: <Widget>[
-        AnimatedContainer(
-          duration: _sidebarWidthAnimationDuration,
-          curve: Curves.fastOutSlowIn,
-          width: targetSidebarWidth,
-          height: double.infinity,
+        Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            AnimatedContainer(
+              duration: _resizing
+                  ? Duration.zero
+                  : _sidebarWidthAnimationDuration,
+              curve: Curves.fastOutSlowIn,
+              width: targetSidebarWidth,
+              height: double.infinity,
           child: OperitGlassSurface(
             color: appearance.containerColor,
             layer: OperitGlassSurfaceLayer.panel,
@@ -171,8 +186,50 @@ class _TabletLayoutState extends State<TabletLayout> {
                           widget.onNavigationEntrySelected,
                       onConversationActivated: widget.onConversationActivated,
                     ),
+                ),
+              ),
             ),
-          ),
+            if (_isSidebarWidthExpanded)
+              PositionedDirectional(
+                top: 0,
+                bottom: 0,
+                end: -4,
+                width: 8,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeColumn,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragStart: (_) {
+                      setState(() {
+                        _resizing = true;
+                      });
+                    },
+                    onHorizontalDragUpdate: (details) {
+                      setState(() {
+                        final current =
+                            _customSidebarWidth ?? widget.tabletSidebarWidth;
+                        _customSidebarWidth = (current + details.delta.dx)
+                            .clamp(200.0, maxExpandedWidth)
+                            .toDouble();
+                      });
+                    },
+                    onHorizontalDragEnd: (_) {
+                      if (!_resizing) {
+                        return;
+                      }
+                      setState(() {
+                        _resizing = false;
+                      });
+                    },
+                    onDoubleTap: () {
+                      setState(() {
+                        _customSidebarWidth = null;
+                      });
+                    },
+                  ),
+                ),
+              ),
+          ],
         ),
         Expanded(child: widget.content),
       ],

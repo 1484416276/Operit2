@@ -92,10 +92,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : transparentSurface
         ? colorScheme.surface.withValues(alpha: 0.04)
         : colorScheme.surface;
-    return Row(
-      children: <Widget>[
-        SizedBox(
-          width: 260,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final categorySidebarWidth = (constraints.maxWidth * 0.28)
+            .clamp(196.0, 252.0)
+            .toDouble();
+        return Row(
+          children: <Widget>[
+            SizedBox(
+              width: categorySidebarWidth,
           child: OperitGlassSurface(
             color: sidebarColor,
             layer: OperitGlassSurfaceLayer.panel,
@@ -145,7 +150,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-      ],
+          ],
+        );
+      },
     );
   }
 

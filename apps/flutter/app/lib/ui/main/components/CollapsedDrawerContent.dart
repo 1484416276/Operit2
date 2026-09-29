@@ -562,7 +562,14 @@ class ConversationDrawerItem extends StatelessWidget {
                                   if (details.wasAccepted) {
                                     return;
                                   }
-                                  final offset = details.offset;
+                                  final overlayObject = Overlay.maybeOf(
+                                    context,
+                                  )?.context.findRenderObject();
+                                  final offset = overlayObject is RenderBox
+                                      ? overlayObject.globalToLocal(
+                                          details.offset,
+                                        )
+                                      : details.offset;
                                   final outsideWindow =
                                       offset.dx < 0 ||
                                       offset.dy < 0 ||

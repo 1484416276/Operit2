@@ -17,6 +17,43 @@ fun requiredLocalProperty(name: String): String =
     localProperties.getProperty(name)
         ?: throw GradleException("Missing Android release signing property: $name")
 
+data class OperitRustTarget(
+    val flutterPlatform: String,
+    val abi: String,
+    val rustTarget: String,
+    val envTarget: String,
+)
+
+// Reads Flutter's requested Android target platforms from Gradle properties.
+fun requestedFlutterTargetPlatforms(): Set<String> {
+    val raw = providers.gradleProperty("target-platform").orNull
+        ?: throw GradleException("Missing Flutter target-platform Gradle property")
+    return raw.split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .toSet()
+}
+
+// Selects only the Rust targets required by Flutter's Android build.
+fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustTarget> {
+    val requestedPlatforms = requestedFlutterTargetPlatforms()
+    val selectedTargets = targets.filter { requestedPlatforms.contains(it.flutterPlatform) }
+    val selectedPlatforms = selectedTargets.map { it.flutterPlatform }.toSet()
+    val unsupportedPlatforms = requestedPlatforms.subtract(selectedPlatforms)
+    if (unsupportedPlatforms.isNotEmpty()) {
+        throw GradleException("Unsupported Android Rust target-platform values: $unsupportedPlatforms")
+    }
+    if (selectedTargets.isEmpty()) {
+        throw GradleException("No supported Android Rust targets selected for target-platform=$requestedPlatforms")
+    }
+    return selectedTargets
+}
+
+val operitRustTargets = listOf(
+    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
+)
+val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
+
 android {
     namespace = "app.operit"
     compileSdk = flutter.compileSdkVersion
@@ -55,7 +92,9 @@ android {
         abi {
             isEnable = true
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            selectedOperitRustTargets.forEach { target ->
+                include(target.abi)
+            }
             isUniversalApk = false
         }
     }
@@ -110,44 +149,6 @@ val operitLibclangDir = operitRepoRoot
 // Converts a file path into the clang-compatible slash format.
 fun File.clangPath(): String = absolutePath.replace('\\', '/')
 
-data class OperitRustTarget(
-    val flutterPlatform: String,
-    val abi: String,
-    val rustTarget: String,
-    val envTarget: String,
-)
-
-// Reads Flutter's requested Android target platforms from Gradle properties.
-fun requestedFlutterTargetPlatforms(): Set<String> {
-    val raw = providers.gradleProperty("target-platform").orNull
-        ?: throw GradleException("Missing Flutter target-platform Gradle property")
-    return raw.split(',')
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .toSet()
-}
-
-// Selects only the Rust targets required by Flutter's Android build.
-fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustTarget> {
-    val requestedPlatforms = requestedFlutterTargetPlatforms()
-    val selectedTargets = targets.filter { requestedPlatforms.contains(it.flutterPlatform) }
-    val selectedPlatforms = selectedTargets.map { it.flutterPlatform }.toSet()
-    val unsupportedPlatforms = requestedPlatforms.subtract(selectedPlatforms)
-    if (unsupportedPlatforms.isNotEmpty()) {
-        throw GradleException("Unsupported Android Rust target-platform values: $unsupportedPlatforms")
-    }
-    if (selectedTargets.isEmpty()) {
-        throw GradleException("No Android Rust targets selected for target-platform=$requestedPlatforms")
-    }
-    return selectedTargets
-}
-
-val operitRustTargets = listOf(
-    OperitRustTarget("android-arm64", "arm64-v8a", "aarch64-linux-android", "AARCH64_LINUX_ANDROID"),
-    OperitRustTarget("android-arm", "armeabi-v7a", "armv7-linux-androideabi", "ARMV7_LINUX_ANDROIDEABI"),
-    OperitRustTarget("android-x64", "x86_64", "x86_64-linux-android", "X86_64_LINUX_ANDROID"),
-)
-val selectedOperitRustTargets = selectedOperitRustTargets(operitRustTargets)
 
 val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
     workingDir = operitRepoRoot

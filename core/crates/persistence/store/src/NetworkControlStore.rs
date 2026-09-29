@@ -288,6 +288,13 @@ impl NetworkControlStore {
         self.submitLocalCommand(NetworkControlCommand::AdmitMember { nodeId })
     }
 
+    /// Returns the current Space control commands in authorization order.
+    #[allow(non_snake_case)]
+    pub fn currentSpaceOperations(&self) -> Result<Vec<SyncOperation>, String> {
+        let space = self.spaceStore.initialize()?;
+        self.orderedCommands(&space.spaceId)
+    }
+
     /// Prevents a device from being used as a direct connection or transit route.
     #[allow(non_snake_case)]
     pub fn disconnectNode(&self, nodeId: String) -> Result<SyncOperation, String> {

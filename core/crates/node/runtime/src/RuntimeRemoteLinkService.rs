@@ -621,7 +621,10 @@ impl RuntimeRemoteLinkService {
             };
             let deviceProfiles = self.spaceStore.deviceProfilesForCurrentSpace()?;
             let accepted = session.adoptDeviceSpace(joinProposal, deviceProfiles).await?;
-            self.spaceStore.adopt(accepted)?;
+            self.spaceStore.adopt(accepted.space)?;
+            for operation in accepted.controlOperations {
+                self.networkControlStore.applyBootstrapOperation(&operation)?;
+            }
         }
         self.persistenceSyncService()
             .synchronizePeer(name, 512, true)

@@ -2400,6 +2400,7 @@ class _AiSetupImportPage extends StatelessWidget {
   final String? errorText;
 
   @override
+  /// Builds the current-format snapshot preview and import error details.
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
@@ -2418,7 +2419,7 @@ class _AiSetupImportPage extends StatelessWidget {
                 icon: Icons.move_to_inbox_rounded,
                 eyebrow: '导入配置',
                 title: '从 Operit1 导入',
-                description: '选择旧版快照，将配置、聊天、角色卡、资源等数据迁移到 Operit2。',
+                description: '请使用最新版 Operit1 导出的快照，将配置、聊天、角色卡、资源等数据迁移到 Operit2。',
               ),
               const SizedBox(height: 22),
               Align(
@@ -2524,7 +2525,24 @@ class _AiSetupImportPage extends StatelessWidget {
               ],
               if (errorText != null) ...<Widget>[
                 const SizedBox(height: 12),
-                CommonNetworkErrorView(errorText: errorText!),
+                Semantics(
+                  liveRegion: true,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Text(
+                        '快照导入失败\n$errorText',
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ],
           ),

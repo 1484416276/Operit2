@@ -361,6 +361,7 @@ impl Operit1SnapshotImportManager {
     ) -> Result<Operit1SnapshotPreview, String> {
         let result = (|| {
             let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+            validateOperit1MemorySpaces(&parsed)?;
             let databaseCounts = self.databaseCounts(&parsed)?;
             parsed.preview(databaseCounts)
         })();
@@ -425,6 +426,7 @@ impl Operit1SnapshotImportManager {
             0.08,
         ));
         let parsed = ParsedOperit1Snapshot::fromSource(source)?;
+        validateOperit1MemorySpaces(&parsed)?;
         publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress::stage(
             "model_config",
             "迁移模型配置",
@@ -544,16 +546,29 @@ impl Operit1SnapshotImportManager {
     }
 
     #[allow(non_snake_case)]
+    /// Imports every current memory space and copies its Markdown document verbatim.
     fn importUserMarkdownPreferences(&self, parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
-        let profiles = buildOperit1UserPreferenceProfiles(parsed)?;
-        let cardBindings = collectOperit1CharacterMemoryProfileBindings(parsed)?;
-        let profileIds = cardBindings.values().cloned().collect::<BTreeSet<String>>();
-        for profileId in profileIds {
-            let profile = profiles
-                .get(&profileId)
-                .ok_or_else(|| format!("Operit1 角色卡绑定了不存在的用户偏好：{profileId}"))?;
-            let markdown = buildOperit2UserMarkdown(profile)?;
-            appendSharedUserMarkdown(self.storageHost.as_ref(), &profileId, &markdown)?;
+        let spaces = buildOperit1MemorySpaces(parsed)?;
+        let manager = SharedMemoryStoreManager::new(self.paths.clone());
+        for (profileId, space) in spaces {
+            let storeId = operit1SharedMemoryStoreId(&profileId);
+            manager
+                .createSharedMemoryStoreWithId(
+                    storeId.clone(),
+                    format!("Operit1 记忆库 - {}", space.name.trim()),
+                )
+                .map_err(|error| format!("创建 Operit1 共享记忆库失败：{error}"))?;
+            let path = format!(
+                "{}/{}/USER.md",
+                DATA_MEMORY_SHARED_DIR_PATH.trim_end_matches('/'),
+                sanitizeMemoryOwnerId(&storeId)
+            );
+            writeArchiveEntryToStorage(
+                self.storageWriteHost.as_ref(),
+                parsed,
+                &operit1UserMarkdownEntry(&profileId),
+                &path,
+            )?;
         }
         Ok(())
     }
@@ -963,9 +978,7 @@ impl Operit1SnapshotImportManager {
         parsed: &ParsedOperit1Snapshot,
     ) -> Result<(i32, i32), String> {
         let result = (|| {
-            let paths = self.paths.clone();
-            let sharedMemoryStoreManager = SharedMemoryStoreManager::new(paths);
-            let profiles = collectOperit1MemoryProfileIds(parsed)?;
+            let profiles = collectOperit1ObjectBoxProfileIds(parsed)?;
             let profileCount = profiles.len();
             let mut totalMemoryCount = 0;
             let mut totalLinkCount = 0;
@@ -992,10 +1005,6 @@ impl Operit1SnapshotImportManager {
                 totalMemoryCount += exportData.memories.len() as i32;
                 totalLinkCount += exportData.links.len() as i32;
                 let storeId = operit1SharedMemoryStoreId(&profileId);
-                let storeName = operit1SharedMemoryStoreName(parsed, &profileId)?;
-                sharedMemoryStoreManager
-                    .createSharedMemoryStoreWithId(storeId.clone(), storeName)
-                    .map_err(|error| format!("创建 Operit1 共享记忆库失败：{error}"))?;
                 let ownerKey = sharedMemoryOwnerKey(&storeId)?;
                 let repository = MemoryRepository::new(ownerKey);
                 let json = serde_json::to_string(&exportData).map_err(|error| error.to_string())?;

@@ -24,7 +24,6 @@ from common import (
     reset_dir,
     run,
     stage_web_access_source,
-    staged_non_ohos_flutter_dependencies,
     write_web_access_version_manifest,
 )
 
@@ -273,33 +272,32 @@ def main(base_href: str) -> int:
     )
 
     pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
-    with staged_non_ohos_flutter_dependencies():
-        generate_dart_proxy_artifacts()
-        dart_pub_get(enforce_lockfile=False, env=env)
-        run(["rustup", "target", "add", "wasm32-unknown-unknown"])
-        compile_web_runtime_bridge(typescript_bin, terser_bin)
-        stage_web_access_source()
-        reset_dir(WEB_ACCESS_BUNDLE_DIR)
-        original_native_asset_pubspec = remove_web_access_native_assets_from_pubspec(pubspec)
-        try:
-            run(
-                [
-                    flutter,
-                    "build",
-                    "web",
-                    "--release",
-                    "--no-pub",
-                    "--no-wasm-dry-run",
-                    "--base-href",
-                    base_href,
-                    "--output",
-                    WEB_ACCESS_BUNDLE_DIR,
-                ],
-                cwd=FLUTTER_APP_DIR,
-                env=env,
-            )
-        finally:
-            restore_staged_file(pubspec, original_native_asset_pubspec)
+    generate_dart_proxy_artifacts()
+    dart_pub_get(enforce_lockfile=False, env=env)
+    run(["rustup", "target", "add", "wasm32-unknown-unknown"])
+    compile_web_runtime_bridge(typescript_bin, terser_bin)
+    stage_web_access_source()
+    reset_dir(WEB_ACCESS_BUNDLE_DIR)
+    original_native_asset_pubspec = remove_web_access_native_assets_from_pubspec(pubspec)
+    try:
+        run(
+            [
+                flutter,
+                "build",
+                "web",
+                "--release",
+                "--no-pub",
+                "--no-wasm-dry-run",
+                "--base-href",
+                base_href,
+                "--output",
+                WEB_ACCESS_BUNDLE_DIR,
+            ],
+            cwd=FLUTTER_APP_DIR,
+            env=env,
+        )
+    finally:
+        restore_staged_file(pubspec, original_native_asset_pubspec)
     stage_web_runtime_files(wasm_bindgen_bin)
     manifest = write_web_access_version_manifest()
     print(

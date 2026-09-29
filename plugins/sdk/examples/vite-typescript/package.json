@@ -1,0 +1,20 @@
+{
+  "name": "@operit/plugin-sdk-vite-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build:sdk && tsx server.ts",
+    "build": "npm run build:sdk && vite build && tsc --noEmit",
+    "preview": "vite preview",
+    "build:sdk": "npm --prefix ../../clients/typescript run build"
+  },
+  "dependencies": {
+    "@operit/plugin-sdk": "file:../../clients/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.1.7"
+  }
+}

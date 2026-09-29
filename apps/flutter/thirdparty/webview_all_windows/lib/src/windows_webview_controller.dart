@@ -204,10 +204,10 @@ class WindowsWebViewController extends PlatformWebViewController {
     return native_webview.WebviewController.getWebViewVersion();
   }
 
-  /// Returns the process-local Flutter texture id for the real WebView surface.
-  Future<int> browserSurfaceTextureId() async {
+  /// Returns the process-local native platform-view ID for the real WebView surface.
+  Future<int> browserSurfacePlatformViewId() async {
     await _ensureInitialized();
-    return _webviewController.surfaceTextureId;
+    return _webviewController.surfacePlatformViewId;
   }
 
   /// Resizes the real WebView compositor surface.
@@ -277,10 +277,9 @@ class WindowsWebViewController extends PlatformWebViewController {
   /// Applies the host color preference after the native WebView is ready.
   Future<void> setPreferredColorScheme(Brightness brightness) async {
     await _ensureInitialized();
-    await const MethodChannel('operit/webview_theme').invokeMethod<void>(
-      'setPreferredColorScheme',
-      brightness.name,
-    );
+    await const MethodChannel(
+      'operit/webview_theme',
+    ).invokeMethod<void>('setPreferredColorScheme', brightness.name);
   }
 
   Future<void> _initialize() async {

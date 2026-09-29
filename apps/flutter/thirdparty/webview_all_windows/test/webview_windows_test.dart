@@ -885,7 +885,7 @@ void _mockWindowsWebViewCreation({
     ByteData? message,
   ) async {
     return WindowsWebViewHostApi.pigeonChannelCodec.encodeMessage(<Object?>[
-      WindowsCreateWebViewResult(textureId: 1),
+      WindowsCreateWebViewResult(viewId: 1),
     ]);
   });
   messenger.setMockMessageHandler(_hostApiChannel('setPopupWindowPolicy'), (

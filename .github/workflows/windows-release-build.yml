@@ -33,7 +33,7 @@ jobs:
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
-      FVM_VERSION: 4.1.2
+      FVM_VERSION: 4.3.0
       TYPESCRIPT_VERSION: 5.9.3
       WASM_BINDGEN_VERSION: 0.2.122
       WASI_SDK_VERSION: "20.0"
@@ -44,11 +44,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install bootstrap Flutter
-        uses: subosito/flutter-action@v2
+      - name: Install bootstrap Dart
+        uses: dart-lang/setup-dart@v1
         with:
-          channel: stable
-          cache: true
+          sdk: 3.11.5
 
       - name: Install Node.js
         uses: actions/setup-node@v4

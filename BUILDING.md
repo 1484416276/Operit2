@@ -73,8 +73,8 @@ workflows when changing a build dependency.
 
 | Input | Version or pin | Source of truth |
 | --- | --- | --- |
-| Flutter SDK | 3.41.9 | `apps/flutter/app/.fvmrc`, installed through FVM |
-| FVM | 4.1.2 | `FVM_VERSION` in the Flutter CI workflows; Dart pub global package |
+| Flutter SDK | AAswordman/flutter-ohos, 3.41.10-ohos-0.0.2-beta.operit.1 | `apps/flutter/app/.fvmrc`, installed through FVM |
+| FVM | 4.3.0 | `FVM_VERSION` in the Flutter CI workflows; Dart pub global package |
 | Dart SDK | `^3.10.8` | `apps/flutter/app/pubspec.yaml`; supplied by the pinned Flutter SDK |
 | Rust toolchain | 1.95.0 | `RUST_TOOLCHAIN_VERSION` in `.github/workflows/`; rustup |
 | Node.js | 22 | `actions/setup-node` in the CI workflows |
@@ -437,17 +437,19 @@ tools/release/secrets/android-signing.properties
 OpenHarmony builds require the OpenHarmony Flutter SDK maintained at:
 
 ```text
-https://gitcode.com/openharmony-sig/flutter_flutter.git
+https://github.com/AAswordman/flutter-ohos.git
 ```
 
-The Flutter app is pinned to the OpenHarmony `oh-3.41.9-dev` branch in
-`apps/flutter/app/.fvmrc`. Keep this SDK selected for OpenHarmony development;
-the standard Flutter SDK is a different toolchain and does not provide the
-OpenHarmony target.
+All platforms use the pinned Operit fork release **3.41.10-ohos-0.0.2-beta.operit.1** configured in
+`apps/flutter/app/.fvmrc`. FVM installs the tagged source at
+`.fvm/flutter_sdk`. The Windows engine cache uses the same version and downloads
+the Debug, Profile, and Release archives from the matching GitHub Release.
+After checkout, run `fvm install --skip-pub-get` and
+`fvm flutter precache --web --ohos` from `apps/flutter/app`.
 
 The user environment must provide:
 
-- FVM `4.1.2` through the Pub cache `bin` directory on `PATH`.
+- FVM `4.3.0` through the Pub cache `bin` directory on `PATH`.
 - `dart` through a Flutter or Dart SDK `bin` directory on `PATH` so the FVM
   launcher can start.
 - `OHOS_SDK_HOME` pointing to the OpenHarmony SDK root.

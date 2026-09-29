@@ -2,7 +2,6 @@
 
 #include <DispatcherQueue.h>
 #include <shlobj.h>
-#include <windows.graphics.capture.h>
 
 #include <filesystem>
 
@@ -22,44 +21,8 @@ WebviewPlatform::WebviewPlatform()
       return;
     }
 
-    if (!IsGraphicsCaptureSessionSupported()) {
-      util::LogWarning(
-          "Windows::Graphics::Capture::GraphicsCaptureSession is not "
-          "supported.");
-      return;
-    }
-
-    graphics_context_ = std::make_unique<GraphicsContext>(runtime_.get());
-    valid_ = graphics_context_->IsValid();
+    valid_ = true;
   }
-}
-
-bool WebviewPlatform::IsGraphicsCaptureSessionSupported() {
-  HSTRING className;
-  HSTRING_HEADER classNameHeader;
-
-  if (FAILED(runtime_->CreateStringReference(
-          RuntimeClass_Windows_Graphics_Capture_GraphicsCaptureSession,
-          &className, &classNameHeader))) {
-    return false;
-  }
-
-  ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics
-      *capture_session_statics;
-  if (FAILED(runtime_->GetActivationFactory(
-          className,
-          __uuidof(
-              ABI::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics),
-          (void **)&capture_session_statics))) {
-    return false;
-  }
-
-  boolean is_supported = false;
-  if (FAILED(capture_session_statics->IsSupported(&is_supported))) {
-    return false;
-  }
-
-  return !!is_supported;
 }
 
 std::optional<std::wstring> WebviewPlatform::GetDefaultDataDirectory() {

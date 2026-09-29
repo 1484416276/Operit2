@@ -346,7 +346,11 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     if (renderObject is! RenderBox || !renderObject.hasSize) {
       throw StateError('Classic popup target is not laid out.');
     }
-    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final overlayObject = Overlay.maybeOf(context)?.context.findRenderObject();
+    final topLeft = renderObject.localToGlobal(
+      Offset.zero,
+      ancestor: overlayObject is RenderBox ? overlayObject : null,
+    );
     return topLeft & renderObject.size;
   }
 

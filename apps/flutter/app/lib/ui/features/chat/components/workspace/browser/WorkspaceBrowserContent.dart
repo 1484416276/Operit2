@@ -248,9 +248,13 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       return;
     }
     final overlay = Overlay.of(context);
+    final overlayRenderObject = overlay.context.findRenderObject();
     final mediaQuery = MediaQuery.of(context);
     final screenSize = mediaQuery.size;
-    final targetOffset = renderBox.localToGlobal(Offset.zero);
+    final targetOffset = renderBox.localToGlobal(
+      Offset.zero,
+      ancestor: overlayRenderObject is RenderBox ? overlayRenderObject : null,
+    );
     final targetRect = Rect.fromLTWH(
       targetOffset.dx,
       targetOffset.dy,
@@ -502,6 +506,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   void _showPanelPopup(Widget child, {double preferredWidth = 320}) {
     _dismissPanelPopup();
     final overlay = Overlay.of(context);
+    final overlayRenderObject = overlay.context.findRenderObject();
     final mediaQuery = MediaQuery.of(context);
     final screenSize = mediaQuery.size;
     final horizontalPadding = 12.0 + mediaQuery.padding.left;
@@ -510,7 +515,15 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
         _menuButtonKey.currentContext?.findRenderObject() as RenderBox?;
     final targetBottom = renderBox == null || !renderBox.attached
         ? 0.0
-        : renderBox.localToGlobal(Offset.zero).dy + renderBox.size.height;
+        : renderBox
+                  .localToGlobal(
+                    Offset.zero,
+                    ancestor: overlayRenderObject is RenderBox
+                        ? overlayRenderObject
+                        : null,
+                  )
+                  .dy +
+              renderBox.size.height;
     final top = math.max(12.0 + mediaQuery.padding.top, targetBottom + 24);
     final availableWidth = screenSize.width - horizontalPadding - rightPadding;
     final popupWidth = availableWidth < preferredWidth

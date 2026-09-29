@@ -21,6 +21,7 @@ import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../features/startup/PluginLoadingOverlay.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
+import '../main/layout/NavigationLayoutMetrics.dart';
 import 'OperitThemeAssets.dart';
 import 'ThemeCircularRevealHost.dart';
 
@@ -290,12 +291,14 @@ class _OperitMaterialApp extends StatelessWidget {
           ? Duration.zero
           : kThemeAnimationDuration,
       builder: (context, materialChild) {
-        return ThemeCircularRevealHost(
-          child: AnnotatedRegion<SystemUiOverlayStyle>(
-            value: _systemUiOverlayStyle(Theme.of(context).colorScheme),
-            child: _OperitThemeBackground(
-              themePreferenceSnapshot: themePreferenceSnapshot,
-              child: materialChild!,
+        return ResponsiveViewportBox(
+          child: ThemeCircularRevealHost(
+            child: AnnotatedRegion<SystemUiOverlayStyle>(
+              value: _systemUiOverlayStyle(Theme.of(context).colorScheme),
+              child: _OperitThemeBackground(
+                themePreferenceSnapshot: themePreferenceSnapshot,
+                child: materialChild!,
+              ),
             ),
           ),
         );
@@ -921,6 +924,7 @@ ThemeData _themeData(
           );
   return ThemeData(
     colorScheme: colorScheme,
+    visualDensity: VisualDensity.adaptivePlatformDensity,
     scaffoldBackgroundColor: Colors.transparent,
     canvasColor: colorScheme.surface,
     textTheme: textTheme,

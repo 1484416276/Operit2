@@ -18,6 +18,8 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final digits = lines.length.toString().length;
+    final gutterWidth = (digits * 8.0 + 20.0).clamp(36.0, 64.0);
     return SelectionArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -25,6 +27,7 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
           for (var index = 0; index < lines.length; index++)
             _CodeLine(
               lineNumber: index + 1,
+              gutterWidth: gutterWidth,
               text: lines[index],
               span:
                   highlightedLines == null || index >= highlightedLines!.length
@@ -41,35 +44,42 @@ class CanvasMonospaceCodeBlockBody extends StatelessWidget {
 class _CodeLine extends StatelessWidget {
   const _CodeLine({
     required this.lineNumber,
+    required this.gutterWidth,
     required this.text,
     required this.span,
     required this.autoWrapEnabled,
   });
 
   final int lineNumber;
+  final double gutterWidth;
   final String text;
   final InlineSpan? span;
   final bool autoWrapEnabled;
 
   @override
   Widget build(BuildContext context) {
-    final codeText = span == null
-        ? Text(
-            text,
-            softWrap: autoWrapEnabled,
-            style: markdownCodeTextStyle(
-              context,
-              color: const Color(0xFFD4D4D4),
+    final codeStyle = markdownCodeTextStyle(
+      context,
+      color: const Color(0xFFD4D4D4),
+    );
+    final lineNumberStyle = markdownCodeTextStyle(
+      context,
+      color: const Color(0xFF6E7681),
+    )?.copyWith(fontFeatures: const <FontFeature>[FontFeature.tabularFigures()]);
+    final codeText = Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: span == null
+          ? Text(
+              text,
+              softWrap: autoWrapEnabled,
+              style: codeStyle,
+            )
+          : Text.rich(
+              span!,
+              softWrap: autoWrapEnabled,
+              style: codeStyle,
             ),
-          )
-        : Text.rich(
-            span!,
-            softWrap: autoWrapEnabled,
-            style: markdownCodeTextStyle(
-              context,
-              color: const Color(0xFFD4D4D4),
-            ),
-          );
+    );
     final codeTextChild = autoWrapEnabled
         ? Expanded(child: codeText)
         : ConstrainedBox(constraints: const BoxConstraints(), child: codeText);
@@ -79,16 +89,13 @@ class _CodeLine extends StatelessWidget {
       children: <Widget>[
         SelectionContainer.disabled(
           child: SizedBox(
-            width: 40,
+            width: gutterWidth,
             child: Padding(
-              padding: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.only(left: 8, right: 10),
               child: Text(
                 '$lineNumber',
                 textAlign: TextAlign.end,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF858585),
-                  fontFamily: markdownCodeFontFamily,
-                ),
+                style: lineNumberStyle,
               ),
             ),
           ),

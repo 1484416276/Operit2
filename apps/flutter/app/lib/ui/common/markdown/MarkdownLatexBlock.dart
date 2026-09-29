@@ -18,9 +18,8 @@ class MarkdownLatexBlock extends StatelessWidget {
     final latexContent = extractLatexContent(content.trim());
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 2),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      alignment: Alignment.center,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      alignment: Alignment.centerLeft,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Math.tex(

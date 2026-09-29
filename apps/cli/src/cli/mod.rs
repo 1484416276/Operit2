@@ -1841,7 +1841,7 @@ fn print_cli_usage() {
     println!("operit2 cli version");
     print_identity_usage();
     println!("operit2 cli prefs <show|thinking|thinking-quality|stream|media-history|mcp-timeout>");
-    println!("operit2 cli host <show|capabilities|paths>");
+    println!("operit2 cli host <show>");
     println!("operit2 cli storage <paths|migrate>");
     println!("operit2 cli log <show|package|path|clear>");
     println!("operit2 cli local-models <paths|catalog|show|installed|installed-show|install|install-statuses|install-status|install-cancel|verify|delete|engine-delete>");
@@ -1968,12 +1968,6 @@ fn print_prefs_usage() {
     println!("operit2 cli prefs stream <on|off>");
     println!("operit2 cli prefs media-history <image-user-turns> <media-user-turns>");
     println!("operit2 cli prefs mcp-timeout <seconds>");
-}
-
-fn print_host_usage() {
-    println!("operit2 cli host show");
-    println!("operit2 cli host capabilities");
-    println!("operit2 cli host paths");
 }
 
 fn print_memory_usage() {

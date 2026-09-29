@@ -1,7 +1,8 @@
 use super::*;
 
 use operit_host_api::{HostError, RuntimeStorageEntry};
-use operit_util::RuntimeStorageLayout::RUNTIME_SPACE_TOPOLOGY_DIR_PATH;
+use operit_store::SyncOperationStore::SyncOperationStore;
+use operit_util::RuntimeStorageLayout::{RUNTIME_SPACE_TOPOLOGY_DIR_PATH, RUNTIME_SYNC_DIR_PATH};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -142,6 +143,67 @@ fn space_adopt_envelope_carries_joined_device_profiles() {
 
     assert!(profiles.iter().any(|profile| profile.nodeId == "node-a"));
     assert!(profiles.iter().any(|profile| profile == &peerProfile));
+}
+
+/// Verifies a newly joined device receives the admission command that grants chat.read.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn space_join_returns_the_admission_that_grants_chat_read() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(storage.clone())
+        .writeNodeId("node-a".to_string())
+        .expect("server CoreNode identity must be written");
+    let spaceStore = CoreSpaceStore::new(storage.clone());
+    spaceStore
+        .writeLocalDeviceProfile(
+            "Local".to_string(),
+            "test".to_string(),
+            "local".to_string(),
+            "test-core".to_string(),
+        )
+        .expect("server device profile must be written");
+    NetworkControlStore::new(storage.clone())
+        .expect("server control store must initialize")
+        .bootstrapCurrentSpace()
+        .expect("server Space must bootstrap");
+    let currentSpace = spaceStore.initialize().expect("server Space must initialize");
+    let proposal = CoreSpace {
+        spaceId: currentSpace.spaceId.clone(),
+        spaceName: currentSpace.spaceName.clone(),
+        spaceRevision: currentSpace.spaceRevision + 1,
+        members: vec!["node-a".to_string(), "node-b".to_string()],
+    };
+
+    let accepted = acceptAuthenticatedSpaceJoin(
+        storage.clone(),
+        "node-b",
+        RemoteSpaceAdoptEnvelope {
+            space: proposal,
+            deviceProfiles: Vec::new(),
+        },
+    )
+    .expect("authenticated join must be accepted");
+    let controlOperations = accepted.controlOperations;
+
+    let joinerStorage = Arc::new(MemoryStorageHost::default());
+    CoreNodeIdentityStore::new(joinerStorage.clone())
+        .writeNodeId("node-b".to_string())
+        .expect("joiner CoreNode identity must be written");
+    CoreSpaceStore::new(joinerStorage.clone())
+        .adopt(accepted.space.clone())
+        .expect("joiner must adopt the accepted Space");
+    let joinerOperations = SyncOperationStore::new(joinerStorage.clone(), RUNTIME_SYNC_DIR_PATH);
+    for operation in controlOperations {
+        joinerOperations
+            .appendOperation(&operation)
+            .expect("joiner must persist the Space control command");
+    }
+    let joinerControl = NetworkControlStore::new(joinerStorage)
+        .expect("joiner control store must initialize");
+
+    assert!(joinerControl
+        .nodeHasCapability("node-b", "chat.read", None)
+        .expect("joined capability query must succeed"));
 }
 
 /// Verifies inbound pair completion writes the paired endpoint profile.

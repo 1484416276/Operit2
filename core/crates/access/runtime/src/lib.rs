@@ -64,6 +64,7 @@ use operit_runtime::services::RuntimeHostInteractionService::{
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
+use operit_store::SyncOperationStore::SyncOperation;
 use operit_store::PreferencesDataStore::{
     emptyPreferences, stringPreferencesKey, CoreNodeStateStore, Flow, Preferences,
     PreferencesDataStoreError,
@@ -1364,6 +1365,14 @@ pub struct RemoteSpaceAdoptEnvelope {
     pub deviceProfiles: Vec<CoreSpaceDeviceProfile>,
 }
 
+/// Returns the joined Space together with the control commands that establish its policy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoteSpaceAdoptResult {
+    pub space: CoreSpace,
+    #[serde(default)]
+    pub controlOperations: Vec<SyncOperation>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteSessionInfoResponse {
     pub protocolVersion: i32,
@@ -2059,7 +2068,7 @@ impl PairedRemoteSession {
         &self,
         space: CoreSpace,
         deviceProfiles: Vec<CoreSpaceDeviceProfile>,
-    ) -> Result<CoreSpace, String> {
+    ) -> Result<RemoteSpaceAdoptResult, String> {
         let body = operit_link::encodeLink(&RemoteSpaceAdoptEnvelope {
             space,
             deviceProfiles,
@@ -2896,7 +2905,7 @@ async fn static_web_access_space_adopt(
         &verified.deviceId,
         envelope,
     ) {
-        Ok(space) => encode_link_response(StatusCode::OK, space),
+        Ok(result) => encode_link_response(StatusCode::OK, result),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
 }
@@ -2926,7 +2935,7 @@ async fn space_adopt(
         &verified.deviceId,
         envelope,
     ) {
-        Ok(space) => encode_link_response(StatusCode::OK, space),
+        Ok(result) => encode_link_response(StatusCode::OK, result),
         Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
     }
 }
@@ -2937,7 +2946,7 @@ fn acceptAuthenticatedSpaceJoin(
     storage: Arc<dyn RuntimeStorageHost>,
     joiningNodeId: &str,
     envelope: RemoteSpaceAdoptEnvelope,
-) -> Result<CoreSpace, String> {
+) -> Result<RemoteSpaceAdoptResult, String> {
     let spaceStore = CoreSpaceStore::new(storage.clone());
     let currentSpace = spaceStore.initialize()?;
     let joiningExistingMember = currentSpace
@@ -2981,9 +2990,16 @@ fn acceptAuthenticatedSpaceJoin(
     {
         return Err("new Space member must advance the Space revision exactly once".to_string());
     }
-    NetworkControlStore::new(storage.clone())?.admitMember(joiningNodeId.to_string())?;
+    let control = NetworkControlStore::new(storage.clone())?;
+    if !joiningExistingMember {
+        control.admitMember(joiningNodeId.to_string())?;
+    }
+    let controlOperations = control.currentSpaceOperations()?;
     spaceStore.importDeviceProfiles(envelope.deviceProfiles)?;
-    spaceStore.adopt(envelope.space)
+    Ok(RemoteSpaceAdoptResult {
+        space: spaceStore.adopt(envelope.space)?,
+        controlOperations,
+    })
 }
 
 /// Verifies one session request against the pairing-only control state.

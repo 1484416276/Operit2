@@ -3,6 +3,8 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
+#include <algorithm>
+
 #include "resource.h"
 
 namespace {
@@ -134,10 +136,30 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(MONITORINFO);
+  int window_x = Scale(origin.x, scale_factor);
+  int window_y = Scale(origin.y, scale_factor);
+  int window_width = Scale(size.width, scale_factor);
+  int window_height = Scale(size.height, scale_factor);
+  if (GetMonitorInfo(monitor, &monitor_info)) {
+    const int work_width =
+        monitor_info.rcWork.right - monitor_info.rcWork.left;
+    const int work_height =
+        monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+    window_width =
+        std::min(window_width, static_cast<int>(work_width * 0.9));
+    window_height =
+        std::min(window_height, static_cast<int>(work_height * 0.9));
+    window_x = monitor_info.rcWork.left +
+               std::max(0, (work_width - window_width) / 2);
+    window_y = monitor_info.rcWork.top +
+               std::max(0, (work_height - window_height) / 2);
+  }
+
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      window_x, window_y, window_width, window_height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
@@ -186,6 +208,17 @@ Win32Window::MessageHandler(HWND hwnd,
         PostQuitMessage(0);
       }
       return 0;
+
+    case WM_GETMINMAXINFO: {
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      HMONITOR monitor =
+          MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+      double scale_factor = (dpi > 0 ? dpi : 96) / 96.0;
+      info->ptMinTrackSize.x = Scale(560, scale_factor);
+      info->ptMinTrackSize.y = Scale(420, scale_factor);
+      return 0;
+    }
 
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);

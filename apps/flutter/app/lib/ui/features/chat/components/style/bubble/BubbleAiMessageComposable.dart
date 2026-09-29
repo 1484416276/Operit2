@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../common/CharacterAvatar.dart';
+import '../../../../../common/markdown/MarkdownImageRenderer.dart';
+import '../../../../../common/markdown/MarkdownRemoteImage.dart';
 import '../../../../../common/markdown/MarkdownNodeGrouper.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../../../common/markdown/StreamMarkdownRendererState.dart';
@@ -588,16 +590,29 @@ class _AiImageOnlyBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uri = Uri.parse(imageUrl);
-    final image = switch (uri.scheme) {
-      'http' || 'https' => Image.network(imageUrl, fit: BoxFit.contain),
-      'file' => Image.file(File(uri.toFilePath()), fit: BoxFit.contain),
-      _ => Image.file(File(imageUrl), fit: BoxFit.contain),
-    };
+    final uri = Uri.tryParse(imageUrl);
+    final Widget image;
+    if (uri == null) {
+      image = const Icon(Icons.broken_image_outlined);
+    } else {
+      image = switch (uri.scheme) {
+        'http' || 'https' || 'data' => MarkdownRemoteImage(
+          url: imageUrl,
+          fit: BoxFit.contain,
+        ),
+        'file' => Image.file(
+          File(uri.toFilePath()),
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) =>
+              const Icon(Icons.broken_image_outlined),
+        ),
+        _ => const Icon(Icons.broken_image_outlined),
+      };
+    }
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 80),
+        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 320),
         child: image,
       ),
     );
@@ -705,9 +720,15 @@ String _normalDisplayText(
 }
 
 String? _singleMarkdownImageUrl(ChatUiMessage message) {
-  return RegExp(
-    r'^\s*!\[[^\]]*\]\(([^)]+)\)\s*$',
-  ).firstMatch(message.displayText)?.group(1);
+  final text = message.displayText.trim();
+  if (!isCompleteImageMarkdown(text)) {
+    return null;
+  }
+  final url = extractMarkdownImageUrl(text);
+  if (url.isEmpty) {
+    return null;
+  }
+  return url;
 }
 
 bool _shouldUseExpandedBubbleLayout(StreamMarkdownRendererState state) {

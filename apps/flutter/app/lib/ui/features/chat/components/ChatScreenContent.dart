@@ -254,26 +254,32 @@ class ChatScreenContent extends StatelessWidget {
                 ),
               ),
               if (!isPreparingChatSwitch && toolPermissionRequests.isNotEmpty)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: themePreferenceSnapshot.bubbleWideLayoutEnabled
-                          ? chatWideContentMaxWidth
-                          : chatContentMaxWidth,
-                    ),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: themePreferenceSnapshot.chatInputFloating
-                            ? 8
-                            : 0,
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final maxWidth = resolveChatColumnMaxWidth(
+                      constraints.maxWidth,
+                      wideLayoutEnabled:
+                          themePreferenceSnapshot.bubbleWideLayoutEnabled,
+                    );
+                    return Align(
+                      alignment: Alignment.bottomCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: maxWidth),
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal:
+                                themePreferenceSnapshot.chatInputFloating
+                                ? 8
+                                : 0,
+                          ),
+                          child: ChatToolPermissionPanel(
+                            request: toolPermissionRequests.first,
+                            onRespond: onToolPermissionDecision,
+                          ),
+                        ),
                       ),
-                      child: ChatToolPermissionPanel(
-                        request: toolPermissionRequests.first,
-                        onRespond: onToolPermissionDecision,
-                      ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               // Keep the input subtree mounted during chat switches: tearing
               // it down deactivates tooltip states whose global pointer
@@ -307,7 +313,22 @@ class ChatScreenContent extends StatelessWidget {
                               ? null
                               : () => _confirmDeleteSelected(context),
                         )
-                      : _buildChatInputSection(inputStyle),
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final maxWidth = resolveChatColumnMaxWidth(
+                              constraints.maxWidth,
+                              wideLayoutEnabled: themePreferenceSnapshot
+                                  .bubbleWideLayoutEnabled,
+                            );
+                            return Align(
+                              alignment: Alignment.bottomCenter,
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(maxWidth: maxWidth),
+                                child: _buildChatInputSection(inputStyle),
+                              ),
+                            );
+                          },
+                        ),
                 ),
               ),
             ],
@@ -485,20 +506,24 @@ class ChatScreenContent extends StatelessWidget {
     required String status,
     required TextStyle? textStyle,
   }) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: snapshot.bubbleWideLayoutEnabled
-              ? chatWideContentMaxWidth
-              : chatContentMaxWidth,
-        ),
-        child: InputProcessingStatusLane(
-          visible: visible,
-          status: status,
-          textStyle: textStyle,
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = resolveChatColumnMaxWidth(
+          constraints.maxWidth,
+          wideLayoutEnabled: snapshot.bubbleWideLayoutEnabled,
+        );
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: InputProcessingStatusLane(
+              visible: visible,
+              status: status,
+              textStyle: textStyle,
+            ),
+          ),
+        );
+      },
     );
   }
 

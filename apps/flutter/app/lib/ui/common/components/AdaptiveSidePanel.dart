@@ -45,8 +45,6 @@ class AdaptiveSidePanel extends StatefulWidget {
 
 class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   double? _panelWidth;
-  double? _dragStartGlobalX;
-  double? _dragStartWidth;
   bool _resizing = false;
 
   /// Builds the responsive side-panel layout from the available constraints.
@@ -54,7 +52,11 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final useWideLayout = constraints.maxWidth >= widget.breakpoint;
+        final minRequiredWidth = math.min(
+          widget.breakpoint,
+          widget.minWidth + widget.minContentWidth,
+        );
+        final useWideLayout = constraints.maxWidth >= minRequiredWidth;
         final maximumPanelWidth = useWideLayout
             ? math.max(0.0, constraints.maxWidth - widget.minContentWidth)
             : constraints.maxWidth;
@@ -123,12 +125,12 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
                   child: _AdaptiveSidePanelResizeHandle(
                     visualWidth: widget.resizeHandleVisualWidth,
                     height: widget.resizeHandleHeight,
-                    onDragStart: (details) {
-                      _startResize(details.globalPosition.dx, width);
+                    onDragStart: (_) {
+                      _startResize(width);
                     },
                     onDragUpdate: (details) {
-                      _updateWidthFromGlobalX(
-                        details.globalPosition.dx,
+                      _updateWidthFromDelta(
+                        -details.delta.dx,
                         minimum,
                         maximum,
                       );
@@ -179,26 +181,17 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   }
 
   /// Starts one drag-resize interaction from the current panel width.
-  void _startResize(double globalX, double width) {
+  void _startResize(double width) {
     setState(() {
       _resizing = true;
-      _dragStartGlobalX = globalX;
-      _dragStartWidth = width;
+      _panelWidth = width;
     });
   }
 
-  /// Applies a width derived from the active drag position.
-  void _updateWidthFromGlobalX(double globalX, double minimum, double maximum) {
-    final dragStartGlobalX = _dragStartGlobalX;
-    final dragStartWidth = _dragStartWidth;
-    if (dragStartGlobalX == null || dragStartWidth == null) {
-      return;
-    }
-    _updateWidth(
-      dragStartWidth - (globalX - dragStartGlobalX),
-      minimum,
-      maximum,
-    );
+  /// Applies a width delta in local coordinates while a drag-resize interaction is active.
+  void _updateWidthFromDelta(double delta, double minimum, double maximum) {
+    final current = _panelWidth ?? widget.defaultWidth;
+    _updateWidth(current + delta, minimum, maximum);
   }
 
   /// Stores a clamped panel width while a drag-resize interaction is active.
@@ -215,8 +208,6 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
     }
     setState(() {
       _resizing = false;
-      _dragStartGlobalX = null;
-      _dragStartWidth = null;
     });
   }
 

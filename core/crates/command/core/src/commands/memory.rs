@@ -49,7 +49,7 @@ fn run_character_memory_command(
     }
     let characterId = args[0].clone();
     CharacterCardManager::getInstance()
-        .getCharacterCard(&characterId)
+        .getExistingCharacterCard(&characterId)
         .map_err(|error| error.to_string())?;
     let ownerKey = characterMemoryOwnerKey(&characterId)?;
     match args[1].as_str() {
@@ -162,7 +162,7 @@ fn run_mount_command(args: &[String], output: &mut CoreCommandOutput) -> Result<
     let writable = parse_named_bool(args, "--write")?;
     let manager = CharacterCardManager::getInstance();
     let mut card = manager
-        .getCharacterCard(&characterId)
+        .getExistingCharacterCard(&characterId)
         .map_err(|error| error.to_string())?;
     card.sharedMemoryMounts
         .retain(|mount| mount.sharedMemoryId != sharedId);
@@ -197,7 +197,7 @@ fn run_unmount_command(args: &[String], output: &mut CoreCommandOutput) -> Resul
     let sharedId = args[1].clone();
     let manager = CharacterCardManager::getInstance();
     let mut card = manager
-        .getCharacterCard(&characterId)
+        .getExistingCharacterCard(&characterId)
         .map_err(|error| error.to_string())?;
     let originalLen = card.sharedMemoryMounts.len();
     card.sharedMemoryMounts

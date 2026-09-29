@@ -83,7 +83,7 @@ pub fn run_character_command(
                 .ok_or_else(|| "usage: operit2 character show <id>".to_string())?;
             let card = command
                 .preferences_character_card_manager()
-                .getCharacterCard(id)
+                .getExistingCharacterCard(id)
                 .map_err(|error| error.to_string())?;
             print_character_card(&card, output);
             output.setJsonStdout(serde_json::to_value(&card).map_err(|error| error.to_string())?);
@@ -144,7 +144,7 @@ pub fn run_character_command(
                 .clone();
             let mut card = command
                 .preferences_character_card_manager()
-                .getCharacterCard(id)
+                .getExistingCharacterCard(id)
                 .map_err(|error| error.to_string())?;
             match field.as_str() {
                 "name" => card.name = value.clone(),

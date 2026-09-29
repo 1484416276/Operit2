@@ -1,25 +1,18 @@
 # Operit2 Flutter app
 
-This app is pinned to Flutter **3.41.9** (Dart **3.11.5**) through `.fvmrc`.
+All platforms use [AAswordman/flutter-ohos](https://github.com/AAswordman/flutter-ohos)
+release **3.41.10-ohos-0.0.2-beta.operit.1**, pinned in `.fvmrc`. The release source and its Windows
+engine archives share this version. FVM installs the fork at `.fvm/flutter_sdk`.
 
-The SDK is installed side-by-side with the existing machine-wide Flutter SDK, so
-other projects continue using their current version. The project helper resolves
-an FVM SDK when present, or the side-by-side SDK installed at
-`D:\ruanjiankaifa\flutterSDK\flutter-3.41.9`.
-
-```powershell
-# From apps/flutter/app
-.\tool\flutter.ps1 pub get
-.\tool\flutter.ps1 analyze
-.\tool\flutter.ps1 run
-```
-
-To use another location without changing the global Flutter installation:
+Run Flutter and Dart commands through FVM from `apps/flutter/app`:
 
 ```powershell
-$env:OPERIT2_FLUTTER_SDK = 'D:\path\to\flutter-3.41.9'
-.\tool\flutter.ps1 --version
+fvm install --skip-pub-get
+fvm flutter precache --web --ohos
+fvm flutter pub get
+fvm flutter analyze
+fvm flutter run
 ```
 
-If the app is launched from an IDE, configure that IDE's Flutter SDK path to the
-same `flutter-3.41.9` directory.
+Configure the IDE Flutter SDK path to `.fvm/flutter_sdk`.
+The build scripts use this same SDK for every platform, including OpenHarmony.

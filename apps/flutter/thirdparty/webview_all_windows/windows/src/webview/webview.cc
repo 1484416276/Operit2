@@ -1,6 +1,8 @@
 #include "webview/webview.h"
 
 #include <wrl.h>
+#include <wincodec.h>
+#include <shlwapi.h>
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +13,6 @@
 #include <utility>
 #include <vector>
 
-#include "util/composition.desktop.interop.h"
 #include "util/logging.h"
 #include "util/string_converter.h"
 #include "webview/webview_host.h"
@@ -224,60 +225,80 @@ Webview::Webview(
   EnableSecurityUpdates();
   RegisterEventHandlers();
 
-  is_valid_ = CreateSurface(host->compositor(), hwnd, offscreen_only);
+  is_valid_ = true;
 }
 
+// Closes the browser controller before destroying its native parent.
 Webview::~Webview() {
+  if (webview_controller_) webview_controller_->Close();
   if (owns_window_) {
     DestroyWindow(hwnd_);
   }
 }
 
-bool Webview::CreateSurface(
-    winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor,
-    HWND hwnd, bool offscreen_only) {
-  winrt::com_ptr<ABI::Windows::UI::Composition::IContainerVisual> root;
-  if (FAILED(compositor->CreateContainerVisual(root.put()))) {
-    return false;
+// Assigns the engine-owned composition visual directly to the browser controller.
+bool Webview::AttachVisual(IUnknown* visual) {
+  return SUCCEEDED(composition_controller_->put_RootVisualTarget(visual));
+}
+
+// Shows or hides native browser content without suspending page state.
+void Webview::SetVisible(bool visible) {
+  webview_controller_->put_IsVisible(visible);
+}
+
+// Gives native IME support to the browser only while Flutter grants focus.
+bool Webview::SetNativeFocus(bool focused) {
+  if (focused) {
+    return SUCCEEDED(webview_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC));
   }
-
-  surface_ = root.try_as<ABI::Windows::UI::Composition::IVisual>();
-  assert(surface_);
-
-  // initial size. doesn't matter as we resize the surface anyway.
-  surface_->put_Size({1280, 720});
-  surface_->put_IsVisible(true);
-
-  // Create on-screen window for debugging purposes
-  if (!offscreen_only) {
-    window_target_ = util::TryCreateDesktopWindowTarget(compositor, hwnd);
-    auto composition_target =
-        window_target_
-            .try_as<ABI::Windows::UI::Composition::ICompositionTarget>();
-    if (composition_target) {
-      composition_target->put_Root(surface_.get());
-    }
-  }
-
-  winrt::com_ptr<ABI::Windows::UI::Composition::IVisual> webview_visual;
-  compositor->CreateContainerVisual(
-      reinterpret_cast<ABI::Windows::UI::Composition::IContainerVisual **>(
-          webview_visual.put()));
-
-  auto webview_visual2 =
-      webview_visual.try_as<ABI::Windows::UI::Composition::IVisual2>();
-  if (webview_visual2) {
-    webview_visual2->put_RelativeSizeAdjustment({1.0f, 1.0f});
-  }
-
-  winrt::com_ptr<ABI::Windows::UI::Composition::IVisualCollection> children;
-  root->get_Children(children.put());
-  children->InsertAtTop(webview_visual.get());
-  composition_controller_->put_RootVisualTarget(webview_visual2.get());
-
-  webview_controller_->put_IsVisible(true);
-
+  const HWND current = GetFocus();
+  if (has_native_focus_ && current != hwnd_ && IsChild(hwnd_, current)) SetFocus(hwnd_);
   return true;
+}
+
+// Uses the browser's on-demand preview API instead of a continuous capture session.
+void Webview::CaptureSurfaceFrame(
+    std::function<void(bool, const std::vector<uint8_t>&, size_t, size_t)> result) {
+  ComPtr<IStream> stream;
+  if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) {
+    result(false, {}, 0, 0);
+    return;
+  }
+  auto callback = Callback<ICoreWebView2CapturePreviewCompletedHandler>(
+      [stream, result](HRESULT error) -> HRESULT {
+        ComPtr<IWICImagingFactory> factory;
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<IWICFormatConverter> converter;
+        LARGE_INTEGER start = {};
+        UINT width = 0, height = 0;
+        if (FAILED(error) || FAILED(stream->Seek(start, STREAM_SEEK_SET, nullptr)) ||
+            FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(&factory))) ||
+            FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+                        WICDecodeMetadataCacheOnLoad, &decoder)) ||
+            FAILED(decoder->GetFrame(0, &frame)) ||
+            FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0 ||
+            width > UINT_MAX / 4 || height > UINT_MAX / (width * 4) ||
+            FAILED(factory->CreateFormatConverter(&converter)) ||
+            FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) {
+          result(false, {}, 0, 0);
+          return S_OK;
+        }
+        std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4);
+        if (FAILED(converter->CopyPixels(nullptr, width * 4,
+                  static_cast<UINT>(pixels.size()), pixels.data()))) {
+          result(false, {}, 0, 0);
+          return S_OK;
+        }
+        result(true, pixels, width, height);
+        return S_OK;
+      });
+  if (FAILED(webview_->CapturePreview(COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                                       stream.Get(), callback.Get()))) {
+    result(false, {}, 0, 0);
+  }
 }
 
 void Webview::EnableSecurityUpdates() {
@@ -484,6 +505,7 @@ void Webview::RegisterEventHandlers() {
   webview_controller_->add_GotFocus(
       Callback<ICoreWebView2FocusChangedEventHandler>(
           [this](ICoreWebView2Controller *sender, IUnknown *args) -> HRESULT {
+            has_native_focus_ = true;
             if (focus_changed_callback_) {
               focus_changed_callback_(true);
             }
@@ -495,6 +517,7 @@ void Webview::RegisterEventHandlers() {
   webview_controller_->add_LostFocus(
       Callback<ICoreWebView2FocusChangedEventHandler>(
           [this](ICoreWebView2Controller *sender, IUnknown *args) -> HRESULT {
+            has_native_focus_ = false;
             if (focus_changed_callback_) {
               focus_changed_callback_(false);
             }
@@ -830,7 +853,7 @@ void Webview::SetSurfaceSize(size_t width, size_t height, float scale_factor) {
     return;
   }
 
-  if (surface_ && width > 0 && height > 0) {
+  if (width > 0 && height > 0) {
     scale_factor_ = scale_factor;
     surface_width_ = width;
     surface_height_ = height;
@@ -843,7 +866,6 @@ void Webview::SetSurfaceSize(size_t width, size_t height, float scale_factor) {
     bounds.right = static_cast<LONG>(scaled_width);
     bounds.bottom = static_cast<LONG>(scaled_height);
 
-    surface_->put_Size({scaled_width, scaled_height});
     webview_controller_->put_RasterizationScale(scale_factor);
     if (webview_controller_->put_Bounds(bounds) != S_OK) {
       util::LogWarning("Setting webview bounds failed.");

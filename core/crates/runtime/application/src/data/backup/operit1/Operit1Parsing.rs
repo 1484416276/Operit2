@@ -12,15 +12,6 @@ fn epochMillisToLocalDateTimeString(value: i64) -> Result<String, String> {
 }
 
 #[allow(non_snake_case)]
-fn epochMillisToLocalDateString(value: i64) -> Result<String, String> {
-    let datetime = chrono::Local
-        .timestamp_millis_opt(value)
-        .single()
-        .ok_or_else(|| format!("Operit1 用户偏好日期无效：{value}"))?;
-    Ok(datetime.naive_local().format("%Y-%m-%d").to_string())
-}
-
-#[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
 }

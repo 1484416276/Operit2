@@ -243,6 +243,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           MarkdownImageRenderer(
             imageMarkdown: widget.text.trim(),
             textColor: widget.textColor,
+            onOpenLink: widget.onLinkClick,
           ),
         );
       case MarkdownNodeType.blockLatex:
@@ -431,6 +432,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           MarkdownImageRenderer(
             imageMarkdown: trimmed.trim(),
             textColor: widget.textColor,
+            onOpenLink: widget.onLinkClick,
           ),
         );
       } else if (_isHorizontalRule(trimmed)) {
@@ -773,7 +775,7 @@ class _MarkdownParagraph extends StatelessWidget {
   }
 }
 
-class _TypewriterMarkdownRichText extends StatelessWidget {
+class _TypewriterMarkdownRichText extends StatefulWidget {
   const _TypewriterMarkdownRichText({
     super.key,
     required this.text,
@@ -794,28 +796,50 @@ class _TypewriterMarkdownRichText extends StatelessWidget {
   final void Function(String url)? onLinkClick;
 
   @override
+  State<_TypewriterMarkdownRichText> createState() =>
+      _TypewriterMarkdownRichTextState();
+}
+
+class _TypewriterMarkdownRichTextState
+    extends State<_TypewriterMarkdownRichText> {
+  final MarkdownLinkGestureOwner _gestures = MarkdownLinkGestureOwner();
+
+  @override
+  void dispose() {
+    _gestures.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final span = buildMarkdownInlineSpannableFromText(
-      context: context,
-      text: text,
-      textColor: color,
-      baseStyle: style,
-      onLinkClick: onLinkClick,
-    );
-    final richSpan = children.isNotEmpty
-        ? buildMarkdownInlineSpannableFromMarkdownNodes(
-            context: context,
-            children: children,
-            textColor: color,
-            baseStyle: style,
-            onLinkClick: onLinkClick,
-          )
-        : span;
+    _gestures.beginFrame();
+    late final InlineSpan richSpan;
+    try {
+      richSpan = widget.children.isNotEmpty
+          ? buildMarkdownInlineSpannableFromMarkdownNodes(
+              context: context,
+              children: widget.children,
+              textColor: widget.color,
+              baseStyle: widget.style,
+              onLinkClick: widget.onLinkClick,
+              gestures: _gestures,
+            )
+          : buildMarkdownInlineSpannableFromText(
+              context: context,
+              text: widget.text,
+              textColor: widget.color,
+              baseStyle: widget.style,
+              onLinkClick: widget.onLinkClick,
+              gestures: _gestures,
+            );
+    } finally {
+      _gestures.endFrame();
+    }
     final revealSpan = _revealedTypewriterSpan(
       source: richSpan,
-      revealLength: revealLength,
-      showCursor: showCursor,
-      baseStyle: style,
+      revealLength: widget.revealLength,
+      showCursor: widget.showCursor,
+      baseStyle: widget.style,
     );
     final pressShield = MessagePressShield.maybeOf(context);
 
@@ -832,12 +856,16 @@ class _TypewriterMarkdownRichText extends StatelessWidget {
             textDirection: Directionality.of(context),
             textScaler: MediaQuery.textScalerOf(context),
           )..layout(maxWidth: maxWidth);
-          if (_isInteractiveSpanHit(
-            span: revealSpan,
-            painter: painter,
-            position: event.localPosition,
-          )) {
-            pressShield.shieldPointer(event.pointer);
+          try {
+            if (_isInteractiveSpanHit(
+              span: revealSpan,
+              painter: painter,
+              position: event.localPosition,
+            )) {
+              pressShield.shieldPointer(event.pointer);
+            }
+          } finally {
+            painter.dispose();
           }
         },
         onPointerUp: (event) => pressShield.unshieldPointer(event.pointer),
@@ -848,7 +876,7 @@ class _TypewriterMarkdownRichText extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) => wrapWithInteractiveShield(
-        Text.rich(revealSpan, style: style),
+        Text.rich(revealSpan, style: widget.style),
         constraints.maxWidth,
       ),
     );

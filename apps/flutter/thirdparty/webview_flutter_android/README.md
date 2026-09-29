@@ -13,28 +13,23 @@ should add it to your `pubspec.yaml` as usual.
 
 ## Display Mode
 
-This plugin supports two different platform view display modes. The default display mode is subject
-to change in the future, and will not be considered a breaking change, so if you want to ensure a
-specific mode, you can set it explicitly.
+This Operit fork defaults to **Hybrid Composition** for `WebViewWidget`,
+including widgets created through generic platform parameters. Web fullscreen
+custom views (including fullscreen video) also use Hybrid Composition.
 
-### Texture Layer Hybrid Composition
+The Android WebView is embedded as a native view. Flutter's Android platform-view
+compositor handles Flutter layers above it, including modal barriers and dialogs.
+The app does not need platform checks or Android-specific widget parameters.
 
-This is the current default mode, and is the display mode used by most
-plugins starting with Flutter 3.0. This is more performant than Hybrid Composition, but has some
-limitations from using an Android [SurfaceTexture](https://developer.android.com/reference/android/graphics/SurfaceTexture).
-See:
-* https://github.com/flutter/flutter/issues/104889
-* https://github.com/flutter/flutter/issues/116954
+Hybrid Composition has its own rendering and platform-thread costs. Validate
+scrolling, video playback, translucent dialogs, keyboard focus, and device scaling
+on Android hardware; choosing this mode is not a performance benchmark.
 
-### Hybrid Composition
-
-This ensures that the WebView will display and work as expected in the edge cases noted above, at
-the cost of some performance. See:
-* https://docs.flutter.dev/platform-integration/android/platform-views#performance
-
-This can be configured with
-`AndroidWebViewWidgetCreationParams.displayWithHybridComposition`. See https://pub.dev/packages/webview_flutter#platform-specific-features
-for more details on setting platform-specific features in the main plugin.
+The existing `AndroidWebViewWidgetCreationParams.displayWithHybridComposition`
+option remains available. An explicit `false` requests Texture Layer Hybrid
+Composition; the application's standard creation path defaults to `true`.
+Legacy APIs under `src/legacy` retain their existing behavior and are not used by
+the application's `WebViewWidget` path.
 
 ## External Native API
 

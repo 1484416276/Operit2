@@ -9,9 +9,7 @@
 #include <vector>
 
 #include "platform/webview_platform.h"
-#include "rendering/graphics_context.h"
 #include "webview/webview.h"
-#include <windows.ui.composition.h>
 
 namespace webview_all_windows {
 
@@ -40,11 +38,12 @@ public:
                              std::unique_ptr<WebviewCreationError>)>
       PointerInfoCreationCallback;
 
-  static std::unique_ptr<WebviewHost>
-  Create(WebviewPlatform *platform,
-         std::optional<std::wstring> user_data_directory = std::nullopt,
-         std::optional<std::wstring> browser_exe_path = std::nullopt,
-         std::optional<std::string> arguments = std::nullopt);
+  /// Creates the environment asynchronously on the browser STA thread.
+  static void Create(
+      std::optional<std::wstring> user_data_directory,
+      std::optional<std::wstring> browser_exe_path,
+      std::optional<std::string> arguments,
+      std::function<void(std::shared_ptr<WebviewHost>, HRESULT)> callback);
 
   void CreateWebview(HWND hwnd, bool offscreen_only, bool owns_window,
                      WebviewCreationCallback callback);
@@ -56,17 +55,10 @@ public:
                            const std::string &headers,
                            const std::vector<uint8_t> *body);
 
-  winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor>
-  compositor() const {
-    return compositor_;
-  }
-
 private:
-  winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor_;
   wil::com_ptr<ICoreWebView2Environment3> webview_env_;
 
-  WebviewHost(WebviewPlatform *platform,
-              wil::com_ptr<ICoreWebView2Environment3> webview_env);
+  explicit WebviewHost(wil::com_ptr<ICoreWebView2Environment3> webview_env);
   void
   CreateWebViewCompositionController(HWND hwnd,
                                      CompositionControllerCreationCallback cb);

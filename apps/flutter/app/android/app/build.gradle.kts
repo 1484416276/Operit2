@@ -38,6 +38,11 @@ fun requestedFlutterTargetPlatforms(): Set<String> {
 fun selectedOperitRustTargets(targets: List<OperitRustTarget>): List<OperitRustTarget> {
     val requestedPlatforms = requestedFlutterTargetPlatforms()
     val selectedTargets = targets.filter { requestedPlatforms.contains(it.flutterPlatform) }
+    val selectedPlatforms = selectedTargets.map { it.flutterPlatform }.toSet()
+    val unsupportedPlatforms = requestedPlatforms.subtract(selectedPlatforms)
+    if (unsupportedPlatforms.isNotEmpty()) {
+        throw GradleException("Unsupported Android Rust target-platform values: $unsupportedPlatforms")
+    }
     if (selectedTargets.isEmpty()) {
         throw GradleException("No supported Android Rust targets selected for target-platform=$requestedPlatforms")
     }

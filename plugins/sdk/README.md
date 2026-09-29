@@ -72,3 +72,7 @@ Operit must have been opened once to configure local storage and register deskto
 activation. Android activation must originate while the integrating app is
 visible, in accordance with Android Activity-launch rules. Apple retains its
 existing host transport; automatic Apple activation is not implemented here.
+
+## Examples
+
+- [`examples/vite-typescript`](examples/vite-typescript) is a small Vite app that keeps the browser UI in Vite while its server route calls the generated TypeScript SDK and displays the live ToolPkg catalog.

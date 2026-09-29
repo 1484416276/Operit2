@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 
 import 'MarkdownCodeTypeface.dart';
 import 'MarkdownLatexBlock.dart';
+import 'MarkdownLink.dart';
 import 'MarkdownNodeGrouper.dart';
 
 class MarkdownInlineSegment {
@@ -25,6 +26,7 @@ TextSpan buildMarkdownInlineSpannableFromChildren({
   required BuildContext context,
   required List<MarkdownInlineSegment> children,
   required Color textColor,
+  required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   void Function(String url)? onLinkClick,
 }) {
@@ -37,6 +39,7 @@ TextSpan buildMarkdownInlineSpannableFromChildren({
           textColor: textColor,
           baseStyle: baseStyle,
           onLinkClick: onLinkClick,
+          gestures: gestures,
         ),
     ],
   );
@@ -46,6 +49,7 @@ InlineSpan markdownInlineSpan({
   required BuildContext context,
   required MarkdownInlineSegment segment,
   required Color textColor,
+  required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   void Function(String url)? onLinkClick,
 }) {
@@ -55,6 +59,7 @@ InlineSpan markdownInlineSpan({
     textColor: textColor,
     baseStyle: baseStyle,
     onLinkClick: onLinkClick,
+    gestures: gestures,
   );
 }
 
@@ -62,9 +67,11 @@ InlineSpan appendInlineNode({
   required BuildContext context,
   required MarkdownInlineSegment segment,
   required Color textColor,
+  required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   int depth = 0,
   void Function(String url)? onLinkClick,
+  String? linkUrl,
 }) {
   if (segment.nodeType == 'InlineLatex') {
     return WidgetSpan(
@@ -74,32 +81,36 @@ InlineSpan appendInlineNode({
     );
   }
   if (segment.nodeType == 'Link') {
+    final url = extractLinkUrl(segment.text);
+    final linkStyle = markdownInlineStyle(
+      context,
+      segment.nodeType,
+      textColor,
+      baseStyle,
+    );
     final nestedChildren = resolveNestedInlineChildren(segment);
+    if (nestedChildren.isEmpty || depth >= maxInlineRenderDepth) {
+      return TextSpan(
+        text: extractLinkText(segment.text),
+        style: linkStyle,
+        recognizer: _markdownLinkRecognizer(url, onLinkClick, gestures),
+      );
+    }
     return TextSpan(
-      style: markdownInlineStyle(
-        context,
-        segment.nodeType,
-        textColor,
-        baseStyle,
-      ),
-      recognizer: onLinkClick == null
-          ? null
-          : (TapGestureRecognizer()
-              ..onTap = () => onLinkClick(extractLinkUrl(segment.text))),
-      text: nestedChildren.isEmpty ? extractLinkText(segment.text) : null,
-      children: nestedChildren.isEmpty || depth >= maxInlineRenderDepth
-          ? null
-          : <InlineSpan>[
-              for (final child in nestedChildren)
-                appendInlineNode(
-                  context: context,
-                  segment: child,
-                  textColor: textColor,
-                  baseStyle: baseStyle,
-                  depth: depth + 1,
-                  onLinkClick: onLinkClick,
-                ),
-            ],
+      style: linkStyle,
+      children: <InlineSpan>[
+        for (final child in nestedChildren)
+          appendInlineNode(
+            context: context,
+            segment: child,
+            textColor: textColor,
+            baseStyle: linkStyle,
+            depth: depth + 1,
+            onLinkClick: onLinkClick,
+            linkUrl: url,
+            gestures: gestures,
+          ),
+      ],
     );
   }
   final nestedChildren = _canRenderNested(segment)
@@ -122,13 +133,65 @@ InlineSpan appendInlineNode({
             baseStyle: baseStyle,
             depth: depth + 1,
             onLinkClick: onLinkClick,
+            linkUrl: linkUrl,
+            gestures: gestures,
           ),
       ],
     );
   }
+  return _plainInlineSpan(
+    context: context,
+    segment: segment,
+    textColor: textColor,
+    baseStyle: baseStyle,
+    onLinkClick: onLinkClick,
+    linkUrl: linkUrl,
+    gestures: gestures,
+  );
+}
+
+TextSpan _plainInlineSpan({
+  required BuildContext context,
+  required MarkdownInlineSegment segment,
+  required Color textColor,
+  required TextStyle? baseStyle,
+  required void Function(String url)? onLinkClick,
+  required String? linkUrl,
+  required MarkdownLinkGestureOwner gestures,
+}) {
+  final text = resolveNestedInlineText(segment);
+  final style = markdownInlineStyle(
+    context,
+    segment.nodeType,
+    textColor,
+    baseStyle,
+  );
+  if (linkUrl != null || segment.nodeType == 'InlineCode') {
+    return TextSpan(
+      text: text,
+      style: style,
+      recognizer: linkUrl == null
+          ? null
+          : _markdownLinkRecognizer(linkUrl, onLinkClick, gestures),
+    );
+  }
+  final pieces = _splitMarkdownAutolinks(text);
+  if (pieces.length == 1 && pieces.first.url == null) {
+    return TextSpan(text: text, style: style);
+  }
   return TextSpan(
-    text: resolveNestedInlineText(segment),
-    style: markdownInlineStyle(context, segment.nodeType, textColor, baseStyle),
+    children: <InlineSpan>[
+      for (final piece in pieces)
+        TextSpan(
+          text: piece.text,
+          style: piece.url == null
+              ? style
+              : markdownInlineStyle(context, 'Link', textColor, baseStyle),
+          recognizer: piece.url == null
+              ? null
+              : _markdownLinkRecognizer(piece.url!, onLinkClick, gestures),
+        ),
+    ],
   );
 }
 
@@ -136,6 +199,7 @@ TextSpan buildMarkdownInlineSpannableFromText({
   required BuildContext context,
   required String text,
   required Color textColor,
+  required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   void Function(String url)? onLinkClick,
 }) {
@@ -145,6 +209,7 @@ TextSpan buildMarkdownInlineSpannableFromText({
     textColor: textColor,
     baseStyle: baseStyle,
     onLinkClick: onLinkClick,
+    gestures: gestures,
   );
 }
 
@@ -152,6 +217,7 @@ TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
   required BuildContext context,
   required List<MarkdownNodeStable> children,
   required Color textColor,
+  required MarkdownLinkGestureOwner gestures,
   TextStyle? baseStyle,
   void Function(String url)? onLinkClick,
 }) {
@@ -163,6 +229,7 @@ TextSpan buildMarkdownInlineSpannableFromMarkdownNodes({
     textColor: textColor,
     baseStyle: baseStyle,
     onLinkClick: onLinkClick,
+    gestures: gestures,
   );
 }
 
@@ -265,15 +332,18 @@ TextStyle? markdownInlineStyle(
     case 'Underline':
       return base?.copyWith(decoration: TextDecoration.underline);
     case 'Link':
+      final linkColor = Theme.of(context).colorScheme.primary;
       return base?.copyWith(
-        color: Theme.of(context).colorScheme.primary,
+        color: linkColor,
         decoration: TextDecoration.underline,
+        decorationColor: linkColor,
       );
     case 'InlineCode':
       return base
           ?.apply(fontSizeFactor: 0.9)
           .copyWith(
             fontFamily: markdownCodeFontFamily,
+            fontFamilyFallback: markdownCodeFontFamilyFallback,
             backgroundColor: _inlineCodeBackgroundColor(textColor),
           );
   }
@@ -383,8 +453,137 @@ String extractLinkText(String linkContent) {
 }
 
 String extractLinkUrl(String linkContent) {
-  final match = RegExp(r'^\[([^\]]+)\]\(([^)]+)\)$').firstMatch(linkContent);
-  return match?.group(2) ?? '';
+  final match = RegExp(
+    r'^\[([^\]]*)\]\(([\s\S]+)\)$',
+  ).firstMatch(linkContent.trim());
+  if (match == null) {
+    return '';
+  }
+  var destination = match.group(2)!.trim();
+  if (destination.startsWith('<') && destination.contains('>')) {
+    destination = destination.substring(1, destination.indexOf('>')).trim();
+  }
+  return destination
+      .replaceFirst(RegExp(r"""\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$"""), '')
+      .trim();
+}
+
+TapGestureRecognizer? _markdownLinkRecognizer(
+  String url,
+  void Function(String url)? onLinkClick,
+  MarkdownLinkGestureOwner gestures,
+) {
+  return gestures.recognizerFor(url, onLinkClick);
+}
+
+/// Owns the gesture recognizers for one Markdown text build.
+///
+/// Recognizers are reused across frames in encounter order and released when
+/// that text is no longer built.
+class MarkdownLinkGestureOwner {
+  final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+  var _count = 0;
+
+  /// Starts a new build pass.
+  void beginFrame() {
+    _count = 0;
+  }
+
+  /// Returns the recognizer for the next link in this build pass.
+  TapGestureRecognizer? recognizerFor(
+    String url,
+    void Function(String url)? onLinkClick,
+  ) {
+    final destination = url.trim();
+    if (destination.isEmpty) {
+      return null;
+    }
+    void openLink() {
+      activateMarkdownLink(destination, onLinkClick);
+    }
+    if (_count < _recognizers.length) {
+      final recognizer = _recognizers[_count];
+      recognizer.onTap = openLink;
+      _count++;
+      return recognizer;
+    }
+    final recognizer = TapGestureRecognizer()..onTap = openLink;
+    _recognizers.add(recognizer);
+    _count++;
+    return recognizer;
+  }
+
+  /// Disposes recognizers that this build pass did not use.
+  void endFrame() {
+    while (_recognizers.length > _count) {
+      _recognizers.removeLast().dispose();
+    }
+  }
+
+  /// Disposes every recognizer owned by this text.
+  void dispose() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+    _count = 0;
+  }
+}
+
+class _MarkdownAutolinkPiece {
+  const _MarkdownAutolinkPiece(this.text, {this.url});
+
+  final String text;
+  final String? url;
+}
+
+final RegExp _markdownAutolinkPattern = RegExp(
+  r'https?://[^\s<>\[\]]+',
+  caseSensitive: false,
+);
+
+const String _markdownAutolinkTrailing = '.,;:!?，。、；：！？';
+
+List<_MarkdownAutolinkPiece> _splitMarkdownAutolinks(String text) {
+  final matches = _markdownAutolinkPattern.allMatches(text).toList();
+  if (matches.isEmpty) {
+    return <_MarkdownAutolinkPiece>[_MarkdownAutolinkPiece(text)];
+  }
+  final pieces = <_MarkdownAutolinkPiece>[];
+  var start = 0;
+  for (final match in matches) {
+    final url = _trimMarkdownAutolink(match.group(0)!);
+    if (url.isEmpty) {
+      continue;
+    }
+    final urlEnd = match.start + url.length;
+    if (match.start > start) {
+      pieces.add(_MarkdownAutolinkPiece(text.substring(start, match.start)));
+    }
+    pieces.add(_MarkdownAutolinkPiece(url, url: url));
+    start = urlEnd;
+  }
+  if (start < text.length) {
+    pieces.add(_MarkdownAutolinkPiece(text.substring(start)));
+  }
+  if (pieces.isEmpty) {
+    return <_MarkdownAutolinkPiece>[_MarkdownAutolinkPiece(text)];
+  }
+  return pieces;
+}
+
+String _trimMarkdownAutolink(String raw) {
+  var end = raw.length;
+  while (end > 0 && _markdownAutolinkTrailing.contains(raw[end - 1])) {
+    end--;
+  }
+  final slice = raw.substring(0, end);
+  final openCount = '('.allMatches(slice).length;
+  final closeCount = ')'.allMatches(slice).length;
+  if (closeCount > openCount && slice.endsWith(')')) {
+    return slice.substring(0, slice.length - 1);
+  }
+  return slice;
 }
 
 class _InlineMarker {

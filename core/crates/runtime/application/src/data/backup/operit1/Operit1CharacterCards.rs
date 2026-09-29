@@ -326,23 +326,9 @@ struct Operit1CharacterMemoryBinding {
 
 #[derive(Clone, Debug, Deserialize)]
 #[allow(non_snake_case)]
-struct Operit1UserPreferenceProfile {
+struct Operit1MemorySpace {
     id: String,
     name: String,
-    #[serde(default)]
-    birthDate: i64,
-    #[serde(default)]
-    gender: String,
-    #[serde(default)]
-    personality: String,
-    #[serde(default)]
-    identity: String,
-    #[serde(default)]
-    occupation: String,
-    #[serde(default)]
-    aiStyle: String,
-    #[serde(default)]
-    isInitialized: bool,
 }
 
 #[allow(non_snake_case)]
@@ -407,19 +393,7 @@ fn collectOperit1CharacterMemoryProfileBindings(
 }
 
 #[allow(non_snake_case)]
-fn collectOperit1MemoryProfileIds(
-    parsed: &ParsedOperit1Snapshot,
-) -> Result<BTreeSet<String>, String> {
-    let mut ids = BTreeSet::new();
-    ids.insert(OPERIT1_DEFAULT_PROFILE_ID.to_string());
-    ids.extend(collectOperit1ObjectBoxProfileIds(parsed)?);
-    for profileId in collectOperit1CharacterMemoryProfileBindings(parsed)?.values() {
-        ids.insert(profileId.clone());
-    }
-    Ok(ids)
-}
-
-#[allow(non_snake_case)]
+/// Collects the memory databases physically present in the snapshot.
 fn collectOperit1ObjectBoxProfileIds(
     parsed: &ParsedOperit1Snapshot,
 ) -> Result<BTreeSet<String>, String> {
@@ -472,22 +446,6 @@ fn operit1SharedMemoryStoreId(profileId: &str) -> String {
 }
 
 #[allow(non_snake_case)]
-fn operit1SharedMemoryStoreName(
-    parsed: &ParsedOperit1Snapshot,
-    profileId: &str,
-) -> Result<String, String> {
-    let profiles = buildOperit1UserPreferenceProfiles(parsed)?;
-    let profile = profiles
-        .get(profileId)
-        .ok_or_else(|| format!("Operit1 用户偏好缺少记忆库名称来源：{profileId}"))?;
-    let profileName = profile.name.trim();
-    if profileName.is_empty() {
-        return Err(format!("Operit1 用户偏好名称为空：{profileId}"));
-    }
-    Ok(format!("Operit1 记忆库 - {profileName}"))
-}
-
-#[allow(non_snake_case)]
 /// Reads the selected Operit1 memory-space identifier from the user preferences payload.
 fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, String> {
     let preferences = parsed
@@ -498,7 +456,7 @@ fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, Stri
     let value = requiredPreferenceString(
         preferences,
         KEY_ACTIVE_MEMORY_SPACE_ID,
-        "Operit1 用户偏好缺少当前记忆库 ID",
+        "快照缺少当前记忆库 ID，请使用最新版 Operit1 完成升级后重新导出快照",
     )?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -509,21 +467,19 @@ fn operit1ActiveProfileId(parsed: &ParsedOperit1Snapshot) -> Result<String, Stri
 }
 
 #[allow(non_snake_case)]
-/// Builds Operit1 user preference profiles from the released memory-space schema.
-fn buildOperit1UserPreferenceProfiles(
+/// Reads current memory-space metadata without interpreting it as structured user profiles.
+fn buildOperit1MemorySpaces(
     parsed: &ParsedOperit1Snapshot,
-) -> Result<BTreeMap<String, Operit1UserPreferenceProfile>, String> {
-    let Some(preferences) = parsed
+) -> Result<BTreeMap<String, Operit1MemorySpace>, String> {
+    let preferences = parsed
         .archive
         .datastorePreferences
         .get(ENTRY_USER_PREFERENCES)
-    else {
-        return Ok(BTreeMap::new());
-    };
+        .ok_or_else(|| "快照缺少用户偏好，请使用最新版 Operit1 重新导出快照".to_string())?;
     let profileIds = requiredPreferenceStringList(
         preferences,
         KEY_MEMORY_SPACE_LIST,
-        "Operit1 用户偏好缺少记忆库列表",
+        "快照缺少记忆库列表，请使用最新版 Operit1 完成升级后重新导出快照",
     )?;
     let mut profiles = BTreeMap::new();
     for profileId in profileIds {
@@ -534,7 +490,7 @@ fn buildOperit1UserPreferenceProfiles(
             &key,
             &format!("Operit1 用户偏好缺少记忆库配置：{profileId}"),
         )?;
-        let profile: Operit1UserPreferenceProfile = serde_json::from_str(raw)
+        let profile: Operit1MemorySpace = serde_json::from_str(raw)
             .map_err(|error| format!("Operit1 记忆库配置格式不正确：{profileId}: {error}"))?;
         if profile.id != profileId {
             return Err(format!(
@@ -542,75 +498,57 @@ fn buildOperit1UserPreferenceProfiles(
                 profile.id
             ));
         }
-        profiles.insert(profile.id.clone(), profile);
+        if profile.name.trim().is_empty() {
+            return Err(format!("Operit1 记忆库名称为空：{profileId}"));
+        }
+        if profiles.insert(profile.id.clone(), profile).is_some() {
+            return Err(format!("Operit1 记忆库 ID 重复：{profileId}"));
+        }
     }
     Ok(profiles)
 }
 
 #[allow(non_snake_case)]
-/// Builds a Markdown memory document from one Operit1 profile record.
-fn buildOperit2UserMarkdown(profile: &Operit1UserPreferenceProfile) -> Result<String, String> {
-    let mut lines = Vec::new();
-    lines.push(format!("## Operit1 用户偏好 - {}", profile.name.trim()));
-    lines.push(String::new());
-    pushMarkdownField(&mut lines, "配置 ID", &profile.id);
-    if profile.birthDate > 0 {
-        lines.push(format!(
-            "- 出生日期：{}",
-            epochMillisToLocalDateString(profile.birthDate)?
-        ));
-    }
-    pushMarkdownField(&mut lines, "性别", &profile.gender);
-    pushMarkdownField(&mut lines, "性格特点", &profile.personality);
-    pushMarkdownField(&mut lines, "身份认同", &profile.identity);
-    pushMarkdownField(&mut lines, "职业", &profile.occupation);
-    pushMarkdownField(&mut lines, "期待的 AI 风格", &profile.aiStyle);
-    Ok(lines.join("\n"))
+/// Returns the current per-memory-space profile document entry.
+fn operit1UserMarkdownEntry(profileId: &str) -> String {
+    format!("payload/files/memory-space-profiles/{profileId}/user.md")
 }
 
-#[allow(non_snake_case)]
-fn pushMarkdownField(lines: &mut Vec<String>, label: &str, value: &str) {
-    let trimmed = value.trim();
-    if !trimmed.is_empty() {
-        lines.push(format!("- {label}：{trimmed}"));
+/// Validates current memory metadata and documents before any import writes occur.
+fn validateOperit1MemorySpaces(parsed: &ParsedOperit1Snapshot) -> Result<(), String> {
+    let spaces = buildOperit1MemorySpaces(parsed)?;
+    let activeId = operit1ActiveProfileId(parsed)?;
+    if !spaces.contains_key(&activeId) {
+        return Err(format!("Operit1 当前记忆库不在记忆库列表中：{activeId}"));
     }
-}
-
-#[allow(non_snake_case)]
-fn appendSharedUserMarkdown(
-    storageHost: &dyn RuntimeStorageHost,
-    profileId: &str,
-    importedMarkdown: &str,
-) -> Result<(), String> {
-    let storeId = operit1SharedMemoryStoreId(profileId);
-    let path = format!(
-        "{}/{}/USER.md",
-        DATA_MEMORY_SHARED_DIR_PATH.trim_end_matches('/'),
-        sanitizeMemoryOwnerId(&storeId)
-    );
-    let current = if storageHost
-        .exists(&path)
-        .map_err(|error| error.to_string())?
-    {
-        String::from_utf8(
-            storageHost
-                .readBytes(&path)
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?
-    } else {
-        "# USER\n\n".to_string()
-    };
-    let mut next = current.trim().to_string();
-    let imported = importedMarkdown.trim();
-    if !next.is_empty() {
-        next.push_str("\n\n");
+    for profileId in collectOperit1CharacterMemoryProfileBindings(parsed)?.values() {
+        if !spaces.contains_key(profileId) {
+            return Err(format!("Operit1 角色卡绑定了不存在的记忆库：{profileId}"));
+        }
     }
-    next.push_str(imported);
-    next.push('\n');
-    storageHost
-        .writeBytes(&path, next.as_bytes())
-        .map_err(|error| error.to_string())
+    for profileId in collectOperit1ObjectBoxProfileIds(parsed)? {
+        if !spaces.contains_key(&profileId) {
+            return Err(format!("Operit1 记忆数据库不在记忆库列表中：{profileId}"));
+        }
+    }
+    for profileId in spaces.keys() {
+        let entry = operit1UserMarkdownEntry(profileId);
+        let metadata = parsed.archive.entries.get(&entry).ok_or_else(|| {
+            format!("快照缺少记忆库用户文档：{entry}，请使用最新版 Operit1 完成升级后重新导出快照")
+        })?;
+        // Operit1 limits each document to 12,000 UTF-16 code units.
+        if metadata.uncompressedSize > 48_000 {
+            return Err(format!("Operit1 记忆库用户文档超过大小限制：{entry}"));
+        }
+        let mut bytes = Vec::new();
+        parsed.copyEntryTo(&entry, &mut bytes)?;
+        let markdown = std::str::from_utf8(&bytes)
+            .map_err(|error| format!("Operit1 记忆库用户文档不是 UTF-8：{entry}: {error}"))?;
+        if markdown.encode_utf16().count() > 12_000 {
+            return Err(format!("Operit1 记忆库用户文档超过字符限制：{entry}"));
+        }
+    }
+    Ok(())
 }
 
 #[allow(non_snake_case)]

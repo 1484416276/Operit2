@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import 'windows_cursor.dart';
+import 'windows_native_composition.dart';
 import 'windows_webview_cookie.dart';
 import 'windows_webview_types.dart';
 import 'windows_webview_api.g.dart';
@@ -172,17 +173,17 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   late Completer<void> _creatingCompleter;
-  int _textureId = 0;
+  int _viewId = 0;
   bool _isDisposed = false;
 
   Future<void> get ready => _creatingCompleter.future;
 
-  /// Returns the Flutter texture identifier for this WebView compositor surface.
-  int get surfaceTextureId {
+  /// Returns the native platform-view identifier for this WebView compositor surface.
+  int get surfacePlatformViewId {
     if (_isDisposed || !value.isInitialized) {
       throw StateError('WebView compositor surface is not initialized');
     }
-    return _textureId;
+    return _viewId;
   }
 
   /// Moves the compositor surface cursor to a local logical position.
@@ -204,11 +205,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     double dy, {
     bool controlKeyPressed = false,
   }) {
-    return _setScrollDelta(
-      dx,
-      dy,
-      controlKeyPressed: controlKeyPressed,
-    );
+    return _setScrollDelta(dx, dy, controlKeyPressed: controlKeyPressed);
   }
 
   /// Resizes the compositor surface in logical pixels.
@@ -231,6 +228,13 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     await _methodChannel.invokeMethod<void>('setCaptureEnabled', enabled);
+  }
+
+  /// Routes IME and keyboard focus according to Flutter focus ownership.
+  Future<void> setNativeFocus(bool focused) async {
+    await ready;
+    if (_isDisposed) return;
+    await _methodChannel.invokeMethod<void>('setNativeFocus', focused);
   }
 
   /// Captures one compositor frame from the native WebView surface.
@@ -358,12 +362,10 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     _creatingCompleter = Completer<void>();
     try {
       final reply = await _hostApi.createWebView();
-      _textureId = reply.textureId;
-      _methodChannel = MethodChannel(
-        '$windowsWebViewChannelPrefix/$_textureId',
-      );
+      _viewId = reply.viewId;
+      _methodChannel = MethodChannel('$windowsWebViewChannelPrefix/$_viewId');
       _eventChannel = EventChannel(
-        '$windowsWebViewChannelPrefix/$_textureId/events',
+        '$windowsWebViewChannelPrefix/$_viewId/events',
       );
       _eventStreamSubscription = _eventChannel.receiveBroadcastStream().listen((
         event,
@@ -565,7 +567,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     if (!_isDisposed) {
       _isDisposed = true;
       await _eventStreamSubscription?.cancel();
-      await _hostApi.disposeWebView(_textureId);
+      await _hostApi.disposeWebView(_viewId);
     }
     super.dispose();
   }
@@ -576,7 +578,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.loadUrl(_textureId, url);
+    return _hostApi.loadUrl(_viewId, url);
   }
 
   /// Loads a request with the supplied HTTP method, headers, and optional body.
@@ -591,7 +593,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.loadRequest(
-      _textureId,
+      _viewId,
       WindowsLoadRequestData(
         url: url,
         method: method,
@@ -607,7 +609,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.loadStringContent(_textureId, content);
+    return _hostApi.loadStringContent(_viewId, content);
   }
 
   /// Reloads the current document.
@@ -616,7 +618,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.reload(_textureId);
+    return _hostApi.reload(_viewId);
   }
 
   /// Stops all navigations and pending resource fetches.
@@ -625,7 +627,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.stop(_textureId);
+    return _hostApi.stop(_viewId);
   }
 
   /// Navigates the WebView to the previous page in the navigation history.
@@ -634,7 +636,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.goBack(_textureId);
+    return _hostApi.goBack(_viewId);
   }
 
   /// Navigates the WebView to the next page in the navigation history.
@@ -643,7 +645,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.goForward(_textureId);
+    return _hostApi.goForward(_viewId);
   }
 
   /// Adds the provided JavaScript [script] to a list of scripts that should be run after the global
@@ -658,7 +660,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return null;
     }
     assert(value.isInitialized);
-    return _hostApi.addScriptToExecuteOnDocumentCreated(_textureId, script);
+    return _hostApi.addScriptToExecuteOnDocumentCreated(_viewId, script);
   }
 
   /// Removes the script identified by [scriptId] from the list of registered scripts.
@@ -669,10 +671,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return null;
     }
     assert(value.isInitialized);
-    return _hostApi.removeScriptToExecuteOnDocumentCreated(
-      _textureId,
-      scriptId,
-    );
+    return _hostApi.removeScriptToExecuteOnDocumentCreated(_viewId, scriptId);
   }
 
   /// Runs the JavaScript [script] in the current top-level document rendered in
@@ -685,7 +684,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
 
-    final data = await _hostApi.executeScript(_textureId, script);
+    final data = await _hostApi.executeScript(_viewId, script);
     return jsonDecode(data);
   }
 
@@ -695,7 +694,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.postWebMessage(_textureId, message);
+    return _hostApi.postWebMessage(_viewId, message);
   }
 
   /// Sets the user agent value.
@@ -706,7 +705,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setUserAgent(_textureId, userAgent);
+    return _hostApi.setUserAgent(_viewId, userAgent);
   }
 
   /// Returns the current user agent value from WebView2.
@@ -715,7 +714,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return null;
     }
     assert(value.isInitialized);
-    return _hostApi.getUserAgent(_textureId);
+    return _hostApi.getUserAgent(_viewId);
   }
 
   /// Sets whether JavaScript execution is enabled.
@@ -724,7 +723,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setJavaScriptEnabled(_textureId, enabled);
+    return _hostApi.setJavaScriptEnabled(_viewId, enabled);
   }
 
   /// Clears browser cookies.
@@ -738,7 +737,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return false;
     }
     assert(value.isInitialized);
-    return _hostApi.clearCookies(_textureId);
+    return _hostApi.clearCookies(_viewId);
   }
 
   /// Sets a browser cookie.
@@ -757,7 +756,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(this.value.isInitialized);
     return _hostApi.setCookie(
-      _textureId,
+      _viewId,
       WindowsCookieData(
         name: name,
         value: value,
@@ -777,7 +776,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return <WindowsWebViewCookie>[];
     }
     assert(value.isInitialized);
-    final result = await _hostApi.getCookies(_textureId, url);
+    final result = await _hostApi.getCookies(_viewId, url);
 
     return result.whereType<WindowsCookieData>().map((
       WindowsCookieData cookie,
@@ -809,7 +808,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.deleteCookie(
-      _textureId,
+      _viewId,
       WindowsCookieData(
         name: cookie.name,
         value: cookie.value,
@@ -832,7 +831,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.deleteCookiesWithNameAndUrl(_textureId, name, url);
+    return _hostApi.deleteCookiesWithNameAndUrl(_viewId, name, url);
   }
 
   /// Deletes cookies matching [name], [domain], and [path].
@@ -846,7 +845,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.deleteCookiesWithNameDomainAndPath(
-      _textureId,
+      _viewId,
       name,
       domain,
       path,
@@ -859,7 +858,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.clearCache(_textureId);
+    return _hostApi.clearCache(_viewId);
   }
 
   /// Clears DOM storage for the current WebView profile.
@@ -868,7 +867,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.clearLocalStorage(_textureId);
+    return _hostApi.clearLocalStorage(_viewId);
   }
 
   /// Toggles ignoring cache for each request. If true, cache will not be used.
@@ -877,7 +876,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setCacheDisabled(_textureId, disabled);
+    return _hostApi.setCacheDisabled(_viewId, disabled);
   }
 
   /// Opens the Browser DevTools in a separate window
@@ -886,7 +885,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.openDevTools(_textureId);
+    return _hostApi.openDevTools(_viewId);
   }
 
   /// Sets the background color to the provided [color].
@@ -899,10 +898,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setBackgroundColor(
-      _textureId,
-      color.toARGB32().toSigned(32),
-    );
+    return _hostApi.setBackgroundColor(_viewId, color.toARGB32().toSigned(32));
   }
 
   /// Sets whether user-initiated zooming is enabled.
@@ -911,7 +907,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setZoomControlEnabled(_textureId, enabled);
+    return _hostApi.setZoomControlEnabled(_viewId, enabled);
   }
 
   /// Sets the zoom factor.
@@ -920,7 +916,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setZoomFactor(_textureId, zoomFactor);
+    return _hostApi.setZoomFactor(_viewId, zoomFactor);
   }
 
   /// Sets the [WebviewPopupWindowPolicy].
@@ -931,7 +927,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setPopupWindowPolicy(_textureId, popupPolicy.index);
+    return _hostApi.setPopupWindowPolicy(_viewId, popupPolicy.index);
   }
 
   /// Enables native JavaScript dialog interception for the selected dialog
@@ -946,7 +942,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setJavaScriptDialogCallbacksEnabled(
-      _textureId,
+      _viewId,
       alert,
       confirm,
       prompt,
@@ -959,7 +955,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.suspend(_textureId);
+    return _hostApi.suspend(_viewId);
   }
 
   /// Resumes the web view.
@@ -968,7 +964,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.resume(_textureId);
+    return _hostApi.resume(_viewId);
   }
 
   /// Adds a Virtual Host Name Mapping.
@@ -986,7 +982,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
 
     return _hostApi.setVirtualHostNameMapping(
-      _textureId,
+      _viewId,
       WindowsVirtualHostMappingData(
         hostName: hostName,
         path: folderPath,
@@ -1004,7 +1000,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     if (_isDisposed) {
       return;
     }
-    return _hostApi.clearVirtualHostNameMapping(_textureId, hostName);
+    return _hostApi.clearVirtualHostNameMapping(_viewId, hostName);
   }
 
   /// Limits the number of frames per second to the given value.
@@ -1013,7 +1009,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       return;
     }
     assert(value.isInitialized);
-    return _hostApi.setFpsLimit(_textureId, maxFps ?? 0);
+    return _hostApi.setFpsLimit(_viewId, maxFps ?? 0);
   }
 
   /// Sends a Pointer (Touch) update
@@ -1029,7 +1025,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setPointerUpdate(
-      _textureId,
+      _viewId,
       WindowsPointerUpdateData(
         pointer: pointer,
         event: kind.index,
@@ -1048,7 +1044,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setCursorPos(
-      _textureId,
+      _viewId,
       WindowsPointData(x: position.dx, y: position.dy),
     );
   }
@@ -1060,7 +1056,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setPointerButton(
-      _textureId,
+      _viewId,
       WindowsPointerButtonData(button: button.index, isDown: isDown),
     );
   }
@@ -1076,7 +1072,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setScrollDelta(
-      _textureId,
+      _viewId,
       WindowsPointData(x: dx, y: dy),
       controlKeyPressed,
     );
@@ -1089,7 +1085,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     }
     assert(value.isInitialized);
     return _hostApi.setSize(
-      _textureId,
+      _viewId,
       WindowsSizeData(
         width: size.width,
         height: size.height,
@@ -1136,6 +1132,7 @@ class Webview extends StatefulWidget {
 class _WebviewState extends State<Webview> {
   final GlobalKey _key = GlobalKey();
   final _downButtons = <int, PointerButton>{};
+  final FocusNode _nativeFocus = FocusNode(debugLabel: 'Windows WebView');
 
   PointerDeviceKind _pointerKind = PointerDeviceKind.unknown;
 
@@ -1167,6 +1164,11 @@ class _WebviewState extends State<Webview> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _syncCapture();
+    if (widget.layoutControlsSurfaceSize) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _reportSurfaceSize();
+      });
+    }
   }
 
   /// Applies a surface-ownership change to compositor capture.
@@ -1184,7 +1186,7 @@ class _WebviewState extends State<Webview> {
     final enabled =
         widget.layoutControlsSurfaceSize &&
         Visibility.of(context) &&
-        TickerMode.of(context);
+        TickerMode.valuesOf(context).enabled;
     if (_captureEnabled == enabled) {
       return;
     }
@@ -1205,116 +1207,123 @@ class _WebviewState extends State<Webview> {
   }
 
   Widget _buildInner() {
-    return NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: (notification) {
-        if (!widget.layoutControlsSurfaceSize) {
-          return false;
-        }
-        _reportSurfaceSize();
-        return true;
+    return Focus(
+      focusNode: _nativeFocus,
+      onFocusChange: (focused) {
+        unawaited(_controller.setNativeFocus(focused));
       },
-      child: SizeChangedLayoutNotifier(
-        child: _controller.value.isInitialized
-            ? Listener(
-                onPointerHover: (ev) {
-                  // ev.kind is for whatever reason not set to touch
-                  // even on touch input
-                  if (_pointerKind == PointerDeviceKind.touch) {
-                    // Ignoring hover events on touch for now
-                    return;
-                  }
-                  _controller._setCursorPos(ev.localPosition);
-                },
-                onPointerDown: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.down,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                    return;
-                  }
-                  final button = getButton(ev.buttons);
-                  _downButtons[ev.pointer] = button;
-                  _controller._setPointerButtonState(button, true);
-                },
-                onPointerUp: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.up,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                    return;
-                  }
-                  final button = _downButtons.remove(ev.pointer);
-                  if (button != null) {
-                    _controller._setPointerButtonState(button, false);
-                  }
-                },
-                onPointerCancel: (ev) {
-                  _pointerKind = ev.kind;
-                  final button = _downButtons.remove(ev.pointer);
-                  if (button != null) {
-                    _controller._setPointerButtonState(button, false);
-                  }
-                },
-                onPointerMove: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.update,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                  } else {
+      child: NotificationListener<SizeChangedLayoutNotification>(
+        onNotification: (notification) {
+          if (!widget.layoutControlsSurfaceSize) {
+            return false;
+          }
+          _reportSurfaceSize();
+          return true;
+        },
+        child: SizeChangedLayoutNotifier(
+          child: _controller.value.isInitialized
+              ? Listener(
+                  onPointerHover: (ev) {
+                    // ev.kind is for whatever reason not set to touch
+                    // even on touch input
+                    if (_pointerKind == PointerDeviceKind.touch) {
+                      // Ignoring hover events on touch for now
+                      return;
+                    }
                     _controller._setCursorPos(ev.localPosition);
-                  }
-                },
-                onPointerSignal: (signal) {
-                  if (signal is PointerScrollEvent) {
-                    _controller._setScrollDelta(
-                      -signal.scrollDelta.dx,
-                      -signal.scrollDelta.dy,
-                      controlKeyPressed:
-                          HardwareKeyboard.instance.isControlPressed,
-                    );
-                  }
-                },
-                onPointerPanZoomUpdate: (signal) {
-                  final controlKeyPressed =
-                      HardwareKeyboard.instance.isControlPressed;
-                  if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
-                    _controller._setScrollDelta(
-                      -signal.panDelta.dx,
-                      0,
-                      controlKeyPressed: controlKeyPressed,
-                    );
-                  } else {
-                    _controller._setScrollDelta(
-                      0,
-                      signal.panDelta.dy,
-                      controlKeyPressed: controlKeyPressed,
-                    );
-                  }
-                },
-                child: MouseRegion(
-                  cursor: _cursor,
-                  child: Texture(
-                    textureId: _controller._textureId,
-                    filterQuality: widget.filterQuality,
+                  },
+                  onPointerDown: (ev) {
+                    _nativeFocus.requestFocus();
+                    _controller._setCursorPos(ev.localPosition);
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.down,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                      return;
+                    }
+                    final button = getButton(ev.buttons);
+                    _downButtons[ev.pointer] = button;
+                    _controller._setPointerButtonState(button, true);
+                  },
+                  onPointerUp: (ev) {
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.up,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                      return;
+                    }
+                    final button = _downButtons.remove(ev.pointer);
+                    if (button != null) {
+                      _controller._setPointerButtonState(button, false);
+                    }
+                  },
+                  onPointerCancel: (ev) {
+                    _pointerKind = ev.kind;
+                    final button = _downButtons.remove(ev.pointer);
+                    if (button != null) {
+                      _controller._setPointerButtonState(button, false);
+                    }
+                  },
+                  onPointerMove: (ev) {
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.update,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                    } else {
+                      _controller._setCursorPos(ev.localPosition);
+                    }
+                  },
+                  onPointerSignal: (signal) {
+                    if (signal is PointerScrollEvent) {
+                      _controller._setScrollDelta(
+                        -signal.scrollDelta.dx,
+                        -signal.scrollDelta.dy,
+                        controlKeyPressed:
+                            HardwareKeyboard.instance.isControlPressed,
+                      );
+                    }
+                  },
+                  onPointerPanZoomUpdate: (signal) {
+                    final controlKeyPressed =
+                        HardwareKeyboard.instance.isControlPressed;
+                    if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
+                      _controller._setScrollDelta(
+                        -signal.panDelta.dx,
+                        0,
+                        controlKeyPressed: controlKeyPressed,
+                      );
+                    } else {
+                      _controller._setScrollDelta(
+                        0,
+                        signal.panDelta.dy,
+                        controlKeyPressed: controlKeyPressed,
+                      );
+                    }
+                  },
+                  child: MouseRegion(
+                    cursor: _cursor,
+                    child: WindowsNativeComposition(
+                      viewId: _controller._viewId,
+                    ),
                   ),
-                ),
-              )
-            : const SizedBox(),
+                )
+              : const SizedBox(),
+        ),
       ),
     );
   }
@@ -1336,5 +1345,6 @@ class _WebviewState extends State<Webview> {
   void dispose() {
     super.dispose();
     _cursorSubscription?.cancel();
+    _nativeFocus.dispose();
   }
 }

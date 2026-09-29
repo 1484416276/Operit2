@@ -10,7 +10,6 @@
 #include <string>
 #include <utility>
 
-#include "rendering/texture_bridge_gpu.h"
 
 namespace webview_all_windows {
 namespace {
@@ -97,31 +96,14 @@ HeadersToEncodableMap(const std::map<std::string, std::string> &headers) {
 
 } // namespace
 
+// Connects native browser content to a Flutter platform-view layer.
 WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
-                             flutter::TextureRegistrar *texture_registrar,
-                             GraphicsContext *graphics_context,
+                             FlutterDesktopNativeCompositionRef composition,
                              std::unique_ptr<Webview> webview)
-    : webview_(std::move(webview)), texture_registrar_(texture_registrar) {
-  texture_bridge_ =
-      std::make_unique<TextureBridgeGpu>(graphics_context, webview_->surface());
-
-  flutter_texture_ =
-      std::make_unique<flutter::TextureVariant>(flutter::GpuSurfaceTexture(
-          kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle,
-          [bridge = static_cast<TextureBridgeGpu *>(texture_bridge_.get())](
-              size_t width,
-              size_t height) -> const FlutterDesktopGpuSurfaceDescriptor * {
-            return bridge->GetSurfaceDescriptor(width, height);
-          }));
-
-  texture_id_ = texture_registrar->RegisterTexture(flutter_texture_.get());
-  texture_bridge_->SetOnFrameAvailable([this]() { OnTextureFrameAvailable(); });
-  // texture_bridge_->SetOnSurfaceSizeChanged([this](Size size) {
-  //  webview_->SetSurfaceSize(size.width, size.height);
-  //});
-
+    : composition_(composition), webview_(std::move(webview)),
+      view_id_(FlutterDesktopNativeCompositionGetId(composition)) {
   const auto method_channel_name =
-      std::format("{}/{}", kChannelPrefix, texture_id_);
+      std::format("{}/{}", kChannelPrefix, view_id_);
   method_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, method_channel_name,
@@ -130,6 +112,15 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
       [this](const flutter::MethodCall<flutter::EncodableValue> &call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
+        if (call.method_name() == "setNativeFocus") {
+          const auto* focused = call.arguments() ? std::get_if<bool>(call.arguments()) : nullptr;
+          if (!focused || !webview_->SetNativeFocus(*focused)) {
+            result->Error("native_focus_failed", "Invalid focus request or WebView2 focus failure");
+            return;
+          }
+          result->Success();
+          return;
+        }
         if (call.method_name() == "captureSurfaceFrame") {
           auto result_holder =
               std::make_shared<std::unique_ptr<
@@ -193,7 +184,7 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
       });
 
   const auto event_channel_name =
-      std::format("{}/{}/events", kChannelPrefix, texture_id_);
+      std::format("{}/{}/events", kChannelPrefix, view_id_);
   event_channel_ =
       std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
           messenger, event_channel_name,
@@ -216,10 +207,16 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
   event_channel_->SetStreamHandler(std::move(handler));
 }
 
+// Removes callbacks while the engine messenger is still available.
+void WebviewBridge::DisposeChannels() {
+  method_channel_->SetMethodCallHandler(nullptr);
+  event_channel_->SetStreamHandler(nullptr);
+}
+
+// Disconnects WebView2 before releasing its composition lease.
 WebviewBridge::~WebviewBridge() {
-  texture_bridge_->SetOnFrameAvailable({});
-  texture_bridge_->StopFrameReadback();
-  texture_registrar_->UnregisterTexture(texture_id_);
+  webview_->AttachVisual(nullptr);
+  FlutterDesktopNativeCompositionDestroy(composition_);
 }
 
 void WebviewBridge::RegisterEventHandlers() {
@@ -338,9 +335,6 @@ void WebviewBridge::RegisterEventHandlers() {
     EmitEvent(event);
   });
 
-  webview_->OnSurfaceSizeChanged([this](size_t width, size_t height) {
-    texture_bridge_->NotifySurfaceSizeChanged();
-  });
 
   webview_->OnCursorChanged([this](const HCURSOR cursor) {
     const auto &name = GetCursorName(cursor);
@@ -595,69 +589,16 @@ void WebviewBridge::SetSize(double width, double height, double scale_factor) {
   webview_->SetSurfaceSize(static_cast<size_t>(width),
                            static_cast<size_t>(height),
                            static_cast<float>(scale_factor));
-  if (capture_enabled_) {
-    texture_bridge_->Start();
-  }
+  FlutterDesktopNativeCompositionSetScale(composition_, scale_factor);
 }
 
 bool WebviewBridge::DispatchKeyEvent(const std::string &event_json) {
   return webview_->DispatchKeyEvent(event_json);
 }
 
-// Completes frame captures waiting for the compositor's first available frame.
-void WebviewBridge::OnTextureFrameAvailable() {
-  texture_registrar_->MarkTextureFrameAvailable(texture_id_);
-
-  bool start_readback = false;
-  {
-    const std::lock_guard<std::mutex> lock(surface_frame_capture_mutex_);
-    if (!pending_surface_frame_captures_.empty() &&
-        !surface_frame_readback_active_) {
-      surface_frame_readback_active_ = true;
-      start_readback = true;
-    }
-  }
-  if (start_readback) {
-    StartSurfaceFrameReadback();
-  }
-}
-
-// Starts one asynchronous readback for all currently pending captures.
-void WebviewBridge::StartSurfaceFrameReadback() {
-  texture_bridge_->CopyLatestFrameAsync(
-      [this](bool success, const std::vector<uint8_t> &data, Size size) {
-        OnSurfaceFrameReadbackCompleted(success, data, size);
-      });
-}
-
-// Completes pending method calls with one asynchronously read compositor frame.
-void WebviewBridge::OnSurfaceFrameReadbackCompleted(
-    bool success, const std::vector<uint8_t> &data, Size size) {
-  std::vector<SurfaceFrameCaptureCallback> pending_captures;
-  {
-    const std::lock_guard<std::mutex> lock(surface_frame_capture_mutex_);
-    surface_frame_readback_active_ = false;
-    pending_captures.swap(pending_surface_frame_captures_);
-  }
-  for (auto &capture : pending_captures) {
-    capture(success, data, size.width, size.height);
-  }
-}
-
-// Captures one compositor frame or waits for the first frame to arrive.
+// Captures only on request through WebView2; display never reads browser pixels.
 void WebviewBridge::CaptureSurfaceFrame(SurfaceFrameCaptureCallback result) {
-  bool start_readback = false;
-  {
-    const std::lock_guard<std::mutex> lock(surface_frame_capture_mutex_);
-    pending_surface_frame_captures_.push_back(std::move(result));
-    if (!surface_frame_readback_active_ && texture_bridge_->HasLatestFrame()) {
-      surface_frame_readback_active_ = true;
-      start_readback = true;
-    }
-  }
-  if (start_readback) {
-    StartSurfaceFrameReadback();
-  }
+  webview_->CaptureSurfaceFrame(std::move(result));
 }
 
 void WebviewBridge::LoadUrl(const std::string &url) { webview_->LoadUrl(url); }
@@ -681,26 +622,15 @@ bool WebviewBridge::GoBack() { return webview_->GoBack(); }
 
 bool WebviewBridge::GoForward() { return webview_->GoForward(); }
 
-void WebviewBridge::Suspend() {
-  texture_bridge_->Stop();
-  webview_->Suspend();
-}
+// Suspends page execution when explicitly requested by its owner.
+void WebviewBridge::Suspend() { webview_->Suspend(); }
 
-void WebviewBridge::Resume() {
-  webview_->Resume();
-  if (capture_enabled_) {
-    texture_bridge_->Start();
-  }
-}
+// Resumes explicitly suspended page execution.
+void WebviewBridge::Resume() { webview_->Resume(); }
 
-/// Starts compositor capture when the surface is shown, and stops it when covered.
+// Maps the legacy visibility notification to native WebView2 visibility.
 void WebviewBridge::SetCaptureEnabled(bool enabled) {
-  capture_enabled_ = enabled;
-  if (enabled) {
-    texture_bridge_->Start();
-  } else {
-    texture_bridge_->Stop();
-  }
+  webview_->SetVisible(enabled);
 }
 
 void WebviewBridge::SetVirtualHostNameMapping(const std::string &host_name,
@@ -828,13 +758,5 @@ void WebviewBridge::SetPopupWindowPolicy(int64_t policy) {
   }
 }
 
-void WebviewBridge::SetFpsLimit(int64_t max_fps) {
-  if (max_fps == 0) {
-    texture_bridge_->SetFpsLimit(std::nullopt);
-    return;
-  }
-  texture_bridge_->SetFpsLimit(
-      std::make_optional<int>(static_cast<int>(max_fps)));
-}
 
 } // namespace webview_all_windows

@@ -3,9 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../core/logging/ClientLogger.dart';
 import '../interactions/MessagePressShield.dart';
 import 'MarkdownAudioRenderer.dart';
 import 'MarkdownImageRenderer.dart';
+import 'MarkdownLink.dart';
 
 const Set<String> _markdownVideoExtensions = <String>{
   'mp4',
@@ -40,8 +42,9 @@ class MarkdownVideoRenderer extends StatefulWidget {
 }
 
 class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
-  late VideoPlayerController _controller;
-  late Future<void> _initializeFuture;
+  VideoPlayerController? _controller;
+  Future<void>? _initializeFuture;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -53,20 +56,48 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
   void didUpdateWidget(covariant MarkdownVideoRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoMarkdown != widget.videoMarkdown) {
-      _controller.dispose();
+      _releaseController();
       _createController();
     }
   }
 
   void _createController() {
+    _failed = false;
+    _initializeFuture = null;
     final videoUrl = extractMarkdownImageUrl(widget.videoMarkdown);
-    _controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
-    _initializeFuture = _controller.initialize().then((_) {
+    final uri = Uri.tryParse(videoUrl);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      _failed = true;
+      return;
+    }
+    final controller = VideoPlayerController.networkUrl(uri);
+    _controller = controller;
+    controller.addListener(_handleControllerChanged);
+    _initializeFuture = _initializeController(controller, videoUrl);
+  }
+
+  Future<void> _initializeController(
+    VideoPlayerController controller,
+    String videoUrl,
+  ) async {
+    try {
+      await controller.initialize();
       if (mounted) {
         setState(() {});
       }
-    });
-    _controller.addListener(_handleControllerChanged);
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Cannot load markdown video: $videoUrl',
+        tag: 'MarkdownVideo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
+    }
   }
 
   void _handleControllerChanged() {
@@ -75,19 +106,46 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     }
   }
 
+  void _releaseController() {
+    final controller = _controller;
+    _controller = null;
+    _initializeFuture = null;
+    if (controller == null) {
+      return;
+    }
+    controller.removeListener(_handleControllerChanged);
+    controller.dispose();
+  }
+
   @override
   void dispose() {
-    _controller
-      ..removeListener(_handleControllerChanged)
-      ..dispose();
+    _releaseController();
     super.dispose();
   }
 
   Future<void> _togglePlayback() async {
-    if (_controller.value.isPlaying) {
-      await _controller.pause();
-    } else {
-      await _controller.play();
+    final controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    try {
+      if (controller.value.isPlaying) {
+        await controller.pause();
+      } else {
+        await controller.play();
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Cannot play markdown video',
+        tag: 'MarkdownVideo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -104,6 +162,8 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
     }
 
     final theme = Theme.of(context);
+    final initializeFuture = _initializeFuture;
+    final controller = _controller;
     return Semantics(
       label: videoAlt.isNotEmpty ? 'Video: $videoAlt' : 'Video',
       child: Padding(
@@ -119,43 +179,58 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                 ),
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxHeight: widget.maxVideoHeight),
-                  child: FutureBuilder<void>(
-                    future: _initializeFuture,
-                    builder: (context, snapshot) {
-                      final ready =
-                          snapshot.connectionState == ConnectionState.done;
-                      if (!ready) {
-                        return const AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: Center(child: CircularProgressIndicator()),
-                        );
-                      }
-                      return Stack(
-                        alignment: Alignment.center,
-                        children: <Widget>[
-                          AspectRatio(
-                            aspectRatio: _controller.value.aspectRatio == 0
-                                ? 16 / 9
-                                : _controller.value.aspectRatio,
-                            child: VideoPlayer(_controller),
-                          ),
-                          MessagePressShieldRegion(
-                            child: IconButton.filledTonal(
-                              onPressed: _togglePlayback,
-                              icon: Icon(
-                                _controller.value.isPlaying
-                                    ? Icons.pause
-                                    : Icons.play_arrow,
-                              ),
-                              tooltip: _controller.value.isPlaying
-                                  ? 'Pause'
-                                  : 'Play',
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                  child: _failed || controller == null || initializeFuture == null
+                      ? _MarkdownMediaFailure(
+                          label: videoAlt.isEmpty ? videoUrl : videoAlt,
+                          onTap: () => activateMarkdownLink(videoUrl, null),
+                        )
+                      : FutureBuilder<void>(
+                          future: initializeFuture,
+                          builder: (context, snapshot) {
+                            if (_failed || snapshot.hasError) {
+                              return _MarkdownMediaFailure(
+                                label: videoAlt.isEmpty ? videoUrl : videoAlt,
+                                onTap: () => activateMarkdownLink(videoUrl, null),
+                              );
+                            }
+                            final ready =
+                                snapshot.connectionState ==
+                                ConnectionState.done;
+                            if (!ready) {
+                              return const AspectRatio(
+                                aspectRatio: 16 / 9,
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              );
+                            }
+                            return Stack(
+                              alignment: Alignment.center,
+                              children: <Widget>[
+                                AspectRatio(
+                                  aspectRatio:
+                                      controller.value.aspectRatio == 0
+                                      ? 16 / 9
+                                      : controller.value.aspectRatio,
+                                  child: VideoPlayer(controller),
+                                ),
+                                MessagePressShieldRegion(
+                                  child: IconButton.filledTonal(
+                                    onPressed: _togglePlayback,
+                                    icon: Icon(
+                                      controller.value.isPlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
+                                    ),
+                                    tooltip: controller.value.isPlaying
+                                        ? 'Pause'
+                                        : 'Play',
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
                 ),
               ),
             ),
@@ -175,6 +250,43 @@ class _MarkdownVideoRendererState extends State<MarkdownVideoRenderer> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MarkdownMediaFailure extends StatelessWidget {
+  const _MarkdownMediaFailure({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    return MessagePressShieldRegion(
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.broken_image_outlined, size: 18, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: color,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -467,19 +467,19 @@ size_t PigeonInternalDeepHash(const WindowsEnvironmentOptions &v) {
 
 // WindowsCreateWebViewResult
 
-WindowsCreateWebViewResult::WindowsCreateWebViewResult(int64_t texture_id)
-    : texture_id_(texture_id) {}
+WindowsCreateWebViewResult::WindowsCreateWebViewResult(int64_t view_id)
+    : view_id_(view_id) {}
 
-int64_t WindowsCreateWebViewResult::texture_id() const { return texture_id_; }
+int64_t WindowsCreateWebViewResult::view_id() const { return view_id_; }
 
-void WindowsCreateWebViewResult::set_texture_id(int64_t value_arg) {
-  texture_id_ = value_arg;
+void WindowsCreateWebViewResult::set_view_id(int64_t value_arg) {
+  view_id_ = value_arg;
 }
 
 EncodableList WindowsCreateWebViewResult::ToEncodableList() const {
   EncodableList list;
   list.reserve(1);
-  list.push_back(EncodableValue(texture_id_));
+  list.push_back(EncodableValue(view_id_));
   return list;
 }
 
@@ -491,7 +491,7 @@ WindowsCreateWebViewResult::FromEncodableList(const EncodableList &list) {
 
 bool WindowsCreateWebViewResult::operator==(
     const WindowsCreateWebViewResult &other) const {
-  return PigeonInternalDeepEquals(texture_id_, other.texture_id_);
+  return PigeonInternalDeepEquals(view_id_, other.view_id_);
 }
 
 bool WindowsCreateWebViewResult::operator!=(
@@ -501,15 +501,15 @@ bool WindowsCreateWebViewResult::operator!=(
 
 size_t WindowsCreateWebViewResult::Hash() const {
   size_t result = 1;
-  result = result * 31 + PigeonInternalDeepHash(texture_id_);
+  result = result * 31 + PigeonInternalDeepHash(view_id_);
   return result;
 }
 
 std::ostream &operator<<(std::ostream &os,
                          const WindowsCreateWebViewResult &obj) {
   os << "WindowsCreateWebViewResult(";
-  os << "texture_id: ";
-  os << PigeonInternalToString(obj.texture_id_);
+  os << "view_id: ";
+  os << PigeonInternalToString(obj.view_id_);
   os << ")";
   return os;
 }
@@ -1398,15 +1398,10 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &options_arg =
                   std::any_cast<const WindowsEnvironmentOptions &>(
                       std::get<CustomEncodableValue>(encodable_options_arg));
-              std::optional<FlutterError> output =
-                  api->InitializeEnvironment(options_arg);
-              if (output.has_value()) {
-                reply(WrapError(output.value()));
-                return;
-              }
-              EncodableList wrapped;
-              wrapped.push_back(EncodableValue());
-              reply(EncodableValue(std::move(wrapped)));
+              api->InitializeEnvironment(options_arg, [reply](std::optional<FlutterError> error) {
+                if (error) { reply(WrapError(*error)); return; }
+                reply(EncodableValue(EncodableList{EncodableValue()}));
+              });
             } catch (const std::exception &exception) {
               reply(WrapError(exception.what()));
             }
@@ -1491,15 +1486,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->DisposeWebView(texture_id_arg);
+                  api->DisposeWebView(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1527,13 +1522,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_url_arg = args.at(1);
               if (encodable_url_arg.IsNull()) {
                 reply(WrapError("url_arg unexpectedly null."));
@@ -1541,7 +1536,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &url_arg = std::get<std::string>(encodable_url_arg);
               std::optional<FlutterError> output =
-                  api->LoadUrl(texture_id_arg, url_arg);
+                  api->LoadUrl(view_id_arg, url_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1569,13 +1564,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_request_arg = args.at(1);
               if (encodable_request_arg.IsNull()) {
                 reply(WrapError("request_arg unexpectedly null."));
@@ -1585,7 +1580,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                   std::any_cast<const WindowsLoadRequestData &>(
                       std::get<CustomEncodableValue>(encodable_request_arg));
               std::optional<FlutterError> output =
-                  api->LoadRequest(texture_id_arg, request_arg);
+                  api->LoadRequest(view_id_arg, request_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1613,13 +1608,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_content_arg = args.at(1);
               if (encodable_content_arg.IsNull()) {
                 reply(WrapError("content_arg unexpectedly null."));
@@ -1628,7 +1623,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &content_arg =
                   std::get<std::string>(encodable_content_arg);
               std::optional<FlutterError> output =
-                  api->LoadStringContent(texture_id_arg, content_arg);
+                  api->LoadStringContent(view_id_arg, content_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1656,14 +1651,14 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
-              std::optional<FlutterError> output = api->Reload(texture_id_arg);
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
+              std::optional<FlutterError> output = api->Reload(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1691,14 +1686,14 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
-              std::optional<FlutterError> output = api->Stop(texture_id_arg);
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
+              std::optional<FlutterError> output = api->Stop(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1726,14 +1721,14 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
-              std::optional<FlutterError> output = api->GoBack(texture_id_arg);
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
+              std::optional<FlutterError> output = api->GoBack(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1761,15 +1756,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->GoForward(texture_id_arg);
+                  api->GoForward(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1798,13 +1793,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_script_arg = args.at(1);
               if (encodable_script_arg.IsNull()) {
                 reply(WrapError("script_arg unexpectedly null."));
@@ -1813,7 +1808,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &script_arg =
                   std::get<std::string>(encodable_script_arg);
               api->AddScriptToExecuteOnDocumentCreated(
-                  texture_id_arg, script_arg,
+                  view_id_arg, script_arg,
                   [reply](ErrorOr<std::optional<std::string>> &&output) {
                     if (output.has_error()) {
                       reply(WrapError(output.error()));
@@ -1850,13 +1845,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_script_id_arg = args.at(1);
               if (encodable_script_id_arg.IsNull()) {
                 reply(WrapError("script_id_arg unexpectedly null."));
@@ -1865,7 +1860,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &script_id_arg =
                   std::get<std::string>(encodable_script_id_arg);
               std::optional<FlutterError> output =
-                  api->RemoveScriptToExecuteOnDocumentCreated(texture_id_arg,
+                  api->RemoveScriptToExecuteOnDocumentCreated(view_id_arg,
                                                               script_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
@@ -1894,13 +1889,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_script_arg = args.at(1);
               if (encodable_script_arg.IsNull()) {
                 reply(WrapError("script_arg unexpectedly null."));
@@ -1908,7 +1903,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &script_arg =
                   std::get<std::string>(encodable_script_arg);
-              api->ExecuteScript(texture_id_arg, script_arg,
+              api->ExecuteScript(view_id_arg, script_arg,
                                  [reply](ErrorOr<std::string> &&output) {
                                    if (output.has_error()) {
                                      reply(WrapError(output.error()));
@@ -1939,13 +1934,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_message_arg = args.at(1);
               if (encodable_message_arg.IsNull()) {
                 reply(WrapError("message_arg unexpectedly null."));
@@ -1954,7 +1949,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &message_arg =
                   std::get<std::string>(encodable_message_arg);
               std::optional<FlutterError> output =
-                  api->PostWebMessage(texture_id_arg, message_arg);
+                  api->PostWebMessage(view_id_arg, message_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -1982,18 +1977,18 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_user_agent_arg = args.at(1);
               const auto *user_agent_arg =
                   std::get_if<std::string>(&encodable_user_agent_arg);
               std::optional<FlutterError> output =
-                  api->SetUserAgent(texture_id_arg, user_agent_arg);
+                  api->SetUserAgent(view_id_arg, user_agent_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2021,15 +2016,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               ErrorOr<std::optional<std::string>> output =
-                  api->GetUserAgent(texture_id_arg);
+                  api->GetUserAgent(view_id_arg);
               if (output.has_error()) {
                 reply(WrapError(output.error()));
                 return;
@@ -2063,13 +2058,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_enabled_arg = args.at(1);
               if (encodable_enabled_arg.IsNull()) {
                 reply(WrapError("enabled_arg unexpectedly null."));
@@ -2077,7 +2072,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &enabled_arg = std::get<bool>(encodable_enabled_arg);
               std::optional<FlutterError> output =
-                  api->SetJavaScriptEnabled(texture_id_arg, enabled_arg);
+                  api->SetJavaScriptEnabled(view_id_arg, enabled_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2105,15 +2100,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               api->ClearCookies(
-                  texture_id_arg, [reply](ErrorOr<bool> &&output) {
+                  view_id_arg, [reply](ErrorOr<bool> &&output) {
                     if (output.has_error()) {
                       reply(WrapError(output.error()));
                       return;
@@ -2143,13 +2138,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_cookie_arg = args.at(1);
               if (encodable_cookie_arg.IsNull()) {
                 reply(WrapError("cookie_arg unexpectedly null."));
@@ -2158,7 +2153,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &cookie_arg = std::any_cast<const WindowsCookieData &>(
                   std::get<CustomEncodableValue>(encodable_cookie_arg));
               std::optional<FlutterError> output =
-                  api->SetCookie(texture_id_arg, cookie_arg);
+                  api->SetCookie(view_id_arg, cookie_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2186,20 +2181,20 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_url_arg = args.at(1);
               if (encodable_url_arg.IsNull()) {
                 reply(WrapError("url_arg unexpectedly null."));
                 return;
               }
               const auto &url_arg = std::get<std::string>(encodable_url_arg);
-              api->GetCookies(texture_id_arg, url_arg,
+              api->GetCookies(view_id_arg, url_arg,
                               [reply](ErrorOr<EncodableList> &&output) {
                                 if (output.has_error()) {
                                   reply(WrapError(output.error()));
@@ -2230,13 +2225,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_cookie_arg = args.at(1);
               if (encodable_cookie_arg.IsNull()) {
                 reply(WrapError("cookie_arg unexpectedly null."));
@@ -2245,7 +2240,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &cookie_arg = std::any_cast<const WindowsCookieData &>(
                   std::get<CustomEncodableValue>(encodable_cookie_arg));
               std::optional<FlutterError> output =
-                  api->DeleteCookie(texture_id_arg, cookie_arg);
+                  api->DeleteCookie(view_id_arg, cookie_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2274,13 +2269,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_name_arg = args.at(1);
               if (encodable_name_arg.IsNull()) {
                 reply(WrapError("name_arg unexpectedly null."));
@@ -2294,7 +2289,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &url_arg = std::get<std::string>(encodable_url_arg);
               std::optional<FlutterError> output =
-                  api->DeleteCookiesWithNameAndUrl(texture_id_arg, name_arg,
+                  api->DeleteCookiesWithNameAndUrl(view_id_arg, name_arg,
                                                    url_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
@@ -2324,13 +2319,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_name_arg = args.at(1);
               if (encodable_name_arg.IsNull()) {
                 reply(WrapError("name_arg unexpectedly null."));
@@ -2352,7 +2347,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &path_arg = std::get<std::string>(encodable_path_arg);
               std::optional<FlutterError> output =
                   api->DeleteCookiesWithNameDomainAndPath(
-                      texture_id_arg, name_arg, domain_arg, path_arg);
+                      view_id_arg, name_arg, domain_arg, path_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2380,15 +2375,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->ClearCache(texture_id_arg);
+                  api->ClearCache(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2416,15 +2411,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               api->ClearLocalStorage(
-                  texture_id_arg,
+                  view_id_arg,
                   [reply](std::optional<FlutterError> &&output) {
                     if (output.has_value()) {
                       reply(WrapError(output.value()));
@@ -2454,13 +2449,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_disabled_arg = args.at(1);
               if (encodable_disabled_arg.IsNull()) {
                 reply(WrapError("disabled_arg unexpectedly null."));
@@ -2468,7 +2463,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &disabled_arg = std::get<bool>(encodable_disabled_arg);
               std::optional<FlutterError> output =
-                  api->SetCacheDisabled(texture_id_arg, disabled_arg);
+                  api->SetCacheDisabled(view_id_arg, disabled_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2496,15 +2491,15 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->OpenDevTools(texture_id_arg);
+                  api->OpenDevTools(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2532,13 +2527,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_color_arg = args.at(1);
               if (encodable_color_arg.IsNull()) {
                 reply(WrapError("color_arg unexpectedly null."));
@@ -2546,7 +2541,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const int64_t color_arg = encodable_color_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->SetBackgroundColor(texture_id_arg, color_arg);
+                  api->SetBackgroundColor(view_id_arg, color_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2575,13 +2570,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_enabled_arg = args.at(1);
               if (encodable_enabled_arg.IsNull()) {
                 reply(WrapError("enabled_arg unexpectedly null."));
@@ -2589,7 +2584,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const auto &enabled_arg = std::get<bool>(encodable_enabled_arg);
               std::optional<FlutterError> output =
-                  api->SetZoomControlEnabled(texture_id_arg, enabled_arg);
+                  api->SetZoomControlEnabled(view_id_arg, enabled_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2617,13 +2612,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_zoom_factor_arg = args.at(1);
               if (encodable_zoom_factor_arg.IsNull()) {
                 reply(WrapError("zoom_factor_arg unexpectedly null."));
@@ -2632,7 +2627,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &zoom_factor_arg =
                   std::get<double>(encodable_zoom_factor_arg);
               std::optional<FlutterError> output =
-                  api->SetZoomFactor(texture_id_arg, zoom_factor_arg);
+                  api->SetZoomFactor(view_id_arg, zoom_factor_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2660,13 +2655,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_policy_arg = args.at(1);
               if (encodable_policy_arg.IsNull()) {
                 reply(WrapError("policy_arg unexpectedly null."));
@@ -2674,7 +2669,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const int64_t policy_arg = encodable_policy_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->SetPopupWindowPolicy(texture_id_arg, policy_arg);
+                  api->SetPopupWindowPolicy(view_id_arg, policy_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2703,13 +2698,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_alert_arg = args.at(1);
               if (encodable_alert_arg.IsNull()) {
                 reply(WrapError("alert_arg unexpectedly null."));
@@ -2730,7 +2725,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &prompt_arg = std::get<bool>(encodable_prompt_arg);
               std::optional<FlutterError> output =
                   api->SetJavaScriptDialogCallbacksEnabled(
-                      texture_id_arg, alert_arg, confirm_arg, prompt_arg);
+                      view_id_arg, alert_arg, confirm_arg, prompt_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2758,14 +2753,14 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
-              std::optional<FlutterError> output = api->Suspend(texture_id_arg);
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
+              std::optional<FlutterError> output = api->Suspend(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2793,14 +2788,14 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
-              std::optional<FlutterError> output = api->Resume(texture_id_arg);
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
+              std::optional<FlutterError> output = api->Resume(view_id_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2829,13 +2824,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_mapping_arg = args.at(1);
               if (encodable_mapping_arg.IsNull()) {
                 reply(WrapError("mapping_arg unexpectedly null."));
@@ -2845,7 +2840,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                   std::any_cast<const WindowsVirtualHostMappingData &>(
                       std::get<CustomEncodableValue>(encodable_mapping_arg));
               std::optional<FlutterError> output =
-                  api->SetVirtualHostNameMapping(texture_id_arg, mapping_arg);
+                  api->SetVirtualHostNameMapping(view_id_arg, mapping_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2874,13 +2869,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_host_name_arg = args.at(1);
               if (encodable_host_name_arg.IsNull()) {
                 reply(WrapError("host_name_arg unexpectedly null."));
@@ -2889,7 +2884,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &host_name_arg =
                   std::get<std::string>(encodable_host_name_arg);
               std::optional<FlutterError> output =
-                  api->ClearVirtualHostNameMapping(texture_id_arg,
+                  api->ClearVirtualHostNameMapping(view_id_arg,
                                                    host_name_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
@@ -2918,13 +2913,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_max_fps_arg = args.at(1);
               if (encodable_max_fps_arg.IsNull()) {
                 reply(WrapError("max_fps_arg unexpectedly null."));
@@ -2932,7 +2927,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               }
               const int64_t max_fps_arg = encodable_max_fps_arg.LongValue();
               std::optional<FlutterError> output =
-                  api->SetFpsLimit(texture_id_arg, max_fps_arg);
+                  api->SetFpsLimit(view_id_arg, max_fps_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -2960,13 +2955,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_update_arg = args.at(1);
               if (encodable_update_arg.IsNull()) {
                 reply(WrapError("update_arg unexpectedly null."));
@@ -2976,7 +2971,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                   std::any_cast<const WindowsPointerUpdateData &>(
                       std::get<CustomEncodableValue>(encodable_update_arg));
               std::optional<FlutterError> output =
-                  api->SetPointerUpdate(texture_id_arg, update_arg);
+                  api->SetPointerUpdate(view_id_arg, update_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -3004,13 +2999,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_position_arg = args.at(1);
               if (encodable_position_arg.IsNull()) {
                 reply(WrapError("position_arg unexpectedly null."));
@@ -3020,7 +3015,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                   std::any_cast<const WindowsPointData &>(
                       std::get<CustomEncodableValue>(encodable_position_arg));
               std::optional<FlutterError> output =
-                  api->SetCursorPos(texture_id_arg, position_arg);
+                  api->SetCursorPos(view_id_arg, position_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -3048,13 +3043,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_button_arg = args.at(1);
               if (encodable_button_arg.IsNull()) {
                 reply(WrapError("button_arg unexpectedly null."));
@@ -3064,7 +3059,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                   std::any_cast<const WindowsPointerButtonData &>(
                       std::get<CustomEncodableValue>(encodable_button_arg));
               std::optional<FlutterError> output =
-                  api->SetPointerButton(texture_id_arg, button_arg);
+                  api->SetPointerButton(view_id_arg, button_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;
@@ -3092,13 +3087,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_delta_arg = args.at(1);
               if (encodable_delta_arg.IsNull()) {
                 reply(WrapError("delta_arg unexpectedly null."));
@@ -3115,7 +3110,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &control_key_pressed_arg =
                   std::get<bool>(encodable_control_key_pressed_arg);
               std::optional<FlutterError> output =
-                  api->SetScrollDelta(texture_id_arg, delta_arg,
+                  api->SetScrollDelta(view_id_arg, delta_arg,
                                       control_key_pressed_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
@@ -3144,13 +3139,13 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
                 const ::flutter::MessageReply<EncodableValue> &reply) {
             try {
               const auto &args = std::get<EncodableList>(message);
-              const auto &encodable_texture_id_arg = args.at(0);
-              if (encodable_texture_id_arg.IsNull()) {
-                reply(WrapError("texture_id_arg unexpectedly null."));
+              const auto &encodable_view_id_arg = args.at(0);
+              if (encodable_view_id_arg.IsNull()) {
+                reply(WrapError("view_id_arg unexpectedly null."));
                 return;
               }
-              const int64_t texture_id_arg =
-                  encodable_texture_id_arg.LongValue();
+              const int64_t view_id_arg =
+                  encodable_view_id_arg.LongValue();
               const auto &encodable_size_arg = args.at(1);
               if (encodable_size_arg.IsNull()) {
                 reply(WrapError("size_arg unexpectedly null."));
@@ -3159,7 +3154,7 @@ void WindowsWebViewHostApi::SetUp(::flutter::BinaryMessenger *binary_messenger,
               const auto &size_arg = std::any_cast<const WindowsSizeData &>(
                   std::get<CustomEncodableValue>(encodable_size_arg));
               std::optional<FlutterError> output =
-                  api->SetSize(texture_id_arg, size_arg);
+                  api->SetSize(view_id_arg, size_arg);
               if (output.has_value()) {
                 reply(WrapError(output.value()));
                 return;

@@ -8,9 +8,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -37,28 +35,29 @@ RELEASE_DIR = REPO_ROOT / "tools" / "release"
 DIST_DIR = RELEASE_DIR / "dist"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
-OHOS_FVM_CACHE_DIR = REPO_ROOT / ".ci-tools" / "fvm-ohos"
-OHOS_FLUTTER_REF = "8c403dd30158e63b8efccf988b129093820886c9"
-OHOS_FLUTTER_GIT_URL = "https://gitcode.com/openharmony-sig/flutter_flutter.git"
-OHOS_ONLY_DEPENDENCIES = frozenset(
-    {
-        "file_selector_ohos",
-        "path_provider_ohos",
-        "url_launcher_ohos",
-        "video_player_ohos",
-    }
-)
-FLUTTER_BUILD_STAGED_DEPENDENCIES = OHOS_ONLY_DEPENDENCIES | frozenset({"integration_test"})
 _fvm_sdk_prepared = False
-_ohos_fvm_sdk_prepared = False
 
 
 def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
+    """Run a command without opening child console windows on Windows."""
     print("+ " + " ".join(str(part) for part in command), flush=True)
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
-    subprocess.run([str(part) for part in command], cwd=cwd, env=merged_env, check=True)
+    subprocess_options: dict[str, object] = {}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        subprocess_options["startupinfo"] = startupinfo
+        subprocess_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    subprocess.run(
+        [str(part) for part in command],
+        cwd=cwd,
+        env=merged_env,
+        check=True,
+        **subprocess_options,
+    )
 
 
 def require_command(name: str) -> str:
@@ -224,63 +223,6 @@ def prepare_web_access_embedded_assets() -> None:
         )
 
 
-def remove_direct_dependencies_from_pubspec(
-    pubspec: Path,
-    dependency_names: frozenset[str],
-    dependency_sections: frozenset[str] = frozenset({"dependencies"}),
-) -> str:
-    """Stages a pubspec without the requested declarations that are present."""
-    original = pubspec.read_text(encoding="utf-8")
-    lines = original.splitlines(keepends=True)
-    staged: list[str] = []
-    current_section: str | None = None
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        stripped_line = line.rstrip("\r\n")
-        if not line.startswith(" ") and stripped_line.endswith(":"):
-            current_section = stripped_line.removesuffix(":")
-        elif not line.startswith(" ") and line.strip():
-            current_section = None
-        if (
-            current_section in dependency_sections
-            and line.startswith("  ")
-            and not line.startswith("    ")
-            and line.rstrip("\r\n").endswith(":")
-        ):
-            dependency_name = line.strip().removesuffix(":")
-            if dependency_name in dependency_names:
-                index += 1
-                while index < len(lines) and lines[index].startswith("    "):
-                    index += 1
-                continue
-        staged.append(line)
-        index += 1
-    with pubspec.open("w", encoding="utf-8", newline="") as output:
-        output.write("".join(staged))
-    return original
-
-
-@contextmanager
-def staged_non_ohos_flutter_dependencies() -> Iterator[None]:
-    """Stages and restores the Flutter dependency view used by non-OpenHarmony targets."""
-    pubspec = FLUTTER_APP_DIR / "pubspec.yaml"
-    pubspec_lock = FLUTTER_APP_DIR / "pubspec.lock"
-    original_pubspec = remove_direct_dependencies_from_pubspec(
-        pubspec,
-        FLUTTER_BUILD_STAGED_DEPENDENCIES,
-        frozenset({"dependencies", "dev_dependencies"}),
-    )
-    original_pubspec_lock = pubspec_lock.read_text(encoding="utf-8")
-    try:
-        yield
-    finally:
-        with pubspec.open("w", encoding="utf-8", newline="") as output:
-            output.write(original_pubspec)
-        with pubspec_lock.open("w", encoding="utf-8", newline="") as output:
-            output.write(original_pubspec_lock)
-
-
 def copy_required_file(source: Path, destination: Path) -> None:
     if not source.exists():
         raise RuntimeError(f"Expected build output not found: {source}")
@@ -342,7 +284,7 @@ def prepare_fvm_flutter_sdk() -> None:
     executable = FLUTTER_APP_DIR / ".fvm" / "flutter_sdk" / "bin" / executable_name
     if not executable.is_file():
         raise RuntimeError(f"FVM SDK command not found: {executable}")
-    run([str(executable), "precache", "--web"], cwd=FLUTTER_APP_DIR)
+    run([fvm, "flutter", "precache", "--web", "--ohos"], cwd=FLUTTER_APP_DIR)
     _fvm_sdk_prepared = True
 
 
@@ -366,48 +308,6 @@ def dart_command() -> str:
     return fvm_sdk_command("dart")
 
 
-def ohos_fvm_env(env: dict[str, str]) -> dict[str, str]:
-    """Builds the isolated FVM environment for OpenHarmony Flutter commands."""
-    configured = env.copy()
-    configured["FLUTTER_GIT_URL"] = OHOS_FLUTTER_GIT_URL
-    configured["FVM_CACHE_PATH"] = str(OHOS_FVM_CACHE_DIR)
-    return configured
-
-
-def prepare_ohos_fvm_flutter_sdk(env: dict[str, str]) -> None:
-    """Installs and precaches the fixed OpenHarmony Flutter SDK through FVM."""
-    global _ohos_fvm_sdk_prepared
-    if _ohos_fvm_sdk_prepared:
-        return
-    fvm = require_command("fvm")
-    run(
-        [fvm, "spawn", OHOS_FLUTTER_REF, "precache", "--ohos"],
-        cwd=FLUTTER_APP_DIR,
-        env=ohos_fvm_env(env),
-    )
-    executable_name = "flutter.bat" if host_platform() == "windows" else "flutter"
-    executable = ohos_fvm_flutter_sdk_dir() / "bin" / executable_name
-    if not executable.is_file():
-        raise RuntimeError(f"OpenHarmony FVM SDK command not found: {executable}")
-    _ohos_fvm_sdk_prepared = True
-
-
-def ohos_fvm_flutter_sdk_dir() -> Path:
-    """Returns the isolated FVM cache directory for the OpenHarmony Flutter SDK."""
-    return OHOS_FVM_CACHE_DIR / "versions" / OHOS_FLUTTER_REF
-
-
-def run_ohos_fvm_flutter(args: list[str], env: dict[str, str]) -> None:
-    """Runs one OpenHarmony Flutter command through its dedicated FVM SDK."""
-    prepare_ohos_fvm_flutter_sdk(env)
-    fvm = require_command("fvm")
-    run(
-        [fvm, "spawn", OHOS_FLUTTER_REF, *args],
-        cwd=FLUTTER_APP_DIR,
-        env=ohos_fvm_env(env),
-    )
-
-
 def node_package_command(name: str) -> str:
     command = f"{name}.cmd" if host_platform() == "windows" else name
     return require_command(command)
@@ -419,6 +319,7 @@ def node_bin_command(root: Path, name: str) -> Path:
 
 
 def unescape_java_properties_value(value: str) -> str:
+    """Decodes escaped characters in a Java properties value."""
     return value.replace("\\\\", "\\").replace("\\:", ":").replace("\\=", "=").replace("\\n", "\n")
 
 

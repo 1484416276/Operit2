@@ -3,7 +3,11 @@
 #include <flutter/event_channel.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
-#include <flutter/texture_registrar.h>
+#include <flutter_windows.h>
+
+#ifndef FLUTTER_WINDOWS_NATIVE_COMPOSITION_VERSION
+#error This plugin requires the AAswordman/flutter-ohos native composition engine.
+#endif
 
 #include <functional>
 #include <memory>
@@ -12,8 +16,6 @@
 #include <string>
 #include <vector>
 
-#include "rendering/graphics_context.h"
-#include "rendering/texture_bridge.h"
 #include "webview/webview.h"
 
 namespace webview_all_windows {
@@ -25,14 +27,14 @@ public:
                          size_t width, size_t height)>;
 
   WebviewBridge(flutter::BinaryMessenger *messenger,
-                flutter::TextureRegistrar *texture_registrar,
-                GraphicsContext *graphics_context,
+                FlutterDesktopNativeCompositionRef composition,
                 std::unique_ptr<Webview> webview);
   ~WebviewBridge();
 
-  TextureBridge *texture_bridge() const { return texture_bridge_.get(); }
+  /// Removes channel callbacks before an explicit Dart-side disposal.
+  void DisposeChannels();
 
-  int64_t texture_id() const { return texture_id_; }
+  int64_t view_id() const { return view_id_; }
 
   void SetCursorPos(double x, double y);
   void SetPointerUpdate(int64_t pointer, int64_t event, double x, double y,
@@ -95,14 +97,12 @@ public:
   void ClearLocalStorage(Webview::OperationCompletedCallback callback);
   bool SetCacheDisabled(bool disabled);
   void SetPopupWindowPolicy(int64_t policy);
-  void SetFpsLimit(int64_t max_fps);
 
   /// Starts or stops compositor capture without suspending the page.
   void SetCaptureEnabled(bool enabled);
 
 private:
-  std::unique_ptr<flutter::TextureVariant> flutter_texture_;
-  std::unique_ptr<TextureBridge> texture_bridge_;
+  FlutterDesktopNativeCompositionRef composition_;
   std::unique_ptr<Webview> webview_;
   std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> event_sink_;
   std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>
@@ -110,23 +110,8 @@ private:
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       method_channel_;
 
-  flutter::TextureRegistrar *texture_registrar_;
-  int64_t texture_id_;
-  std::mutex surface_frame_capture_mutex_;
-  std::vector<SurfaceFrameCaptureCallback> pending_surface_frame_captures_;
-  bool surface_frame_readback_active_ = false;
-  bool capture_enabled_ = true;
-
+  int64_t view_id_;
   void RegisterEventHandlers();
-  void OnTextureFrameAvailable();
-
-  /// Starts one worker readback for all pending method calls.
-  void StartSurfaceFrameReadback();
-
-  /// Resolves pending method calls after worker readback completes.
-  void OnSurfaceFrameReadbackCompleted(bool success,
-                                       const std::vector<uint8_t> &data,
-                                       Size size);
 
   template <typename T> void EmitEvent(const T &value) {
     if (event_sink_) {

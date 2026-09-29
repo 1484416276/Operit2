@@ -102,10 +102,10 @@ private:
 class WindowsCreateWebViewResult {
 public:
   // Constructs an object setting all fields.
-  explicit WindowsCreateWebViewResult(int64_t texture_id);
+  explicit WindowsCreateWebViewResult(int64_t view_id);
 
-  int64_t texture_id() const;
-  void set_texture_id(int64_t value_arg);
+  int64_t view_id() const;
+  void set_view_id(int64_t value_arg);
 
   bool operator==(const WindowsCreateWebViewResult &other) const;
   bool operator!=(const WindowsCreateWebViewResult &other) const;
@@ -122,7 +122,7 @@ private:
   ::flutter::EncodableList ToEncodableList() const;
   friend class WindowsWebViewHostApi;
   friend class PigeonInternalCodecSerializer;
-  int64_t texture_id_;
+  int64_t view_id_;
 };
 
 // Generated class from Pigeon that represents data sent in messages.
@@ -452,97 +452,97 @@ public:
   WindowsWebViewHostApi(const WindowsWebViewHostApi &) = delete;
   WindowsWebViewHostApi &operator=(const WindowsWebViewHostApi &) = delete;
   virtual ~WindowsWebViewHostApi() {}
-  virtual std::optional<FlutterError>
-  InitializeEnvironment(const WindowsEnvironmentOptions &options) = 0;
+  virtual void InitializeEnvironment(const WindowsEnvironmentOptions &options,
+      std::function<void(std::optional<FlutterError>)> result) = 0;
   virtual ErrorOr<std::optional<std::string>> GetWebViewVersion() = 0;
   virtual void
   CreateWebView(std::function<void(ErrorOr<WindowsCreateWebViewResult> reply)>
                     result) = 0;
-  virtual std::optional<FlutterError> DisposeWebView(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> LoadUrl(int64_t texture_id,
+  virtual std::optional<FlutterError> DisposeWebView(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> LoadUrl(int64_t view_id,
                                               const std::string &url) = 0;
   virtual std::optional<FlutterError>
-  LoadRequest(int64_t texture_id, const WindowsLoadRequestData &request) = 0;
+  LoadRequest(int64_t view_id, const WindowsLoadRequestData &request) = 0;
   virtual std::optional<FlutterError>
-  LoadStringContent(int64_t texture_id, const std::string &content) = 0;
-  virtual std::optional<FlutterError> Reload(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> Stop(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> GoBack(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> GoForward(int64_t texture_id) = 0;
+  LoadStringContent(int64_t view_id, const std::string &content) = 0;
+  virtual std::optional<FlutterError> Reload(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> Stop(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> GoBack(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> GoForward(int64_t view_id) = 0;
   virtual void AddScriptToExecuteOnDocumentCreated(
-      int64_t texture_id, const std::string &script,
+      int64_t view_id, const std::string &script,
       std::function<void(ErrorOr<std::optional<std::string>> reply)>
           result) = 0;
   virtual std::optional<FlutterError>
-  RemoveScriptToExecuteOnDocumentCreated(int64_t texture_id,
+  RemoveScriptToExecuteOnDocumentCreated(int64_t view_id,
                                          const std::string &script_id) = 0;
   virtual void
-  ExecuteScript(int64_t texture_id, const std::string &script,
+  ExecuteScript(int64_t view_id, const std::string &script,
                 std::function<void(ErrorOr<std::string> reply)> result) = 0;
   virtual std::optional<FlutterError>
-  PostWebMessage(int64_t texture_id, const std::string &message) = 0;
+  PostWebMessage(int64_t view_id, const std::string &message) = 0;
   virtual std::optional<FlutterError>
-  SetUserAgent(int64_t texture_id, const std::string *user_agent) = 0;
+  SetUserAgent(int64_t view_id, const std::string *user_agent) = 0;
   virtual ErrorOr<std::optional<std::string>>
-  GetUserAgent(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> SetJavaScriptEnabled(int64_t texture_id,
+  GetUserAgent(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> SetJavaScriptEnabled(int64_t view_id,
                                                            bool enabled) = 0;
   virtual void
-  ClearCookies(int64_t texture_id,
+  ClearCookies(int64_t view_id,
                std::function<void(ErrorOr<bool> reply)> result) = 0;
   virtual std::optional<FlutterError>
-  SetCookie(int64_t texture_id, const WindowsCookieData &cookie) = 0;
+  SetCookie(int64_t view_id, const WindowsCookieData &cookie) = 0;
   virtual void GetCookies(
-      int64_t texture_id, const std::string &url,
+      int64_t view_id, const std::string &url,
       std::function<void(ErrorOr<::flutter::EncodableList> reply)> result) = 0;
   virtual std::optional<FlutterError>
-  DeleteCookie(int64_t texture_id, const WindowsCookieData &cookie) = 0;
+  DeleteCookie(int64_t view_id, const WindowsCookieData &cookie) = 0;
   virtual std::optional<FlutterError>
-  DeleteCookiesWithNameAndUrl(int64_t texture_id, const std::string &name,
+  DeleteCookiesWithNameAndUrl(int64_t view_id, const std::string &name,
                               const std::string &url) = 0;
   virtual std::optional<FlutterError> DeleteCookiesWithNameDomainAndPath(
-      int64_t texture_id, const std::string &name, const std::string &domain,
+      int64_t view_id, const std::string &name, const std::string &domain,
       const std::string &path) = 0;
-  virtual std::optional<FlutterError> ClearCache(int64_t texture_id) = 0;
+  virtual std::optional<FlutterError> ClearCache(int64_t view_id) = 0;
   virtual void ClearLocalStorage(
-      int64_t texture_id,
+      int64_t view_id,
       std::function<void(std::optional<FlutterError> reply)> result) = 0;
-  virtual std::optional<FlutterError> SetCacheDisabled(int64_t texture_id,
+  virtual std::optional<FlutterError> SetCacheDisabled(int64_t view_id,
                                                        bool disabled) = 0;
-  virtual std::optional<FlutterError> OpenDevTools(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> SetBackgroundColor(int64_t texture_id,
+  virtual std::optional<FlutterError> OpenDevTools(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> SetBackgroundColor(int64_t view_id,
                                                          int64_t color) = 0;
-  virtual std::optional<FlutterError> SetZoomControlEnabled(int64_t texture_id,
+  virtual std::optional<FlutterError> SetZoomControlEnabled(int64_t view_id,
                                                             bool enabled) = 0;
-  virtual std::optional<FlutterError> SetZoomFactor(int64_t texture_id,
+  virtual std::optional<FlutterError> SetZoomFactor(int64_t view_id,
                                                     double zoom_factor) = 0;
-  virtual std::optional<FlutterError> SetPopupWindowPolicy(int64_t texture_id,
+  virtual std::optional<FlutterError> SetPopupWindowPolicy(int64_t view_id,
                                                            int64_t policy) = 0;
   virtual std::optional<FlutterError>
-  SetJavaScriptDialogCallbacksEnabled(int64_t texture_id, bool alert,
+  SetJavaScriptDialogCallbacksEnabled(int64_t view_id, bool alert,
                                       bool confirm, bool prompt) = 0;
-  virtual std::optional<FlutterError> Suspend(int64_t texture_id) = 0;
-  virtual std::optional<FlutterError> Resume(int64_t texture_id) = 0;
+  virtual std::optional<FlutterError> Suspend(int64_t view_id) = 0;
+  virtual std::optional<FlutterError> Resume(int64_t view_id) = 0;
   virtual std::optional<FlutterError>
-  SetVirtualHostNameMapping(int64_t texture_id,
+  SetVirtualHostNameMapping(int64_t view_id,
                             const WindowsVirtualHostMappingData &mapping) = 0;
   virtual std::optional<FlutterError>
-  ClearVirtualHostNameMapping(int64_t texture_id,
+  ClearVirtualHostNameMapping(int64_t view_id,
                               const std::string &host_name) = 0;
-  virtual std::optional<FlutterError> SetFpsLimit(int64_t texture_id,
+  virtual std::optional<FlutterError> SetFpsLimit(int64_t view_id,
                                                   int64_t max_fps) = 0;
   virtual std::optional<FlutterError>
-  SetPointerUpdate(int64_t texture_id,
+  SetPointerUpdate(int64_t view_id,
                    const WindowsPointerUpdateData &update) = 0;
   virtual std::optional<FlutterError>
-  SetCursorPos(int64_t texture_id, const WindowsPointData &position) = 0;
+  SetCursorPos(int64_t view_id, const WindowsPointData &position) = 0;
   virtual std::optional<FlutterError>
-  SetPointerButton(int64_t texture_id,
+  SetPointerButton(int64_t view_id,
                    const WindowsPointerButtonData &button) = 0;
   virtual std::optional<FlutterError>
-  SetScrollDelta(int64_t texture_id, const WindowsPointData &delta,
+  SetScrollDelta(int64_t view_id, const WindowsPointData &delta,
                  bool control_key_pressed) = 0;
-  virtual std::optional<FlutterError> SetSize(int64_t texture_id,
+  virtual std::optional<FlutterError> SetSize(int64_t view_id,
                                               const WindowsSizeData &size) = 0;
 
   // The codec used by WindowsWebViewHostApi.

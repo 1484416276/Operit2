@@ -11,53 +11,42 @@ using namespace Microsoft::WRL;
 
 namespace webview_all_windows {
 
-// static
-std::unique_ptr<WebviewHost>
-WebviewHost::Create(WebviewPlatform *platform,
-                    std::optional<std::wstring> user_data_directory,
-                    std::optional<std::wstring> browser_exe_path,
-                    std::optional<std::string> arguments) {
-  wil::com_ptr<CoreWebView2EnvironmentOptions> opts;
-  if (arguments.has_value()) {
-    opts = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
-    std::wstring warguments(arguments.value().begin(), arguments.value().end());
-    opts->put_AdditionalBrowserArguments(warguments.c_str());
+// Creates WebView2 without blocking the STA message loop needed by its callback.
+void WebviewHost::Create(
+    std::optional<std::wstring> user_data_directory,
+    std::optional<std::wstring> browser_exe_path,
+    std::optional<std::string> arguments,
+    std::function<void(std::shared_ptr<WebviewHost>, HRESULT)> callback) {
+  auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+  if (arguments) {
+    const auto value = util::Utf16FromUtf8(*arguments);
+    options->put_AdditionalBrowserArguments(value.c_str());
   }
-
-  std::promise<HRESULT> result_promise;
-  wil::com_ptr<ICoreWebView2Environment> env;
-  auto result = CreateCoreWebView2EnvironmentWithOptions(
-      browser_exe_path.has_value() ? browser_exe_path->c_str() : nullptr,
-      user_data_directory.has_value() ? user_data_directory->c_str() : nullptr,
-      opts.get(),
+  const HRESULT started = CreateCoreWebView2EnvironmentWithOptions(
+      browser_exe_path ? browser_exe_path->c_str() : nullptr,
+      user_data_directory ? user_data_directory->c_str() : nullptr,
+      options.Get(),
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-          [&promise = result_promise,
-           &ptr = env](HRESULT r, ICoreWebView2Environment *env) -> HRESULT {
-            promise.set_value(r);
-            ptr.swap(env);
+          [callback](HRESULT error, ICoreWebView2Environment* environment) -> HRESULT {
+            if (FAILED(error) || !environment) {
+              callback(nullptr, FAILED(error) ? error : E_POINTER);
+              return S_OK;
+            }
+            wil::com_ptr<ICoreWebView2Environment3> environment3;
+            const HRESULT query = environment->QueryInterface(IID_PPV_ARGS(&environment3));
+            if (FAILED(query)) {
+              callback(nullptr, query);
+              return S_OK;
+            }
+            callback(std::shared_ptr<WebviewHost>(new WebviewHost(std::move(environment3))), S_OK);
             return S_OK;
-          })
-          .Get());
-
-  if (SUCCEEDED(result)) {
-    result = result_promise.get_future().get();
-    if ((SUCCEEDED(result) || result == RPC_E_CHANGED_MODE) && env) {
-      auto webview_env3 = env.try_query<ICoreWebView2Environment3>();
-      if (webview_env3) {
-        return std::unique_ptr<WebviewHost>(
-            new WebviewHost(platform, std::move(webview_env3)));
-      }
-    }
-  }
-
-  return {};
+          }).Get());
+  if (FAILED(started)) callback(nullptr, started);
 }
 
-WebviewHost::WebviewHost(WebviewPlatform *platform,
-                         wil::com_ptr<ICoreWebView2Environment3> webview_env)
-    : webview_env_(webview_env) {
-  compositor_ = platform->graphics_context()->CreateCompositor();
-}
+// Retains the environment used by all controllers owned by this plugin.
+WebviewHost::WebviewHost(wil::com_ptr<ICoreWebView2Environment3> environment)
+    : webview_env_(std::move(environment)) {}
 
 void WebviewHost::CreateWebview(HWND hwnd, bool offscreen_only,
                                 bool owns_window,

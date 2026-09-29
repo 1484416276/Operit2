@@ -1,11 +1,9 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 
 import 'MarkdownAudioRenderer.dart';
+import 'MarkdownRemoteImage.dart';
 import 'MarkdownVideoRenderer.dart';
 
 class MarkdownImageRenderer extends StatelessWidget {
@@ -14,11 +12,13 @@ class MarkdownImageRenderer extends StatelessWidget {
     required this.imageMarkdown,
     required this.textColor,
     this.maxImageHeight = 140,
+    this.onOpenLink,
   });
 
   final String imageMarkdown;
   final Color textColor;
   final double maxImageHeight;
+  final void Function(String url)? onOpenLink;
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +51,11 @@ class MarkdownImageRenderer extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxImageHeight),
-          child: _MarkdownImageBody(imageUrl: imageUrl, imageAlt: imageAlt),
+          child: _MarkdownImageBody(
+            imageUrl: imageUrl,
+            imageAlt: imageAlt,
+            onOpenLink: onOpenLink,
+          ),
         ),
       ),
     );
@@ -59,21 +63,22 @@ class MarkdownImageRenderer extends StatelessWidget {
 }
 
 class _MarkdownImageBody extends StatelessWidget {
-  const _MarkdownImageBody({required this.imageUrl, required this.imageAlt});
+  const _MarkdownImageBody({
+    required this.imageUrl,
+    required this.imageAlt,
+    required this.onOpenLink,
+  });
 
   final String imageUrl;
   final String imageAlt;
+  final void Function(String url)? onOpenLink;
 
   @override
   Widget build(BuildContext context) {
-    final dataBytes = _dataUriBytes(imageUrl);
-    if (dataBytes != null) {
-      return Image.memory(dataBytes, fit: BoxFit.contain);
-    }
-    return Image.network(
-      imageUrl,
-      fit: BoxFit.contain,
-      semanticLabel: imageAlt.isEmpty ? null : imageAlt,
+    return MarkdownRemoteImage(
+      url: imageUrl,
+      alt: imageAlt,
+      onOpenLink: onOpenLink,
     );
   }
 }
@@ -88,17 +93,12 @@ String extractMarkdownImageAlt(String imageContent) {
 }
 
 String extractMarkdownImageUrl(String imageContent) {
-  return RegExp(r'\]\(([^)]+)\)$').firstMatch(imageContent.trim())?.group(1) ??
+  final destination =
+      RegExp(r'\]\(([^)]+)\)$').firstMatch(imageContent.trim())?.group(1) ??
       '';
+  return destination
+      .replaceFirst(RegExp(r"""\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$"""), '')
+      .trim();
 }
 
-Uint8List? _dataUriBytes(String imageUrl) {
-  final match = RegExp(
-    r'^data:image/[^;]+;base64,(.+)$',
-    caseSensitive: false,
-  ).firstMatch(imageUrl);
-  if (match == null) {
-    return null;
-  }
-  return base64Decode(match.group(1)!);
-}
+

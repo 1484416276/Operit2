@@ -18,7 +18,6 @@ from common import (
     require_command,
     prepare_web_access_embedded_assets,
     run,
-    staged_non_ohos_flutter_dependencies,
 )
 from prepare_apple_sherpa import prepare_apple_sherpa
 
@@ -67,18 +66,15 @@ def main() -> int:
         generate_dart_proxy_artifacts()
 
     prepare_python_command()
-    with staged_non_ohos_flutter_dependencies():
-        flutter_pub_get(env=env)
-        if args.enforce_lockfile:
-            flutter_pub_get(enforce_lockfile=True, env=env)
+    flutter_pub_get(enforce_lockfile=args.enforce_lockfile, env=env)
 
-        command = [flutter, "build", "ios", "--release", "--no-pub", "--no-codesign"]
-        if args.build_name:
-            command.extend(["--build-name", args.build_name])
-        if args.build_number:
-            command.extend(["--build-number", args.build_number])
-        command.append("-v")
-        run(command, cwd=FLUTTER_APP_DIR, env=env)
+    command = [flutter, "build", "ios", "--release", "--no-pub", "--no-codesign"]
+    if args.build_name:
+        command.extend(["--build-name", args.build_name])
+    if args.build_number:
+        command.extend(["--build-number", args.build_number])
+    command.append("-v")
+    run(command, cwd=FLUTTER_APP_DIR, env=env)
 
     if not args.skip_package:
         archive_path = package_ios_app(args.archive_path)

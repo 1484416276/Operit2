@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Operit Plugin SDK · Vite example</title>
+  </head>
+  <body>
+    <main class="page-shell">
+      <p class="eyebrow">Operit Plugin SDK</p>
+      <h1>Plugin catalog from a Vite app</h1>
+      <p class="intro">
+        The Vite server calls the TypeScript SDK over the native host carrier.
+        This page renders the response through a small same-origin API.
+      </p>
+      <button id="refresh" type="button">Refresh catalog</button>
+      <p id="status" role="status">Loading plugin catalog…</p>
+      <section id="catalog" aria-live="polite"></section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

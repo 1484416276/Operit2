@@ -21,9 +21,9 @@ class WindowsEnvironmentOptions {
 }
 
 class WindowsCreateWebViewResult {
-  WindowsCreateWebViewResult({required this.textureId});
+  WindowsCreateWebViewResult({required this.viewId});
 
-  int textureId;
+  int viewId;
 }
 
 class WindowsCookieData {
@@ -122,6 +122,7 @@ class WindowsLoadRequestData {
 
 @HostApi()
 abstract class WindowsWebViewHostApi {
+  @async
   void initializeEnvironment(WindowsEnvironmentOptions options);
 
   String? getWebViewVersion();
@@ -129,105 +130,105 @@ abstract class WindowsWebViewHostApi {
   @async
   WindowsCreateWebViewResult createWebView();
 
-  void disposeWebView(int textureId);
+  void disposeWebView(int viewId);
 
-  void loadUrl(int textureId, String url);
+  void loadUrl(int viewId, String url);
 
-  void loadRequest(int textureId, WindowsLoadRequestData request);
+  void loadRequest(int viewId, WindowsLoadRequestData request);
 
-  void loadStringContent(int textureId, String content);
+  void loadStringContent(int viewId, String content);
 
-  void reload(int textureId);
+  void reload(int viewId);
 
-  void stop(int textureId);
+  void stop(int viewId);
 
-  void goBack(int textureId);
+  void goBack(int viewId);
 
-  void goForward(int textureId);
-
-  @async
-  String? addScriptToExecuteOnDocumentCreated(int textureId, String script);
-
-  void removeScriptToExecuteOnDocumentCreated(int textureId, String scriptId);
+  void goForward(int viewId);
 
   @async
-  String executeScript(int textureId, String script);
+  String? addScriptToExecuteOnDocumentCreated(int viewId, String script);
 
-  void postWebMessage(int textureId, String message);
-
-  void setUserAgent(int textureId, String? userAgent);
-
-  String? getUserAgent(int textureId);
-
-  void setJavaScriptEnabled(int textureId, bool enabled);
+  void removeScriptToExecuteOnDocumentCreated(int viewId, String scriptId);
 
   @async
-  bool clearCookies(int textureId);
+  String executeScript(int viewId, String script);
 
-  void setCookie(int textureId, WindowsCookieData cookie);
+  void postWebMessage(int viewId, String message);
+
+  void setUserAgent(int viewId, String? userAgent);
+
+  String? getUserAgent(int viewId);
+
+  void setJavaScriptEnabled(int viewId, bool enabled);
 
   @async
-  List<WindowsCookieData?> getCookies(int textureId, String url);
+  bool clearCookies(int viewId);
 
-  void deleteCookie(int textureId, WindowsCookieData cookie);
+  void setCookie(int viewId, WindowsCookieData cookie);
 
-  void deleteCookiesWithNameAndUrl(int textureId, String name, String url);
+  @async
+  List<WindowsCookieData?> getCookies(int viewId, String url);
+
+  void deleteCookie(int viewId, WindowsCookieData cookie);
+
+  void deleteCookiesWithNameAndUrl(int viewId, String name, String url);
 
   void deleteCookiesWithNameDomainAndPath(
-    int textureId,
+    int viewId,
     String name,
     String domain,
     String path,
   );
 
-  void clearCache(int textureId);
+  void clearCache(int viewId);
 
   @async
-  void clearLocalStorage(int textureId);
+  void clearLocalStorage(int viewId);
 
-  void setCacheDisabled(int textureId, bool disabled);
+  void setCacheDisabled(int viewId, bool disabled);
 
-  void openDevTools(int textureId);
+  void openDevTools(int viewId);
 
-  void setBackgroundColor(int textureId, int color);
+  void setBackgroundColor(int viewId, int color);
 
-  void setZoomControlEnabled(int textureId, bool enabled);
+  void setZoomControlEnabled(int viewId, bool enabled);
 
-  void setZoomFactor(int textureId, double zoomFactor);
+  void setZoomFactor(int viewId, double zoomFactor);
 
-  void setPopupWindowPolicy(int textureId, int policy);
+  void setPopupWindowPolicy(int viewId, int policy);
 
   void setJavaScriptDialogCallbacksEnabled(
-    int textureId,
+    int viewId,
     bool alert,
     bool confirm,
     bool prompt,
   );
 
-  void suspend(int textureId);
+  void suspend(int viewId);
 
-  void resume(int textureId);
+  void resume(int viewId);
 
   void setVirtualHostNameMapping(
-    int textureId,
+    int viewId,
     WindowsVirtualHostMappingData mapping,
   );
 
-  void clearVirtualHostNameMapping(int textureId, String hostName);
+  void clearVirtualHostNameMapping(int viewId, String hostName);
 
-  void setFpsLimit(int textureId, int maxFps);
+  void setFpsLimit(int viewId, int maxFps);
 
-  void setPointerUpdate(int textureId, WindowsPointerUpdateData update);
+  void setPointerUpdate(int viewId, WindowsPointerUpdateData update);
 
-  void setCursorPos(int textureId, WindowsPointData position);
+  void setCursorPos(int viewId, WindowsPointData position);
 
-  void setPointerButton(int textureId, WindowsPointerButtonData button);
+  void setPointerButton(int viewId, WindowsPointerButtonData button);
 
   void setScrollDelta(
-    int textureId,
+    int viewId,
     WindowsPointData delta,
     bool controlKeyPressed,
   );
 
-  void setSize(int textureId, WindowsSizeData size);
+  void setSize(int viewId, WindowsSizeData size);
 }

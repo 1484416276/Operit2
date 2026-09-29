@@ -243,6 +243,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           MarkdownImageRenderer(
             imageMarkdown: widget.text.trim(),
             textColor: widget.textColor,
+            onOpenLink: widget.onLinkClick,
           ),
         );
       case MarkdownNodeType.blockLatex:
@@ -431,6 +432,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           MarkdownImageRenderer(
             imageMarkdown: trimmed.trim(),
             textColor: widget.textColor,
+            onOpenLink: widget.onLinkClick,
           ),
         );
       } else if (_isHorizontalRule(trimmed)) {

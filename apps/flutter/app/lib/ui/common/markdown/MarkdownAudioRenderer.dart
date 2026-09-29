@@ -5,8 +5,10 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/logging/ClientLogger.dart';
 import '../interactions/MessagePressShield.dart';
 import 'MarkdownImageRenderer.dart';
+import 'MarkdownLink.dart';
 
 const Set<String> _markdownAudioExtensions = <String>{
   'mp3',
@@ -51,6 +53,7 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   PlayerState _playerState = PlayerState.stopped;
+  bool _failed = false;
 
   bool get _isPlaying => _playerState == PlayerState.playing;
 
@@ -58,8 +61,7 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
   void initState() {
     super.initState();
     _player = AudioPlayer();
-    final audioUrl = extractMarkdownImageUrl(widget.audioMarkdown);
-    unawaited(_player.setSourceUrl(audioUrl));
+    unawaited(_setSource(extractMarkdownImageUrl(widget.audioMarkdown)));
     _durationSubscription = _player.onDurationChanged.listen((duration) {
       if (mounted) {
         setState(() => _duration = duration);
@@ -81,13 +83,49 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
   void didUpdateWidget(covariant MarkdownAudioRenderer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.audioMarkdown != widget.audioMarkdown) {
-      final audioUrl = extractMarkdownImageUrl(widget.audioMarkdown);
-      unawaited(_player.setSourceUrl(audioUrl));
       setState(() {
         _duration = Duration.zero;
         _position = Duration.zero;
         _playerState = PlayerState.stopped;
+        _failed = false;
       });
+      unawaited(_setSource(extractMarkdownImageUrl(widget.audioMarkdown)));
+    }
+  }
+
+  Future<void> _setSource(String audioUrl) async {
+    await Future<void>.value();
+    if (!mounted) {
+      return;
+    }
+    final uri = Uri.tryParse(audioUrl);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
+      return;
+    }
+    try {
+      await _player.setSourceUrl(audioUrl);
+      if (mounted) {
+        setState(() {
+          _failed = false;
+        });
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Cannot load markdown audio: $audioUrl',
+        tag: 'MarkdownAudio',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -101,10 +139,27 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
   }
 
   Future<void> _togglePlayback() async {
-    if (_isPlaying) {
-      await _player.pause();
-    } else {
-      await _player.resume();
+    if (_failed) {
+      return;
+    }
+    try {
+      if (_isPlaying) {
+        await _player.pause();
+      } else {
+        await _player.resume();
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Cannot play markdown audio',
+        tag: 'MarkdownAudio',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        setState(() {
+          _failed = true;
+        });
+      }
     }
   }
 
@@ -147,9 +202,17 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
                 children: <Widget>[
                   MessagePressShieldRegion(
                     child: IconButton(
-                      onPressed: _togglePlayback,
-                      icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                      tooltip: _isPlaying ? 'Pause' : 'Play',
+                      onPressed: _failed
+                          ? () => activateMarkdownLink(audioUrl, null)
+                          : _togglePlayback,
+                      icon: Icon(
+                        _failed
+                            ? Icons.music_off
+                            : (_isPlaying ? Icons.pause : Icons.play_arrow),
+                      ),
+                      tooltip: _failed
+                          ? 'Open'
+                          : (_isPlaying ? 'Pause' : 'Play'),
                     ),
                   ),
                   Expanded(
@@ -158,11 +221,15 @@ class _MarkdownAudioRendererState extends State<MarkdownAudioRenderer> {
                         value: currentSeconds,
                         min: 0,
                         max: maxSeconds,
-                        onChanged: (value) {
-                          unawaited(
-                            _player.seek(Duration(milliseconds: value.toInt())),
-                          );
-                        },
+                        onChanged: _failed
+                            ? null
+                            : (value) {
+                                unawaited(
+                                  _player.seek(
+                                    Duration(milliseconds: value.toInt()),
+                                  ),
+                                );
+                              },
                       ),
                     ),
                   ),

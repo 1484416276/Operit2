@@ -228,6 +228,71 @@ Webview::Webview(
   is_valid_ = true;
 }
 
+// Intercepts only our reserved virtual hosts. Deferrals keep the UI thread free
+// while Flutter reads Core VFS bytes or invokes a plugin resource callback.
+bool Webview::SetLocalResourceHandler(LocalResourceCallback callback) {
+  local_resource_callback_ = std::move(callback);
+  if (local_resources_registered_) return true;
+  if (FAILED(webview_->AddWebResourceRequestedFilter(
+      L"https://*.operit.invalid/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL))) return false;
+  const auto environment = host_->resource_environment();
+  const HRESULT hr = webview_->add_WebResourceRequested(
+      Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+          [this, environment](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* raw) -> HRESULT {
+            wil::com_ptr<ICoreWebView2WebResourceRequestedEventArgs> args = raw;
+            wil::com_ptr<ICoreWebView2Deferral> deferral;
+            if (FAILED(args->GetDeferral(deferral.put()))) return E_FAIL;
+            auto replied = std::make_shared<bool>(false);
+            LocalResourceReply reply = [args, deferral, environment, replied](
+                int status, const std::string& reason,
+                const std::map<std::string, std::string>& headers,
+                const std::vector<uint8_t>& body) {
+              if (*replied) return;
+              *replied = true;
+              std::wstring header_text;
+              for (const auto& [name, value] : headers) {
+                header_text += util::Utf16FromUtf8(name + ": " + value + "\r\n");
+              }
+              wil::com_ptr<IStream> stream;
+              stream.attach(SHCreateMemStream(body.data(), static_cast<UINT>(body.size())));
+              wil::com_ptr<ICoreWebView2WebResourceResponse> response;
+              if (SUCCEEDED(environment->CreateWebResourceResponse(stream.get(), status,
+                    util::Utf16FromUtf8(reason).c_str(), header_text.c_str(), response.put()))) {
+                args->put_Response(response.get());
+              }
+              deferral->Complete();
+            };
+            if (!local_resource_callback_) { reply(410, "Gone", {}, {}); return S_OK; }
+            wil::com_ptr<ICoreWebView2WebResourceRequest> request;
+            if (FAILED(args->get_Request(request.put()))) { reply(500, "Invalid request", {}, {}); return S_OK; }
+            wil::unique_cotaskmem_string uri, method;
+            request->get_Uri(&uri); request->get_Method(&method);
+            std::map<std::string, std::string> headers;
+            wil::com_ptr<ICoreWebView2HttpRequestHeaders> native_headers;
+            if (SUCCEEDED(request->get_Headers(native_headers.put()))) {
+              wil::com_ptr<ICoreWebView2HttpHeadersCollectionIterator> iterator;
+              if (SUCCEEDED(native_headers->GetIterator(iterator.put()))) {
+                BOOL has = FALSE; iterator->get_HasCurrentHeader(&has);
+                while (has) {
+                  wil::unique_cotaskmem_string name, value;
+                  if (SUCCEEDED(iterator->GetCurrentHeader(&name, &value))) {
+                    headers[util::Utf8FromUtf16(name.get())] = util::Utf8FromUtf16(value.get());
+                  }
+                  iterator->MoveNext(&has);
+                }
+              }
+            }
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT context;
+            args->get_ResourceContext(&context);
+            local_resource_callback_(util::Utf8FromUtf16(uri.get()),
+                util::Utf8FromUtf16(method.get()), headers,
+                context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT, std::move(reply));
+            return S_OK;
+          }).Get(), &local_resource_token_);
+  local_resources_registered_ = SUCCEEDED(hr);
+  return local_resources_registered_;
+}
+
 // Closes the browser controller before destroying its native parent.
 Webview::~Webview() {
   if (webview_controller_) webview_controller_->Close();

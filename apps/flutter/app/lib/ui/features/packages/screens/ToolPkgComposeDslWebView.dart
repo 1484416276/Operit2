@@ -15,7 +15,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import 'ToolPkgComposeDslWebViewResourceServer.dart';
+import 'ToolPkgComposeDslWebViewResourceLoader.dart';
 
 const String composeDslWebViewInternalBridgeName =
     '__ComposeDslWebViewHostBridge__';
@@ -36,12 +36,15 @@ typedef ComposeDslWebViewRuntimeOptionsProvider =
 
 class ComposeDslWebViewHostContext {
   const ComposeDslWebViewHostContext({
+    required this.packageName,
     required this.routeInstanceId,
     required this.executionContextKey,
     required this.dispatchAction,
     required this.runtimeOptionsProvider,
   });
 
+  /// Stable plugin package identity, not the transient execution/session key.
+  final String packageName;
   final String routeInstanceId;
   final String executionContextKey;
   final ComposeDslWebViewActionDispatcher dispatchAction;
@@ -579,7 +582,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   ComposeDslWebViewStateSnapshot? _lastStateSnapshot;
   _ComposeDslWebViewControllerDescriptor? _boundControllerDescriptor;
   String? _boundExecutionContextKey;
-  ComposeDslWebViewResourceServer? _resourceServer;
+  ComposeDslWebViewResourceLoader? _resourceLoader;
+  Future<void>? _resourceRegistration;
   bool _servingVfsFiles = false;
   Brightness? _brightness;
   Future<void> _themeUpdate = Future<void>.value();
@@ -666,7 +670,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     if (!kIsWeb) {
       return true;
     }
-    return _request.html != null || _usesResourceServer;
+    return _request.html != null || _usesResourceLoader;
   }
 
   @override
@@ -703,7 +707,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         controller: _controller,
       );
     }
-    unawaited(_resourceServer?.close());
+    unawaited(_disposeResourceLoader());
     unawaited(_controller.loadHtmlString('<html></html>'));
     super.dispose();
   }
@@ -900,8 +904,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     String currentUrl,
     String targetUrl,
   ) async {
-    final server = _resourceServer;
-    if (!_usesResourceServer ||
+    final server = _resourceLoader;
+    if (!_usesResourceLoader ||
         server == null ||
         server.ownsUrl(currentUrl) ||
         !server.matchesCurrentOrigin(targetUrl)) {
@@ -916,8 +920,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   }
 
   Future<Uri> _navigationUriFor(String url) async {
-    final server = _resourceServer;
-    if (_usesResourceServer &&
+    final server = _resourceLoader;
+    if (_usesResourceLoader &&
         server != null &&
         server.matchesCurrentOrigin(url)) {
       return server.localUriFor(url, isMainFrame: true);
@@ -951,18 +955,50 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     });
   }
 
-  /// Routes VFS resources and explicit interception through the resource server.
-  bool get _usesResourceServer {
+  /// Routes VFS resources and explicit interception through the native resource loader.
+  bool get _usesResourceLoader {
     return _servingVfsFiles ||
         (_callbackIds.onInterceptRequest != null && widget.hostContext != null);
   }
 
-  ComposeDslWebViewResourceServer _ensureResourceServer() {
-    return _resourceServer ??= ComposeDslWebViewResourceServer(
-      dispatchDecision: _dispatchInterceptRequestDecision,
-      readFileBytes: (path) async =>
-          base64.decode(await _readVfsFileBase64(path)),
-    );
+  Future<ComposeDslWebViewResourceLoader> _ensureResourceLoader() async {
+    if (_resourceLoader == null) {
+      final scheme = _controller.localResourceScheme;
+      if (scheme == null) {
+        throw UnsupportedError(
+          'This platform does not support native DSL WebView resources',
+        );
+      }
+      final host = widget.hostContext;
+      if (host == null)
+        throw StateError('Local WebView resources require a plugin identity');
+      final loader = ComposeDslWebViewResourceLoader(
+        packageName: host.packageName,
+        scheme: scheme,
+        dispatchDecision: _dispatchInterceptRequestDecision,
+        readFileBytes: (path) async =>
+            base64.decode(await _readVfsFileBase64(path)),
+      );
+      _resourceLoader = loader;
+      _resourceRegistration = _controller.setLocalResourceHandler(
+        loader.handleRequest,
+      );
+    }
+    await _resourceRegistration;
+    if (!mounted) throw StateError('WebView has been disposed');
+    return _resourceLoader!;
+  }
+
+  Future<void> _disposeResourceLoader() async {
+    final loader = _resourceLoader;
+    if (loader == null) return;
+    await loader.close();
+    try {
+      await _resourceRegistration;
+      await _controller.setLocalResourceHandler(null);
+    } catch (error) {
+      debugPrint('DSL WebView resource cleanup: $error');
+    }
   }
 
   /// Dispatches local resources to VFS and network resources to the plugin callback.
@@ -994,7 +1030,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     if (uri.host.isNotEmpty || (method != 'GET' && method != 'HEAD')) {
       throw StateError('VFS WebView resources require a local GET or HEAD URL');
     }
-    final contentBase64 = await _readVfsFileBase64(uri.path);
+    final contentBase64 = await _readVfsFileBase64(
+      Uri.decodeComponent(uri.path),
+    );
     return <String, Object?>{
       'action': 'respond',
       'response': <String, Object?>{
@@ -1032,20 +1070,21 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     return data.contentBase64;
   }
 
-  /// Resolves every local navigation through the VFS resource server.
+  /// Resolves every local navigation through the native VFS resource loader.
   Future<Uri> _webViewUriFor(String url, {required bool isMainFrame}) async {
     _servingVfsFiles = Uri.parse(url).scheme == 'file';
-    if (!_usesResourceServer) {
+    if (!_usesResourceLoader) {
       return Uri.parse(url);
     }
     if (_servingVfsFiles) {
       await _refreshComposeDslJavascriptInterfaces(_controller);
     }
-    return _ensureResourceServer().localUriFor(url, isMainFrame: isMainFrame);
+    final loader = await _ensureResourceLoader();
+    return loader.localUriFor(url, isMainFrame: isMainFrame);
   }
 
   String _originalUrlFor(String url) {
-    return _resourceServer?.originalUrlFor(url) ?? url;
+    return _resourceLoader?.originalUrlFor(url) ?? url;
   }
 
   Future<void> _load() async {

@@ -130,6 +130,12 @@ class WebViewController {
   Future<void> setPreferredColorScheme(Brightness brightness) =>
       platform.setPreferredColorScheme(brightness);
 
+  /// Scheme for native, socket-free resources; null on unsupported platforms.
+  String? get localResourceScheme => platform.localResourceScheme;
+
+  Future<void> setLocalResourceHandler(WebViewLocalResourceHandler? handler) =>
+      platform.setLocalResourceHandler(handler);
+
   /// Loads the file located on the specified [absoluteFilePath].
   ///
   /// The [absoluteFilePath] parameter should contain the absolute path to the

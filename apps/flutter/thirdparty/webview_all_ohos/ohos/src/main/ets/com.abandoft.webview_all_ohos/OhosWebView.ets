@@ -54,6 +54,7 @@ export struct OhosWebView {
           .onPageEnd(this.webView.onPageEnd)
           .onErrorReceive(this.webView.onErrorReceive)
           .onHttpErrorReceive(this.webView.onHttpErrorReceive)
+          .onInterceptRequest(this.webView.onInterceptRequest)
           .onRefreshAccessedHistory(this.webView.onRefreshAccessedHistory)
           .onProgressChange(this.webView.onProgressChange)
           .onGeolocationShow(this.webView.onGeolocationShow)

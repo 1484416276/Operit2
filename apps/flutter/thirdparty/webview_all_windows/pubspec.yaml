@@ -22,7 +22,8 @@ dependencies:
     sdk: flutter
   meta: ^1.16.0
   path: ^1.9.1
-  webview_flutter_platform_interface: ^2.15.1
+  webview_flutter_platform_interface:
+    path: ../webview_flutter_platform_interface
 
 dev_dependencies:
   flutter_test:

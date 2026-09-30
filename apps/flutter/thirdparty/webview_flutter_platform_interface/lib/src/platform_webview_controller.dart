@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'local_resource.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
@@ -34,9 +35,9 @@ abstract class PlatformWebViewController extends PlatformInterface {
 
   /// Applies the embedding application's color preference through its native host.
   Future<void> setPreferredColorScheme(Brightness brightness) {
-    return const MethodChannel('operit/webview_theme').invokeMethod<void>(
-      'setPreferredColorScheme', brightness.name,
-    );
+    return const MethodChannel(
+      'operit/webview_theme',
+    ).invokeMethod<void>('setPreferredColorScheme', brightness.name);
   }
 
   /// Creates a new [PlatformWebViewController]
@@ -79,6 +80,16 @@ abstract class PlatformWebViewController extends PlatformInterface {
   Future<void> loadFile(String absoluteFilePath) {
     throw UnimplementedError(
       'loadFile is not implemented on the current platform',
+    );
+  }
+
+  /// URL scheme used for socket-free local resources, or null if unsupported.
+  String? get localResourceScheme => null;
+
+  /// Installs an application-owned virtual-origin resource handler for this view.
+  Future<void> setLocalResourceHandler(WebViewLocalResourceHandler? handler) {
+    throw UnsupportedError(
+      'Native local resources are not supported on this platform',
     );
   }
 

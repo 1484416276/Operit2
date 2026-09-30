@@ -36,6 +36,11 @@ public class WebViewClientProxyApi extends PigeonApiWebViewClient {
     }
 
     @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+      return api.getPigeonRegistrar().localResources.intercept(view, request);
+    }
+
+    @Override
     public void onPageStarted(@NonNull WebView view, @NonNull String url, @NonNull Bitmap favicon) {
       api.getPigeonRegistrar()
           .runOnMainThread(() -> api.onPageStarted(this, view, url, reply -> null));

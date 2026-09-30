@@ -1,3 +1,4 @@
+#include <flutter/method_result_functions.h>
 #include "plugin/windows_host_api.h"
 
 #include <windows.h>
@@ -64,6 +65,58 @@ WindowsHostApi::WindowsHostApi(FlutterDesktopViewRef view,
         result->Error("color_scheme_failed", "WebView2 rejected the color preference");
         return;
       }
+    }
+    result->Success();
+  });
+  resource_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      messenger, "operit/webview_resources", &flutter::StandardMethodCodec::GetInstance());
+  resource_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    using V = flutter::EncodableValue;
+    using M = flutter::EncodableMap;
+    if (call.method_name() != "configure") { result->NotImplemented(); return; }
+    const auto* args = call.arguments() ? std::get_if<M>(call.arguments()) : nullptr;
+    if (!args || !args->contains(V("identifier")) || !args->contains(V("enabled"))) {
+      result->Error("invalid_arguments", "Missing view identifier"); return;
+    }
+    const int64_t id = args->at(V("identifier")).LongValue();
+    const auto found = instances_.find(id);
+    if (found == instances_.end()) { result->Error("unknown_view", "WebView no longer exists"); return; }
+    Webview::LocalResourceCallback callback;
+    if (std::get<bool>(args->at(V("enabled")))) {
+      callback = [this, id](const std::string& url, const std::string& method,
+          const std::map<std::string, std::string>& headers, bool main_frame,
+          Webview::LocalResourceReply reply) {
+        M request_headers;
+        for (const auto& [name, value] : headers) request_headers[V(name)] = V(value);
+        auto payload = std::make_unique<V>(M{
+          {V("identifier"), V(id)}, {V("url"), V(url)}, {V("method"), V(method)},
+          {V("headers"), V(request_headers)}, {V("isMainFrame"), V(main_frame)}});
+        resource_channel_->InvokeMethod("request", std::move(payload),
+          std::make_unique<flutter::MethodResultFunctions<V>>(
+            [reply](const V* value) {
+              const auto* map = value ? std::get_if<M>(value) : nullptr;
+              if (!map || !map->contains(V("body"))) { reply(500, "Resource error", {}, {}); return; }
+              std::map<std::string, std::string> response_headers;
+              for (const auto& [name, item] : std::get<M>(map->at(V("headers")))) {
+                response_headers[std::get<std::string>(name)] = std::get<std::string>(item);
+              }
+              bool has_type = false;
+              for (const auto& [name, _] : response_headers) {
+                if (_stricmp(name.c_str(), "Content-Type") == 0) has_type = true;
+              }
+              if (!has_type) response_headers["Content-Type"] =
+                std::get<std::string>(map->at(V("mimeType"))) + "; charset=" +
+                std::get<std::string>(map->at(V("encoding")));
+              reply(static_cast<int>(map->at(V("statusCode")).LongValue()),
+                std::get<std::string>(map->at(V("reasonPhrase"))), response_headers,
+                std::get<std::vector<uint8_t>>(map->at(V("body"))));
+            },
+            [reply](const std::string&, const std::string&, const V*) { reply(500, "Resource error", {}, {}); },
+            [reply]() { reply(501, "Not implemented", {}, {}); }));
+      };
+    }
+    if (!found->second->SetLocalResourceHandler(std::move(callback))) {
+      result->Error("resource_handler_failed", "WebView2 rejected the resource handler"); return;
     }
     result->Success();
   });

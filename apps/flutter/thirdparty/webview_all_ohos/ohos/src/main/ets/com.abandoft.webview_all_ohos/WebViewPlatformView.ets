@@ -106,6 +106,24 @@ export class WebViewPlatformView extends PlatformView {
     this.webViewFlutterApi = new WebViewFlutterApiImpl(binaryMessenger, instanceManager);
   }
 
+  localResourceHandler?: (request: WebResourceRequest) => WebResourceResponse;
+  onLocalResourceDispose?: () => void;
+
+  onInterceptRequest = (event: ESObject): WebResourceResponse | null => {
+    const request = event.request as WebResourceRequest;
+    // Only virtual HTTPS hosts are routed to Dart. The loader validates the
+    // exact plugin-owned host; unrelated network traffic stays native.
+    const match = /^https:\/\/([^/?#:]+)(?::443)?(?:[/?#]|$)/i.exec(request.getRequestUrl());
+    if (match == null || !match[1].toLowerCase().endsWith('.operit.invalid')) return null;
+    if (this.localResourceHandler != null) return this.localResourceHandler(request);
+    const response = new WebResourceResponse();
+    response.setResponseCode(403);
+    response.setReasonMessage('Forbidden');
+    response.setResponseMimeType('text/plain');
+    response.setResponseData('');
+    return response;
+  };
+
   onDownloadStart = (event: ESObject): void => {
     if (this.downloadListener) {
       this.downloadListener.onDownloadStart(
@@ -321,6 +339,9 @@ export class WebViewPlatformView extends PlatformView {
   }
 
   dispose(): void {
+    this.localResourceHandler = undefined;
+    this.onLocalResourceDispose?.();
+    this.onLocalResourceDispose = undefined;
     this.controller.stopAllMedia();
     if (this.onDisposeCallback) {
       this.onDisposeCallback();

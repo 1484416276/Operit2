@@ -6,13 +6,15 @@
     "configurations": [
         {
             "name": "app",
-            "cwd": "apps\\flutter\\app",
+            "cwd": "${workspaceFolder}/apps/flutter/app",
+            "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
             "request": "launch",
             "type": "dart"
         },
         {
             "name": "Operit2: Web (isolated)",
-            "cwd": "apps\\flutter\\app",
+            "cwd": "${workspaceFolder}/apps/flutter/app",
+            "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
             "request": "launch",
             "type": "dart",
             "deviceId": "edge",
@@ -28,14 +30,16 @@
         },
         {
             "name": "app (profile mode)",
-            "cwd": "apps\\flutter\\app",
+            "cwd": "${workspaceFolder}/apps/flutter/app",
+            "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
             "name": "app (release mode)",
-            "cwd": "apps\\flutter\\app",
+            "cwd": "${workspaceFolder}/apps/flutter/app",
+            "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   applyNodeChanges,
   Handle,
@@ -73,15 +73,24 @@ export function WorkflowCanvas({
   ...props
 }: ReactFlowProps<GraphNode> & { nodes: GraphNode[] }) {
   const [nodes, setNodes] = useState(incomingNodes);
-  const [source, setSource] = useState(incomingNodes);
-  // Synchronize committed edits during render so an effect cannot overwrite an ongoing gesture.
-  if (source !== incomingNodes) {
-    setSource(incomingNodes);
+
+  // React Flow emits internal changes while it measures and mounts nodes.  Keep
+  // the synchronization out of render: calling setState from render can make a
+  // transient empty prop win over the real graph and blank the whole canvas.
+  useEffect(() => {
     setNodes(incomingNodes);
-  }
+  }, [incomingNodes]);
+
   /** Applies positions, selection and measured dimensions only within this canvas. */
   const changeNodes = React.useCallback((changes: NodeChange<GraphNode>[]) => {
-    setNodes((current) => applyNodeChanges(changes, current));
+    setNodes((current) => {
+      const safeChanges = changes.filter(
+        (change) => change.type !== "remove",
+      );
+      return safeChanges.length === 0
+        ? current
+        : applyNodeChanges(safeChanges, current);
+    });
   }, []);
   return <ReactFlow {...props} nodes={nodes} onNodesChange={changeNodes} />;
 }

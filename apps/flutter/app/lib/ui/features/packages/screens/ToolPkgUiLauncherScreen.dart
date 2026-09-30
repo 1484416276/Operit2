@@ -116,7 +116,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     if (!_composeInputEquals(oldWidget.initialState, widget.initialState) ||
         !_composeInputEquals(oldWidget.initialMemo, widget.initialMemo) ||
         (widget.embeddedScreenPath == null &&
-            !_composeInputEquals(oldWidget.initialModuleSpec, widget.initialModuleSpec))) {
+            !_composeInputEquals(
+              oldWidget.initialModuleSpec,
+              widget.initialModuleSpec,
+            ))) {
       unawaited(_loadRoute(updateInputs: true));
     }
   }
@@ -423,11 +426,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     final routeGeneration = _routeLoadGeneration;
     return _actionScheduler.dispatchTextInput(() {
       if (!_isCurrentRouteLoad(routeGeneration)) return Future.value(null);
-      return _dispatchActionCore(
-        actionId,
-        text,
-        reportAndSuppressErrors: true,
-      );
+      return _dispatchActionCore(actionId, text, reportAndSuppressErrors: true);
     });
   }
 
@@ -639,7 +638,11 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     if (path == null) return null;
     final normalized = path.trim();
     if (normalized.isEmpty) {
-      throw ArgumentError.value(path, 'embeddedScreenPath', 'must not be blank');
+      throw ArgumentError.value(
+        path,
+        'embeddedScreenPath',
+        'must not be blank',
+      );
     }
     return normalized;
   }
@@ -733,6 +736,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
       routeInstanceId: routeInstanceId,
     );
     final webViewHostContext = ComposeDslWebViewHostContext(
+      packageName: widget.plugin.packageName,
       routeInstanceId: routeInstanceId,
       executionContextKey: executionContextKey,
       dispatchAction: _dispatchWebViewAction,

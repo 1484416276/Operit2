@@ -596,6 +596,20 @@ class WindowsWebViewController extends PlatformWebViewController {
   }
 
   @override
+  String get localResourceScheme => 'https';
+
+  @override
+  Future<void> setLocalResourceHandler(
+    WebViewLocalResourceHandler? handler,
+  ) async {
+    await _ensureInitialized();
+    await WebViewLocalResourceBridge.setHandler(
+      _webviewController.surfacePlatformViewId,
+      handler,
+    );
+  }
+
+  @override
   Future<void> loadFile(String absoluteFilePath) async {
     await _ensureInitialized();
     final file = File(absoluteFilePath);

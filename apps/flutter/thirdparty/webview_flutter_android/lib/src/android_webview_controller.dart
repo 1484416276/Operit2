@@ -473,6 +473,16 @@ class AndroidWebViewController extends PlatformWebViewController {
       android_webview.PigeonInstanceManager.instance.getIdentifier(_webView)!;
 
   @override
+  String get localResourceScheme => 'https';
+
+  @override
+  Future<void> setLocalResourceHandler(
+    WebViewLocalResourceHandler? handler,
+  ) async {
+    await WebViewLocalResourceBridge.setHandler(webViewIdentifier, handler);
+  }
+
+  @override
   Future<void> loadFile(String absoluteFilePath) {
     return loadFileWithParams(
       AndroidLoadFileParams(absoluteFilePath: absoluteFilePath),

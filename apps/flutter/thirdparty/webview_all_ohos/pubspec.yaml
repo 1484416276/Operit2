@@ -21,7 +21,9 @@ flutter:
 dependencies:
   flutter:
     sdk: flutter
-  webview_platform_interface: ^1.4.0
+  # This vendored adapter uses Operit's native local-resource extension.
+  webview_platform_interface:
+    path: ../webview_platform_interface
 
 dev_dependencies:
   flutter_test:

@@ -1883,30 +1883,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-access-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-runtime",
- "operit-store",
- "operit-util",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "operit-board-pb-sbc01-h3"
 version = "0.1.0"
 dependencies = [
@@ -1938,7 +1914,6 @@ dependencies = [
 name = "operit-core-application"
 version = "0.1.0"
 dependencies = [
- "operit-access-runtime",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
@@ -1951,6 +1926,10 @@ dependencies = [
 [[package]]
 name = "operit-edge-contract"
 version = "0.1.0"
+dependencies = [
+ "operit-link",
+ "serde",
+]
 
 [[package]]
 name = "operit-edge-transport"
@@ -1961,6 +1940,7 @@ dependencies = [
  "hmac",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "rand_core 0.6.4",
  "serde",
  "sha2",
@@ -2130,35 +2110,55 @@ name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
- "operit-access-runtime",
+ "futures-util",
+ "hmac",
  "operit-edge-transport",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "operit-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
  "quote",
+ "rand_core 0.6.4",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "syn 2.0.119",
  "tokio",
+ "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]
 name = "operit-pb-sbc01-h3"
 version = "0.1.0"
 dependencies = [
- "operit-access-runtime",
  "operit-board-pb-sbc01-h3",
  "operit-core-application",
  "operit-host-api",
  "operit-host-linux-native",
  "operit-node-edge",
+ "operit-node-runtime",
  "operit-proxy-edge",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "operit-peer-link"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2264,7 +2264,6 @@ dependencies = [
  "operit-edge-contract",
  "operit-host-api",
  "operit-link",
- "operit-node-edge",
  "serde",
 ]
 
@@ -2273,7 +2272,6 @@ name = "operit-proxy-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "operit-access-runtime",
  "operit-command-core",
  "operit-host-api",
  "operit-link",

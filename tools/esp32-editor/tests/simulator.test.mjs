@@ -38,6 +38,14 @@ test('editor starts real TCP device, serves firmware UI, persists token and stop
   const first = await ready();
   assert.equal(first.device.chat.connected, false);
   assert.match(first.token, /^[0-9a-f]{48}$/);
+  const invalidImage = await fetch(base + '/api/simulator/send-image', {method:'POST',headers:{'Content-Type':'text/plain'},body:'not an image'});
+  assert.equal(invalidImage.status,400);
+  assert.match((await invalidImage.json()).error,/PNG\/JPEG/);
+  const disconnectedImage = await fetch(base + '/api/simulator/send-image', {
+    method:'POST',headers:{'Content-Type':'image/png'},body:Buffer.from([137,80,78,71,13,10,26,10]),
+  });
+  assert.equal(disconnectedImage.status,400);
+  assert.match((await disconnectedImage.json()).error,/尚未连接/);
   const action = await fetch(base + '/api/simulator/action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"action":"edge_unpair"}'});
   assert.equal(action.status, 200);
   assert.equal((await state()).device.paired, false);

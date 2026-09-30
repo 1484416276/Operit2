@@ -30,3 +30,8 @@ pub use ManagedRuntimePty::{TerminalManagedRuntimeLaunch, TerminalManagedRuntime
 
 #[cfg(not(any(target_os = "espidf", target_arch = "wasm32")))]
 pub mod ServiceDiscovery;
+
+#[cfg(all(feature = "tcp", not(any(target_os = "espidf", target_arch = "wasm32"))))]
+pub mod Tcp;
+#[cfg(all(feature = "tcp", not(any(target_os = "espidf", target_arch = "wasm32"))))]
+pub use Tcp::NativeTcpHost;

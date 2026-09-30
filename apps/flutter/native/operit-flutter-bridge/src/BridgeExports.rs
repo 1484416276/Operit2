@@ -756,7 +756,7 @@ pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
         values[1].clone(),
         values[2].clone(),
         PathBuf::from(&values[3]),
-        match serde_json::from_str::<RemoteDeviceInfo>(&values[4]) {
+        match serde_json::from_str::<LinkDeviceInfo>(&values[4]) {
             Ok(value) => value,
             Err(error) => {
                 return string_to_ptr(

@@ -74,6 +74,8 @@ export interface RuntimeModule {
   _operit_lvgl_set_connection(connected: boolean, configured: boolean): void;
   _operit_lvgl_set_paired(paired: boolean): void;
   _operit_lvgl_set_theme(index: number, circle: boolean): void;
+  _operit_lvgl_set_emoji_style(style: number): boolean;
+  _operit_lvgl_emoji_style(): number;
   _operit_lvgl_theme_index(): number;
   _operit_lvgl_debug_tree?(): number;
   _operit_lvgl_debug_snapshot?(): number;
@@ -91,19 +93,19 @@ export interface RuntimeModule {
     identifier: string,
     returnType: 'number',
     argumentTypes: string[],
-    values: Array<string | number>,
+    values: Array<string | number | Uint8Array>,
   ): number;
   ccall(
     identifier: string,
     returnType: 'string',
     argumentTypes: string[],
-    values: Array<string | number>,
+    values: Array<string | number | Uint8Array>,
   ): string;
   ccall(
     identifier: string,
     returnType: null,
     argumentTypes: string[],
-    values: Array<string | number>,
+    values: Array<string | number | Uint8Array>,
   ): null;
   onAction?: (value: string) => void;
 }

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use operit_access_runtime::RemoteDeviceInfo;
+use operit_node_runtime::remote::LinkDeviceInfo;
 use operit_board_pb_sbc01_h3::{PbSbc01H3Board, PbSbc01H3BoardConfig, PB_SBC01_H3_BOARD_ID};
 use operit_core_application::{CoreApplication, CoreApplicationConfig, CoreRemoteLinkServerConfig};
 use operit_host_api::HostManager::HostManager;
@@ -27,7 +27,7 @@ pub async fn run() -> Result<(), String> {
 
     let core = CoreApplication::start(CoreApplicationConfig::new(
         hostManager,
-        RemoteDeviceInfo {
+        LinkDeviceInfo {
             platform: "pb_sbc01_h3".to_string(),
             model: PB_SBC01_H3_BOARD_ID.to_string(),
         },

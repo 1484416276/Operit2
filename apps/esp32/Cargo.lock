@@ -787,8 +787,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1141,28 +1143,17 @@ dependencies = [
  "async-trait",
  "esp-idf-hal",
  "log",
- "operit-edge-transport",
  "operit-host-api",
- "operit-link",
  "operit-ui",
  "tokio",
 ]
 
 [[package]]
-name = "operit-edge-transport"
+name = "operit-edge-contract"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "base64",
- "hmac",
- "operit-host-api",
  "operit-link",
- "rand_core",
  "serde",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -1170,15 +1161,19 @@ name = "operit-esp32"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "embuild",
  "esp-idf-hal",
  "esp-idf-svc",
  "esp-idf-sys",
  "log",
  "operit-board-esp32",
- "operit-edge-transport",
+ "operit-edge-contract",
  "operit-host-api",
+ "operit-host-native-scheduler",
  "operit-link",
+ "operit-node-edge",
+ "operit-peer-link",
  "operit-ui",
  "serde",
  "serde_json",
@@ -1196,6 +1191,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-host-native-scheduler"
+version = "0.1.0"
+dependencies = [
+ "operit-host-api",
+ "tokio",
+]
+
+[[package]]
 name = "operit-link"
 version = "0.1.0"
 dependencies = [
@@ -1205,6 +1208,38 @@ dependencies = [
  "serde",
  "serde_bytes",
  "tokio",
+]
+
+[[package]]
+name = "operit-node-edge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-edge-contract",
+ "operit-host-api",
+ "operit-link",
+ "operit-peer-link",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "operit-peer-link"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "getrandom 0.2.17",
+ "hmac",
+ "operit-host-api",
+ "operit-link",
+ "rand_core",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]

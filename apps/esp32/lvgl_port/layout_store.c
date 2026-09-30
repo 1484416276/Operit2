@@ -1,6 +1,7 @@
 #include "layout_store.h"
 #include <string.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #ifndef __EMSCRIPTEN__
 #include "esp_partition.h"
 #include "esp_spi_flash.h"
@@ -28,29 +29,38 @@ const uint8_t *operit_store_node(const uint8_t *p,operit_packed_node_t *n,char *
  n->text=strings;p=string(p,strings);strings+=161;n->action=strings;p=string(p,strings);strings+=24;n->hold=strings;p=string(p,strings);strings+=24;n->binding=strings;return string(p,strings);
 }
 static bool checked_string(const uint8_t **p,const uint8_t *end,unsigned max){if(*p>=end)return false;unsigned n=*(*p)++;if(n>max||(size_t)(end-*p)<n)return false;for(unsigned i=0;i<n;i++)if(((*p)[i]<32&&(*p)[i]!='\n')||(*p)[i]>126)return false;*p+=n;return true;}
+typedef struct {
+ char ids[12][24],targets[12][2][24];
+ uint16_t widths[24],heights[24];
+ uint8_t types[24];
+} layout_validation_workspace_t;
 static bool valid(const uint8_t *data,const uint8_t *head){
  if(memcmp(head,"OUI2",4)||r32(head+12)!=1)return false;unsigned length=r32(head+4);if(length<6||length>LIMIT-16||crc32(data,length)!=r32(head+8))return false;
- const uint8_t *p=data,*end=data+length;unsigned pages=*p++,entry=*p++;if(!pages||pages>12||entry>=pages||r16(p)!=320||r16(p+2)!=240)return false;p+=4;
- char ids[12][24],targets[12][2][24];
+ layout_validation_workspace_t *workspace = calloc(1, sizeof(*workspace));
+ if (!workspace) return false;
+ const uint8_t *p=data,*end=data+length;unsigned pages=*p++,entry=*p++;if(!pages||pages>12||entry>=pages||r16(p)!=320||r16(p+2)!=240)goto invalid;p+=4;
+ char (*ids)[24]=workspace->ids;char (*targets)[2][24]=workspace->targets;
  for(unsigned i=0;i<pages;i++){
-  const uint8_t *start=p;for(unsigned k=0;k<3;k++)if(!checked_string(&p,end,18))return false;
-  string(start,ids[i]);if(!*ids[i])return false;for(unsigned j=0;j<i;j++)if(!strcmp(ids[j],ids[i]))return false;
+  const uint8_t *start=p;for(unsigned k=0;k<3;k++)if(!checked_string(&p,end,18))goto invalid;
+  string(start,ids[i]);if(!*ids[i])goto invalid;for(unsigned j=0;j<i;j++)if(!strcmp(ids[j],ids[i]))goto invalid;
   start+=1+*start;start=string(start,targets[i][0]);string(start,targets[i][1]);
-  if(end-p<5)return false;p+=4;unsigned count=*p++,cost=0;if(count>24)return false;
-  uint16_t widths[24],heights[24];uint8_t types[24];
+  if(end-p<5)goto invalid;p+=4;unsigned count=*p++,cost=0;if(count>24)goto invalid;
+  uint16_t *widths=workspace->widths,*heights=workspace->heights;uint8_t *types=workspace->types;
   for(unsigned j=0;j<count;j++){
-   if(end-p<17)return false;unsigned type=p[0],parent=p[1],x=r16(p+2),y=r16(p+4),w=r16(p+6),h=r16(p+8);
-   if(type>28||w<8||h<8||p[14]>120||p[15]>100||(p[16]!=14&&p[16]!=48))return false;
-   if(parent!=255&&(parent>=j||types[parent]!=0))return false;
-   if(x+w>(parent==255?320:widths[parent])||y+h>(parent==255?240:heights[parent]))return false;
+   if(end-p<17)goto invalid;unsigned type=p[0],parent=p[1],x=r16(p+2),y=r16(p+4),w=r16(p+6),h=r16(p+8);
+   if(type>28||w<8||h<8||p[14]>120||p[15]>100||(p[16]!=14&&p[16]!=48))goto invalid;
+   if(parent!=255&&(parent>=j||types[parent]!=0))goto invalid;
+   if(x+w>(parent==255?320:widths[parent])||y+h>(parent==255?240:heights[parent]))goto invalid;
    widths[j]=w;heights[j]=h;types[j]=type;cost+=(type==20||type==21||type==22||type==23||type>=26)?5:1;p+=17;
-   if(!checked_string(&p,end,160)||!checked_string(&p,end,23)||!checked_string(&p,end,23)||!checked_string(&p,end,16))return false;
+   if(!checked_string(&p,end,160)||!checked_string(&p,end,23)||!checked_string(&p,end,23)||!checked_string(&p,end,16))goto invalid;
   }
-  if(cost>40)return false;
+  if(cost>40)goto invalid;
  }
- if(p!=end)return false;
- for(unsigned i=0;i<pages;i++)for(unsigned k=0;k<2;k++)if(*targets[i][k]){bool found=false;for(unsigned j=0;j<pages;j++)if(!strcmp(targets[i][k],ids[j]))found=true;if(!found)return false;}
- return true;
+ if(p!=end)goto invalid;
+ for(unsigned i=0;i<pages;i++)for(unsigned k=0;k<2;k++)if(*targets[i][k]){bool found=false;for(unsigned j=0;j<pages;j++)if(!strcmp(targets[i][k],ids[j]))found=true;if(!found)goto invalid;}
+ free(workspace);return true;
+invalid:
+ free(workspace);return false;
 }
 bool operit_store_validate(const uint8_t *data,size_t length){return length>=22&&length<=LIMIT&&r32(data+4)+16==length&&valid(data+16,data);}
 static const uint8_t *skip_nodes(const uint8_t *p,unsigned count){while(count--){p+=17;for(int i=0;i<4;i++)p+=1+*p;}return p;}

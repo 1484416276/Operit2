@@ -1,18 +1,17 @@
 #![allow(non_snake_case)]
 
-use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 
 use esp_idf_hal::uart::UartDriver;
 use esp_idf_svc::mdns::EspMdns;
-use operit_edge_transport::{EdgePairingAuthority, EdgePairingStore, LinkChannel};
-use operit_host_api::{HostError, HostResult};
+use operit_peer_link::{PairingAuthority, PairingStore};
+use operit_peer_link::transport::LinkChannel;
+use operit_host_api::{HostError, HostResult, TcpHost};
 use operit_link::LinkDeviceInfo;
-use operit_board_esp32::link_channel::Esp32TcpLinkChannel;
+use operit_peer_link::transport::tcp::TcpLinkChannel;
 use tokio::runtime::Builder;
 
 use crate::edge_serial::Esp32UartLinkChannel;
-use crate::edge_session::handleChannel;
 use crate::status::FirmwareStatus;
 
 /// Runs the authenticated standard-Link listener on a dedicated lightweight
@@ -20,24 +19,26 @@ use crate::status::FirmwareStatus;
 pub struct Esp32EdgeLinkServer {
     _runtimeThread: Option<std::thread::JoinHandle<()>>,
     _mdns: Option<EspMdns>,
-    authority: Arc<EdgePairingAuthority>,
+    authority: Arc<PairingAuthority>,
 }
 
 impl Esp32EdgeLinkServer {
     pub fn start(
         port: u16,
+        tcpHost: Arc<dyn TcpHost>,
         token: String,
         status: Arc<FirmwareStatus>,
-        store: Arc<dyn EdgePairingStore>,
+        store: Arc<dyn PairingStore>,
+        edgeNode: Arc<operit_node_edge::EdgeNode>,
         uart: Option<UartDriver<'static>>,
     ) -> HostResult<Option<Self>> {
         if token.trim().is_empty() {
             log::warn!("Edge Link disabled: OPERIT_EDGE_TOKEN is not configured");
             return Ok(None);
         }
-        let tokenHash = operit_edge_transport::linkTokenHash(&token);
+        let tokenHash = operit_peer_link::linkTokenHash(&token);
         crate::logRuntimeHealth("edge-runtime-ready");
-        let authority = match EdgePairingAuthority::newWithStore(
+        let authority = match PairingAuthority::newWithStore(
             token,
             "esp32-edge".to_string(),
             LinkDeviceInfo {
@@ -74,11 +75,9 @@ impl Esp32EdgeLinkServer {
             },
             None => None,
         };
-        let listener = StdTcpListener::bind(format!("0.0.0.0:{port}"))
-            .map_err(|error| HostError::new(format!("Edge Link listener: {error}")))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| HostError::new(format!("Edge Link nonblocking listener: {error}")))?;
+        let runtime = Builder::new_current_thread().enable_time().build()
+            .map_err(|error| HostError::new(format!("Link runtime: {error}")))?;
+        let listener = runtime.block_on(tcpHost.bind(&format!("0.0.0.0:{port}")))?;
         log::info!("Edge Link listening on TCP port {port}");
         crate::logRuntimeHealth("edge-before-mdns");
         let mdns = match EspMdns::take() {
@@ -121,28 +120,25 @@ impl Esp32EdgeLinkServer {
         let workerAuthority = Arc::clone(&authority);
         let runtimeThread = std::thread::Builder::new()
             .name("operit-edge-link".to_string())
-            // Link MessagePack decoding and X25519 exceed a 6 KiB stack on
-            // Xtensa. Keep headroom and measure the watermark after pairing.
-            .stack_size(32 * 1024)
+            // Keep the stack large enough for Link MessagePack/X25519 work,
+            // while leaving the remaining internal heap for dynamic frame
+            // decoding and pairing state.
+            .stack_size(16 * 1024)
             .spawn(move || {
-                let runtime = match Builder::new_current_thread().enable_time().build() {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        log::error!("Edge Link runtime: {error}");
-                        return;
-                    }
-                };
                 runtime.block_on(async move {
                     crate::logRuntimeHealth("edge-worker-ready");
                     let mut serialStarted = false;
+                    // One established session plus one pairing/reconnect candidate.
+                    let mut tcpSessions = tokio::task::JoinSet::new();
                     loop {
                         if !serialStarted {
                             serialStarted = true;
                             if let Some(channel) = serialChannel.clone() {
                                 let authority = Arc::clone(&workerAuthority);
+                                let serialNode = Arc::clone(&edgeNode);
                                 tokio::spawn(async move {
                                     loop {
-                                        match handleChannel(Arc::clone(&authority), channel.clone()).await {
+                                        match crate::edge_session::handleChannelWithNode(Arc::clone(&authority), channel.clone(), Arc::clone(&serialNode)).await {
                                             Ok(()) => {}
                                             Err(error) => {
                                                 log::warn!("Edge UART session: {error}");
@@ -155,25 +151,41 @@ impl Esp32EdgeLinkServer {
                                 });
                             }
                         }
-                        match listener.accept() {
-                            Ok((stream, peer)) => {
-                                log::info!("Edge Link connection from {peer}");
-                                match Esp32TcpLinkChannel::fromStream(stream) {
-                                    Ok(channel) => {
-                                        let authority = Arc::clone(&workerAuthority);
-                                        tokio::spawn(async move {
-                                            if let Err(error) = handleChannel(authority, channel).await {
-                                                log::warn!("Edge Link session: {error}");
-                                            }
-                                        });
-                                    }
-                                    Err(error) => log::warn!("Edge Link stream: {error}"),
-                                }
+                        while let Some(result) = tcpSessions.try_join_next() {
+                            if let Err(error) = result {
+                                log::warn!("Edge Link task: {error}");
                             }
-                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                            Err(error) => log::warn!("Edge Link accept: {error}"),
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        match listener.accept().await {
+                            Ok(connection) => {
+                                // Sessions may have ended while accept was pending.
+                                while let Some(result) = tcpSessions.try_join_next() {
+                                    if let Err(error) = result {
+                                        log::warn!("Edge Link task: {error}");
+                                    }
+                                }
+                                if tcpSessions.len() >= 2 {
+                                    log::warn!("Edge Link connection limit reached");
+                                    connection.close().await;
+                                    continue;
+                                }
+                                let channel = TcpLinkChannel::withReceiveLimit(connection, 48 * 1024);
+                                let authority = Arc::clone(&workerAuthority);
+                                let node = Arc::clone(&edgeNode);
+                                tcpSessions.spawn(async move {
+                                    if let Err(error) = crate::edge_session::handleChannelWithNode(
+                                        authority, channel, node,
+                                    ).await {
+                                        log::warn!("Edge Link session: {error}");
+                                    }
+                                });
+                            }
+                            Err(error) => {
+                                log::error!("Link listener stopped: {error}");
+                                listener.close().await;
+                                break;
+                            }
+                        }
                     }
                 });
             })

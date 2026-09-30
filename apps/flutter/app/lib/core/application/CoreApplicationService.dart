@@ -196,7 +196,7 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      await _coreClients.linkAccess.linkAccessStore.initializeIdentity(
+      await _coreClients.server.remote.linkAccessStore.initializeIdentity(
         deviceInfo: deviceInfo,
       );
       await _coreClients.server.runtimeRemoteLinkService
@@ -235,33 +235,33 @@ class CoreApplicationService with WidgetsBindingObserver {
       return;
     }
     _webAccessBootstrapAttempted = true;
-    final sessions = await _coreClients.linkAccess.linkAccessStore
+    final sessions = await _coreClients.server.remote.linkAccessStore
         .outboundSessions();
-    PairedRemoteSessionRecord? session;
+    PairedPeerSessionRecord? session;
     for (final candidate in sessions.values) {
-      if (candidate.baseUrl == launchInfo.baseUrl) {
+      if (candidate.endpoint == launchInfo.baseUrl) {
         session = candidate;
         break;
       }
     }
     late final String name;
-    late final String coreDeviceId;
+    late final String peerNodeId;
     if (session != null) {
       name = remotePairingSessionNameFromRecord(session);
-      coreDeviceId = session.coreDeviceId;
+      peerNodeId = session.peerNodeId;
     } else {
       final created = await const RemotePairingBridge().bootstrap(
-        baseUrl: launchInfo.baseUrl,
+        endpoint: launchInfo.baseUrl,
         token: launchInfo.token,
       );
       name = remotePairingSessionNameFromRecord(created);
-      coreDeviceId = created.coreDeviceId;
+      peerNodeId = created.peerNodeId;
     }
     await _coreClients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(
       name: name,
     );
     ClientLogger.i(
-      'web access bootstrap completed coreDeviceId=$coreDeviceId',
+      'web access bootstrap completed peerNodeId=$peerNodeId',
       tag: _logTag,
     );
   }

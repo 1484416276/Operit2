@@ -2178,30 +2178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-access-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-runtime",
- "operit-store",
- "operit-util",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "operit-cli"
 version = "2.0.0-preview.9"
 dependencies = [
@@ -2215,7 +2191,6 @@ dependencies = [
  "hmac",
  "image",
  "mdns-sd",
- "operit-access-runtime",
  "operit-command-core",
  "operit-core-application",
  "operit-host-api",
@@ -2227,6 +2202,7 @@ dependencies = [
  "operit-model",
  "operit-node-runtime",
  "operit-providers",
+ "operit-proxy-edge",
  "operit-proxy-local",
  "operit-runtime",
  "operit-store",
@@ -2271,7 +2247,6 @@ dependencies = [
 name = "operit-core-application"
 version = "0.1.0"
 dependencies = [
- "operit-access-runtime",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
@@ -2282,20 +2257,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-edge-transport"
+name = "operit-edge-contract"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "base64",
- "hmac",
- "operit-host-api",
  "operit-link",
- "rand_core 0.6.4",
  "serde",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -2521,20 +2487,44 @@ name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
- "operit-access-runtime",
- "operit-edge-transport",
+ "futures-util",
+ "hmac",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "operit-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
  "quote",
+ "rand_core 0.6.4",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "syn",
  "tokio",
+ "uuid",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "operit-peer-link"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "hmac",
+ "operit-host-api",
+ "operit-link",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -2633,11 +2623,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-proxy-edge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-edge-contract",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+]
+
+[[package]]
 name = "operit-proxy-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "operit-access-runtime",
  "operit-command-core",
  "operit-host-api",
  "operit-link",

@@ -2,15 +2,15 @@
 // Compile the actual firmware modules, including the same stream renderer.
 #[path = "../../../../apps/esp32/src/edge_chat.rs"]
 mod edge_chat;
+#[path = "../../../../apps/esp32/src/edge_image.rs"]
+mod edge_image;
 #[path = "../../../../apps/esp32/src/edge_session.rs"]
 mod edge_session;
 #[cfg(test)]
 mod tests;
 
-use operit_edge_transport::{
-    linkTokenHash, tcp::TcpLinkChannel, EdgePairingAuthority, EdgePairingPersistentState,
-    EdgePairingStore,
-};
+use operit_peer_link::{linkTokenHash, PairingAuthority, PairingPersistentState, PairingStore};
+use operit_peer_link::transport::tcp::TcpLinkChannel;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::collections::HashMap;
 use std::{
@@ -20,9 +20,30 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+struct SimulatorStatusPlugin { address: String }
+
+impl operit_node_edge::EdgePlugin for SimulatorStatusPlugin {
+    fn manifest(&self) -> operit_node_edge::EdgePluginManifest {
+        operit_node_edge::EdgePluginManifest {
+            id: "device.status".into(), name: "Device status".into(), actions: vec!["read".into()],
+        }
+    }
+
+    fn invoke(&self, action: &str, _args: operit_link::CoreValue)
+        -> Result<operit_link::CoreValue, operit_node_edge::EdgeServiceError> {
+        if action != "read" { return Err(operit_node_edge::EdgeServiceError::new("unsupported status action")); }
+        Ok(operit_link::CoreValue::Map(std::collections::BTreeMap::from([
+            ("boardId".into(), operit_link::CoreValue::String("ESP32-2432S028-SIM".into())),
+            ("expression".into(), operit_link::CoreValue::String("online".into())),
+            ("ipv4".into(), operit_link::CoreValue::String(self.address.clone())),
+            ("wifiSsid".into(), operit_link::CoreValue::String("simulator".into())),
+        ])))
+    }
+}
+
 struct FileStore(PathBuf);
-impl EdgePairingStore for FileStore {
-    fn load(&self) -> Result<Option<EdgePairingPersistentState>, String> {
+impl PairingStore for FileStore {
+    fn load(&self) -> Result<Option<PairingPersistentState>, String> {
         match std::fs::read(&self.0) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map(Some)
@@ -31,7 +52,7 @@ impl EdgePairingStore for FileStore {
             Err(e) => Err(e.to_string()),
         }
     }
-    fn save(&self, state: &EdgePairingPersistentState) -> Result<(), String> {
+    fn save(&self, state: &PairingPersistentState) -> Result<(), String> {
         let bytes = serde_json::to_vec(state).map_err(|e| e.to_string())?;
         let temporary = self.0.with_extension("tmp");
         std::fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
@@ -47,6 +68,8 @@ fn emit(value: serde_json::Value) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let scheduler = Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
+    operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(scheduler.clone());
     let token = std::env::var("OPERIT_SIM_TOKEN")?;
     if token.is_empty() {
         return Err("Simulator token is empty".into());
@@ -56,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let code = Arc::new(Mutex::new(String::new()));
     let error = Arc::new(Mutex::new(String::new()));
     let lastAction = Arc::new(Mutex::new(String::new()));
-    let authority = Arc::new(EdgePairingAuthority::newWithStore(
+    let authority = Arc::new(PairingAuthority::newWithStore(
         token,
         "esp32-edge-simulator",
         operit_link::LinkDeviceInfo {
@@ -74,13 +97,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Match a normal LAN node: the editor IPC remains local, while the Edge
     // Link carrier is reachable by a Core on the same network by default.
     let address = std::env::var("OPERIT_SIM_BIND").unwrap_or_else(|_| "0.0.0.0:18765".into());
-    let listener = TcpLinkChannel::bind(&address).await?;
-    let address = listener.local_addr()?.to_string();
+    let listener = operit_host_api::TcpHost::bind(&operit_host_native_common::NativeTcpHost, &address).await?;
+    let address = listener.local_address()?.to_string();
+    let edgeNode = Arc::new(operit_node_edge::EdgeNode::fromHostManager(operit_host_api::HostManager::HostManager::default())
+        .withPlugin(Arc::new(SimulatorStatusPlugin { address: address.clone() }))
+        .map_err(|error| error.message)?);
     // Advertise the raw TCP Edge listener separately from Core's HTTP service.
     // mDNS is discovery only; the token hash is not a substitute for pairing.
     let mdns = {
         let daemon = ServiceDaemon::new()?;
-        let port = listener.local_addr()?.port();
+        let port = listener.local_address()?.parse::<std::net::SocketAddr>()?.port();
         let pid = std::process::id();
         let serviceType = "_operit-edge._tcp.local.";
         let instance = format!("operit-edge-simulator-{pid}");
@@ -100,9 +126,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let sessionError = error.clone();
     let sessionAuthority = Arc::clone(&authority);
+    let sessionNode = Arc::clone(&edgeNode);
     tokio::spawn(async move {
         loop {
-            let (stream, _) = match listener.accept().await {
+            let stream = match listener.accept().await {
                 Ok(value) => value,
                 Err(e) => {
                     *sessionError.lock().unwrap() = e.to_string();
@@ -115,10 +142,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // by the channel task below.
             let authority = sessionAuthority.clone();
             let error = sessionError.clone();
+            let edgeNode = Arc::clone(&sessionNode);
             tokio::spawn(async move {
                 *error.lock().unwrap() = String::new();
                 if let Err(e) =
-                    edge_session::handleChannel(authority, TcpLinkChannel::fromStream(stream)).await
+                    edge_session::handleChannelWithNode(authority, TcpLinkChannel::fromConnection(stream), edgeNode).await
                 {
                     *error.lock().unwrap() = e;
                 }
@@ -163,11 +191,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(error) = edge_chat::selectChat(chatId) {
                         emit(serde_json::json!({"id":id, "error":error})); continue;
                     }
+                } else if action == "edge_image_cancel" {
+                    edge_image::cancel();
+                } else if let Some(input) = action.strip_prefix("edge_image:") {
+                    if let Err(error) = edge_chat::openImage(input) {
+                        emit(serde_json::json!({"id":id, "error":error})); continue;
+                    }
                 } else if action != "edge_pair" && action != "edge_chat" {
                     emit(serde_json::json!({"id":id, "error":"Unknown device action"})); continue;
                 }
                 Ok(serde_json::json!({"ok": true, "action": action}))
             }
+            Some("image") => Ok(match edge_image::take() {
+                Some(event) => match event.chunk {
+                    Ok(chunk) => serde_json::json!({"request":event.request,"width":chunk.width,"height":chunk.height,
+                        "offset":chunk.offset,"bytes":chunk.bytes}),
+                    Err(error) => serde_json::json!({"request":event.request,"error":error}),
+                },
+                None => serde_json::Value::Null,
+            }),
+            Some("sendImage") => {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(request["bytes"].as_str().unwrap_or(""))
+                    .map_err(|_| "Invalid image bytes")?;
+                edge_chat::sendImage(bytes, request["mimeType"].as_str().unwrap_or("").into())
+                    .map(|_| serde_json::json!({"accepted":true}))
+            },
             Some("send") => edge_chat::send(request["text"].as_str().unwrap_or("").into())
                 .map(|_| serde_json::json!({"ok": true})),
             _ => Err("Unknown simulator command".into()),

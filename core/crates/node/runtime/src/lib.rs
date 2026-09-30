@@ -32,6 +32,8 @@ pub struct GeneratedSpaceRoute {
     pub permissionScope: GeneratedRoutePermissionSubject,
     pub permissionCapability: &'static str,
     pub lifecycle: GeneratedRouteLifecycle,
+    /// Only explicit creation commands may allocate a missing binding.
+    pub createBindingCapability: &'static str,
 }
 
 impl GeneratedSpaceRoute {
@@ -70,7 +72,9 @@ impl GeneratedSpaceRoute {
 
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
 
+pub mod remote;
 pub mod CoreNodeRouter;
+pub mod NodeClient;
 pub mod RuntimeRemoteLinkDiscovery;
 pub mod RuntimeRemoteLinkService;
 pub mod SpacePersistenceSyncService;

@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-operit-access-runtime = { path = "../../access/runtime" }
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
 operit-node-runtime = { path = "../../node/runtime" }

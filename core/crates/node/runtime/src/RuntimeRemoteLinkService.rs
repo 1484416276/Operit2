@@ -1,52 +1,20 @@
-use crate::RuntimeRemoteLinkDiscovery::{
-    discoverEdgeDevices, discoverRemoteDevices, RuntimeEdgeDiscoveryEndpoint,
-    RuntimeRemoteDiscoveryEndpoint,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use base64::engine::general_purpose::STANDARD as BASE64;
-#[cfg(not(target_arch = "wasm32"))]
-use base64::Engine;
-#[cfg(not(target_arch = "wasm32"))]
-use async_trait::async_trait;
-use operit_access_runtime::{
-    coreNodeTransportClient, remoteSessionAuthReason, AcceptedRemoteSessionRecord,
-        CoreNodePeerLink::{
-        activePeerNodeIds, attachPeerLinkCarrier, disconnectPeerLink,
-        isPeerLinkActive, kickPeerLink, subscribePeerLinkChanges, AttachedPeerLink,
-        PeerFrame, PeerLinkCarrier,
-    },
-    LinkAccessStore, LinkTransportPreference, PairedEdgeSessionRecord, PairedRemoteSession,
-    PairedRemoteSessionRecord, PendingOutboundEdgePairingRecord,
-    PendingOutboundPairingRecord, RemoteDeviceInfo, RemoteLinkClient,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use operit_edge_transport::{
-    finishPairAsClient, linkTokenHash, startPairAsClient, AuthenticatedLinkChannel,
-    EdgePairStartState, EdgeSession, LinkChannel,
-};
+use operit_link::protocol::LinkDeviceInfo;
+use operit_peer_link::{activePeerNodeIds, disconnectPeerLink, isPeerLinkActive, kickPeerLink, subscribePeerLinkChanges};
+use crate::RuntimeRemoteLinkDiscovery::{discoverRemoteDevices, RuntimeRemoteDiscoveryEndpoint};
+use crate::remote::{remoteSessionAuthReason, AcceptedRemoteSessionRecord, LinkAccessStore, PeerTransport, PairedPeerSessionRecord, PairedRemoteSession, PendingOutboundPairingRecord, RemoteLinkClient};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
-use operit_link::{
-    fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreValue, LinkDeviceInfo,
-    LinkFrame, LinkFramePayload, CORE_INTERNAL_TARGET,
-};
+use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_TARGET};
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
-use operit_store::NetworkControlStore::{
-    NetworkControlAuditRecord, NetworkControlIdentityAssignment, NetworkControlRole,
-    NetworkControlState, NetworkControlStore,
-};
-use operit_store::PreferencesDataStore::{
-    combine2, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow,
-};
+use operit_store::NetworkControlStore::{NetworkControlAuditRecord, NetworkControlIdentityAssignment, NetworkControlRole, NetworkControlState, NetworkControlStore};
+use operit_store::PreferencesDataStore::{combine2, mutableStateFlow, CoroutineScope, SharingStarted, StateFlow};
 use operit_store::SyncOperationStore::subscribeSyncMutations;
 use operit_tools::runtime_support::CoreRouteResumeContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::Arc;
 use tokio::sync::oneshot;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
@@ -58,10 +26,10 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimePairedDevice {
     pub deviceId: String,
-    pub deviceInfo: RemoteDeviceInfo,
+    pub deviceInfo: LinkDeviceInfo,
     pub outboundSessionName: Option<String>,
-    pub outboundBaseUrl: Option<String>,
-    pub outboundTransport: Option<LinkTransportPreference>,
+    pub outboundEndpoint: Option<String>,
+    pub outboundTransport: Option<PeerTransport>,
     pub inboundSessionIds: Vec<String>,
 }
 
@@ -79,91 +47,9 @@ pub enum RuntimePairedDeviceStatus {
 pub struct RuntimeRemotePairStartResult {
     pub pairingId: String,
     pub pairingServiceVersion: i32,
-    pub coreDeviceId: String,
-    pub coreDeviceInfo: RemoteDeviceInfo,
+    pub peerNodeId: String,
+    pub peerDeviceInfo: LinkDeviceInfo,
     pub coreUserName: String,
-}
-
-/// Reports the Edge identity returned by an outbound lightweight pairing.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RuntimeEdgePairStartResult {
-    pub pairingId: String,
-    pub pairingServiceVersion: u16,
-    pub edgeDeviceId: String,
-    pub edgeDeviceInfo: RemoteDeviceInfo,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct RuntimeEdgePeerCarrier {
-    channel: Arc<dyn LinkChannel>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-impl PeerLinkCarrier for RuntimeEdgePeerCarrier {
-    async fn sendPeerFrame(&self, frame: PeerFrame) -> Result<(), String> {
-        self.channel
-            .send(LinkFrame {
-                messageId: frame.messageId.clone(),
-                payload: LinkFramePayload::PeerFrame(frame),
-            })
-            .await
-    }
-
-    fn closePeerLinkCarrier(&self) {
-        let channel = self.channel.clone();
-        tokio::spawn(async move { channel.close().await });
-    }
-}
-
-/// Opens one Edge carrier from the user-facing endpoint string.
-///
-/// TCP remains the default (`192.168.1.20:8765`). USB/UART endpoints use
-/// `serial://COM27` or `serial://COM27?baud=115200` and share the exact same
-/// Link pairing and authenticated frame layer.
-#[cfg(not(target_arch = "wasm32"))]
-async fn connectEdgeChannel(endpoint: &str) -> Result<Arc<dyn LinkChannel>, String> {
-    if let Some(serialEndpoint) = endpoint.strip_prefix("serial://") {
-        let (port, query) = serialEndpoint
-            .split_once('?')
-            .unwrap_or((serialEndpoint, ""));
-        if port.trim().is_empty() {
-            return Err("Edge serial endpoint must contain a port name".to_string());
-        }
-        let baudRate = query
-            .split('&')
-            .find_map(|part| part.strip_prefix("baud="))
-            .map(|value| {
-                value
-                    .parse::<u32>()
-                    .map_err(|error| format!("invalid Edge serial baud rate: {error}"))
-            })
-            .transpose()?
-            .unwrap_or(115_200);
-        let host = operit_host_api::HostManager::defaultSerialPortHost()
-            .map_err(|error| error.to_string())?;
-        let channel =
-            operit_edge_transport::serial::SerialLinkChannel::open(host.as_ref(), port, baudRate)
-                .await?;
-        return Ok(channel);
-    }
-    let channel = operit_edge_transport::tcp::TcpLinkChannel::connect(endpoint).await?;
-    Ok(channel)
-}
-
-/// Describes one lightweight Edge discovered through local mDNS.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RuntimeEdgeDiscoveredDevice {
-    pub deviceId: String,
-    pub displayName: String,
-    pub platform: String,
-    pub model: String,
-    pub endpoint: String,
-    pub hostname: String,
-    pub port: u16,
-    pub tokenHash: String,
-    pub version: String,
 }
 
 /// Describes a Link-enabled runtime discovered by the local runtime.
@@ -174,7 +60,7 @@ pub struct RuntimeRemoteDiscoveredDevice {
     pub userName: String,
     pub platform: String,
     pub model: String,
-    pub baseUrl: String,
+    pub endpoint: String,
     pub hostname: String,
     pub port: u16,
     pub tokenHash: String,
@@ -253,9 +139,7 @@ pub struct RuntimeRemoteLinkService {
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
     networkControlStore: NetworkControlStore,
-    #[cfg(not(target_arch = "wasm32"))]
-    edgePeerLinks: Arc<AsyncMutex<BTreeMap<String, AttachedPeerLink>>>,
-    edgeReconnectRunning: Arc<AtomicBool>,
+    connections: crate::remote::connections::PeerConnectionManager,
 }
 
 impl RuntimeRemoteLinkService {
@@ -283,16 +167,9 @@ impl RuntimeRemoteLinkService {
         let spaceStore = CoreSpaceStore::new(localRuntime.runtimeStorageHost());
         let networkControlStore = NetworkControlStore::new(localRuntime.runtimeStorageHost())
             .expect("RuntimeRemoteLinkService requires network control storage");
-        Self {
-            localRuntime,
-            nodeRouter,
-            linkAccessStore,
-            spaceStore,
-            networkControlStore,
-            #[cfg(not(target_arch = "wasm32"))]
-            edgePeerLinks: Arc::new(AsyncMutex::new(BTreeMap::new())),
-            edgeReconnectRunning: Arc::new(AtomicBool::new(false)),
-        }
+        let connections = crate::remote::connections::PeerConnectionManager::new(
+            nodeRouter.clone(), linkAccessStore.clone(), spaceStore.clone(), networkControlStore.clone());
+        Self { localRuntime, nodeRouter, linkAccessStore, spaceStore, networkControlStore, connections }
     }
 
     /// Returns the converged Space membership owned by this CoreNode.
@@ -580,13 +457,13 @@ impl RuntimeRemoteLinkService {
     pub async fn joinPairedDeviceSpace(&self, name: String) -> Result<CoreSpace, String> {
         let (record, session) = self.pairedSession(&name)?;
         let info = session.sessionInfo().await?;
-        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
+        ensureRemoteIdentity(&record, &info.peerNodeId)?;
         let peerSpace = info.deviceSpace;
         self.spaceStore.importDeviceProfiles(info.deviceProfiles)?;
         if !peerSpace
             .members
             .iter()
-            .any(|nodeId| nodeId == &record.coreDeviceId)
+            .any(|nodeId| nodeId == &record.peerNodeId)
         {
             return Err("paired device is not present in its advertised device space".to_string());
         }
@@ -599,7 +476,7 @@ impl RuntimeRemoteLinkService {
                 .any(|nodeId| nodeId == &localNodeId)
         {
             self.spaceStore
-                .observePairedDeviceSpace(record.coreDeviceId.clone(), peerSpace)?;
+                .observePairedDeviceSpace(record.peerNodeId.clone(), peerSpace)?;
         } else {
             // The server accepts a join proposal containing exactly its current
             // membership plus the authenticated joining device. Do not merge the
@@ -635,10 +512,10 @@ impl RuntimeRemoteLinkService {
     /// Reads paired devices with inbound and outbound records merged by device id.
     #[allow(non_snake_case)]
     pub fn pairedDevicesSnapshot(&self) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
-        mergeEdgePairedDevices(mergePairedDevices(
+        mergePairedDevices(
             self.linkAccessStore.outboundSessions()?,
             self.linkAccessStore.inboundSessions()?,
-        )?, self.linkAccessStore.edgeSessions()?)
+        )
     }
 
     /// Observes paired devices after merging both connection directions by device id.
@@ -663,14 +540,7 @@ impl RuntimeRemoteLinkService {
                     .expect("validated Link Access session records must merge by device id")
             },
         );
-        let edgeFlow = self.linkAccessStore.edgeSessionsFlow();
-        let initialEdge = edgeFlow.first().map_err(|error| error.to_string())?;
-        mergeEdgePairedDevices(coreDevices.value(), initialEdge.clone())?;
-        let edgeState = edgeFlow.stateIn(CoroutineScope, SharingStarted::Lazily, initialEdge);
-        Ok(combine2(&coreDevices, &edgeState, |devices, edges| {
-            mergeEdgePairedDevices(devices, edges)
-                .expect("validated Edge sessions must merge by device id")
-        }))
+        Ok(coreDevices)
     }
 
     /// Observes paired device statuses from paired records and Peer Links.
@@ -1015,7 +885,7 @@ impl RuntimeRemoteLinkService {
                     "CoreSyncTrace",
                     &format!(
                         "device_status.session_info_online device={} remote={}",
-                        deviceId, info.coreDeviceId
+                        deviceId, info.peerNodeId
                     ),
                 );
                 info
@@ -1027,7 +897,7 @@ impl RuntimeRemoteLinkService {
                 return Err(error);
             }
         };
-        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
+        ensureRemoteIdentity(&record, &info.peerNodeId)?;
         if !info
             .deviceSpace
             .members
@@ -1064,14 +934,11 @@ impl RuntimeRemoteLinkService {
     /// Removes every local pairing record associated with one device.
     #[allow(non_snake_case)]
     pub fn removePairedDevice(&self, deviceId: String) -> Result<(), String> {
-        let edgeNames = self.linkAccessStore.edgeSessions()?.into_iter()
-            .filter(|(_, record)| record.edgeDeviceId == deviceId)
-            .map(|(name, _)| name).collect::<Vec<_>>();
         let outboundNames = self
             .linkAccessStore
             .outboundSessions()?
             .into_iter()
-            .filter(|(_, record)| record.coreDeviceId == deviceId)
+            .filter(|(_, record)| record.peerNodeId == deviceId)
             .map(|(name, _)| name)
             .collect::<Vec<_>>();
         let inboundSessionIds = self
@@ -1081,13 +948,10 @@ impl RuntimeRemoteLinkService {
             .filter(|(_, record)| record.deviceId == deviceId)
             .map(|(sessionId, _)| sessionId)
             .collect::<Vec<_>>();
-        if outboundNames.is_empty() && inboundSessionIds.is_empty() && edgeNames.is_empty() {
+        if outboundNames.is_empty() && inboundSessionIds.is_empty() {
             return Err(format!("paired device does not exist: {deviceId}"));
         }
         disconnectPeerLink(&self.nodeRouter.localNodeId(), &deviceId)?;
-        for name in edgeNames {
-            self.linkAccessStore.removeEdgeSession(&name)?;
-        }
         for name in outboundNames {
             self.linkAccessStore.removeOutboundSession(&name)?;
         }
@@ -1097,48 +961,12 @@ impl RuntimeRemoteLinkService {
         Ok(())
     }
 
-    /// Starts the singleton persistent synchronization worker for direct Space peers.
-    #[allow(non_snake_case)]
-    pub fn startSpaceSync(&self) -> Result<(), String> {
-        self.persistenceSyncService().start()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.edgeReconnectRunning.swap(true, Ordering::AcqRel) {
-                return Ok(());
-            }
-            let service = self.clone();
-            if let Err(error) = defaultHostRuntimeTaskSchedulerHost()
-                .scheduleHostRuntimeAsyncTask(
-                    "runtime-edge-peer-reconnect",
-                    Box::new(move || {
-                        Box::pin(async move {
-                            while service.edgeReconnectRunning.load(Ordering::Acquire) {
-                                if let Err(error) = service.reconnectPersistedEdgePeers().await {
-                                    operit_util::AppLogger::AppLogger::trace(
-                                        "RuntimeRemoteLinkService",
-                                        &format!("Edge reconnect worker failed: {error}"),
-                                    );
-                                }
-                                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            }
-                        })
-                    }),
-                )
-            {
-                self.edgeReconnectRunning.store(false, Ordering::Release);
-                return Err(error.to_string());
-            }
-        }
-        Ok(())
-    }
+    /// Connection maintenance has its own application-owned lifecycle, independent of data sync.
+    pub fn startConnections(&self) -> Result<(), String> { self.connections.start() }
+    pub fn stopConnections(&self) -> Result<(), String> { self.connections.stop() }
 
-    /// Stops the persistent synchronization worker owned by this CoreNode.
-    #[allow(non_snake_case)]
-    pub fn stopSpaceSync(&self) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        self.edgeReconnectRunning.store(false, Ordering::Release);
-        self.persistenceSyncService().stop()
-    }
+    pub fn startSpaceSync(&self) -> Result<(), String> { self.persistenceSyncService().start() }
+    pub fn stopSpaceSync(&self) -> Result<(), String> { self.persistenceSyncService().stop() }
 
     /// Discovers nearby Spaces and groups their directly connectable CoreNodes.
     #[allow(non_snake_case)]
@@ -1168,78 +996,46 @@ impl RuntimeRemoteLinkService {
         self.groupDiscoveredSpaces(devices).await
     }
 
-    /// Discovers raw TCP Edge devices without requiring a token entry. The
-    /// token hash is only an mDNS pairing hint; the authenticated pairing
-    /// exchange still verifies the secret and displays the pairing code.
-    #[allow(non_snake_case)]
-    pub async fn discoverEdges(
-        &self,
-        timeoutMs: u64,
-    ) -> Result<Vec<RuntimeEdgeDiscoveredDevice>, String> {
-        if timeoutMs == 0 {
-            return Err("Edge discovery timeout must be greater than 0".to_string());
-        }
-        operit_host_api::HostManager::defaultServiceDiscoveryHost()
-            .map_err(|error| error.to_string())?;
-        let (sender, receiver) = oneshot::channel();
-        defaultHostRuntimeTaskSchedulerHost()
-            .scheduleHostRuntimeTask(
-                "runtime-edge-discovery",
-                Box::new(move || { let _ = sender.send(discoverEdgeDevices(timeoutMs)); }),
-            )
-            .map_err(|error| error.to_string())?;
-        let devices = receiver.await
-            .map_err(|_| "Edge discovery task ended before producing a result".to_string())??;
-        Ok(devices.into_iter().map(|device: RuntimeEdgeDiscoveryEndpoint| {
-            RuntimeEdgeDiscoveredDevice {
-                deviceId: device.deviceId,
-                displayName: device.displayName,
-                platform: device.platform,
-                model: device.model,
-                endpoint: format!("{}:{}", device.address, device.port),
-                hostname: device.hostname,
-                port: device.port,
-                tokenHash: device.tokenHash,
-                version: device.version,
-            }
-        }).collect())
-    }
-
     /// Starts a runtime-owned outbound pairing and stores its confidential client state.
     #[allow(non_snake_case)]
     pub async fn startPairedRemote(
         &self,
-        baseUrl: String,
+        endpoint: String,
         tokenHash: String,
-        clientDeviceInfo: RemoteDeviceInfo,
+        clientDeviceInfo: LinkDeviceInfo,
     ) -> Result<RuntimeRemotePairStartResult, String> {
-        if baseUrl.trim().is_empty() {
+        if endpoint.trim().is_empty() {
             return Err("paired remote base URL must not be empty".to_string());
         }
         if tokenHash.trim().is_empty() {
             return Err("paired remote token hash must not be empty".to_string());
         }
-        let client = RemoteLinkClient::new(baseUrl.clone());
+        let transport = PeerTransport::forEndpoint(&endpoint)?;
+        if transport.isFramed() {
+            return self.channelPairing().startChannelPairing(endpoint, tokenHash, clientDeviceInfo).await;
+        }
+        let client = RemoteLinkClient::new(endpoint.clone());
         let hello = client.hello(&tokenHash).await?;
         let identity = self.linkAccessStore.initializeIdentity(clientDeviceInfo)?;
         let state = client
             .pairStart(&tokenHash, identity.deviceId, identity.deviceInfo)
             .await?;
-        if hello.coreDeviceId != state.coreDeviceId {
+        if hello.peerNodeId != state.peerNodeId {
             return Err("paired remote identity changed during pairing".to_string());
         }
         self.linkAccessStore.savePendingOutboundPairing(
             state.pairingId.clone(),
             PendingOutboundPairingRecord {
-                baseUrl,
+                endpoint,
+                transport,
                 state: state.clone(),
             },
         )?;
         Ok(RuntimeRemotePairStartResult {
             pairingId: state.pairingId,
             pairingServiceVersion: state.pairingServiceVersion,
-            coreDeviceId: state.coreDeviceId,
-            coreDeviceInfo: state.coreDeviceInfo,
+            peerNodeId: state.peerNodeId,
+            peerDeviceInfo: state.peerDeviceInfo,
             coreUserName: hello.deviceSpace.userName,
         })
     }
@@ -1251,7 +1047,7 @@ impl RuntimeRemoteLinkService {
         pairingId: String,
         pairingCode: String,
         name: String,
-    ) -> Result<PairedRemoteSessionRecord, String> {
+    ) -> Result<PairedPeerSessionRecord, String> {
         if pairingId.trim().is_empty() {
             return Err("paired remote pairing id must not be empty".to_string());
         }
@@ -1270,11 +1066,15 @@ impl RuntimeRemoteLinkService {
             .get(&pairingId)
             .cloned()
             .ok_or_else(|| format!("pending paired remote does not exist: {pairingId}"))?;
-        let client = RemoteLinkClient::new(pending.baseUrl);
-        let record = client
+        if pending.transport.isFramed() {
+            return self.channelPairing().finishChannelPairing(pairingId, pairingCode, name).await;
+        }
+        let client = RemoteLinkClient::new(pending.endpoint);
+        let mut record = client
             .pairFinish(&pending.state, &pairingCode)
             .await?
             .exportRecord();
+        record.transport = pending.transport;
         self.linkAccessStore
             .saveOutboundSession(name.clone(), record.clone())?;
         self.linkAccessStore
@@ -1282,369 +1082,29 @@ impl RuntimeRemoteLinkService {
         Ok(record)
     }
 
-    /// Returns the persisted transaction protocol before any pairing side effects.
-    pub fn outboundPairingKind(&self, pairingId: String) -> Result<operit_access_runtime::OutboundPairingKind, String> {
-        self.linkAccessStore.outboundPairingKind(&pairingId)
+    fn channelPairing(&self) -> crate::remote::pairing::PeerChannelPairing {
+        crate::remote::pairing::PeerChannelPairing::new(self.linkAccessStore.clone())
     }
-
-    /// Starts the standard Link pairing exchange with a lightweight Edge.
-    /// `tokenHash` is the SHA-256/base64 hash of the Edge token, matching the
-    /// normal Link Access pairing contract.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub async fn startEdgePairing(
-        &self,
-        endpoint: String,
-        tokenHash: String,
-        clientDeviceInfo: RemoteDeviceInfo,
-    ) -> Result<RuntimeEdgePairStartResult, String> {
-        if endpoint.trim().is_empty() {
-            return Err("Edge endpoint must not be empty".to_string());
-        }
-        if tokenHash.trim().is_empty() {
-            return Err("Edge token hash must not be empty".to_string());
-        }
-        let identity = self
-            .linkAccessStore
-            .initializeIdentity(clientDeviceInfo.clone())?;
-        let channel = connectEdgeChannel(&endpoint).await?;
-        let state = startPairAsClient(
-            channel.clone(),
-            tokenHash,
-            identity.deviceId,
-            LinkDeviceInfo {
-                platform: identity.deviceInfo.platform,
-                model: identity.deviceInfo.model,
-            },
-        )
-        .await?;
-        let result = RuntimeEdgePairStartResult {
-            pairingId: state.pairingId.clone(),
-            pairingServiceVersion: operit_edge_transport::EDGE_PAIRING_SERVICE_VERSION,
-            edgeDeviceId: state.edgeDeviceId.clone(),
-            edgeDeviceInfo: RemoteDeviceInfo {
-                platform: state.edgeDeviceInfo.platform.clone(),
-                model: state.edgeDeviceInfo.model.clone(),
-            },
-        };
-        let pairingState = serde_json::to_value(&state)
-            .map_err(|error| format!("failed to persist Edge pairing state: {error}"))?;
-        self.linkAccessStore.savePendingOutboundEdgePairing(
-            state.pairingId.clone(),
-            PendingOutboundEdgePairingRecord {
-                endpoint: endpoint.clone(),
-                pairingState,
-            },
-        )?;
-        // Pairing transactions survive independently of their initial carrier.
-        channel.close().await;
-        Ok(result)
-    }
-
-    /// Convenience pairing entry point for callers that still hold the raw
-    /// Edge token rather than its Link hash.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub async fn startEdgePairingWithToken(
-        &self,
-        endpoint: String,
-        token: String,
-        clientDeviceInfo: RemoteDeviceInfo,
-    ) -> Result<RuntimeEdgePairStartResult, String> {
-        self.startEdgePairing(endpoint, linkTokenHash(&token), clientDeviceInfo)
-            .await
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn ensureEdgeChat(&self, edgeDeviceId: &str) -> Result<String, String> {
-        let chatId = format!("edge-chat-{edgeDeviceId}");
-        let bindings = CoreNodeBindingStore::new(self.localRuntime.runtimeStorageHost())?;
-        let commit = if let Some(binding) = bindings.bindingOptional(&chatId)? {
-            bindings.compareAndSet(&chatId, &binding.nodeId, &binding.nodeId)?
-        } else {
-            let local = self.nodeRouter.localNodeId();
-            let direct = activePeerNodeIds(&local)?;
-            let mut members = self.spaceStore.space()?.members;
-            members.sort_by_key(|id| (id != &local, !direct.contains(id), id.clone()));
-            let mut selected = None;
-            for member in members {
-                if member != edgeDeviceId
-                    && self.networkControlStore.nodeHasCapability(&member, "runtime.execute", None)?
-                    && (member == local || self.nodeRouter.nodeIsReachable(&member)?)
-                {
-                    selected = Some(member);
-                    break;
-                }
-            }
-            let selected = selected.ok_or_else(|| "No reachable Space member can execute Edge chat".to_string())?;
-            bindings.create(&chatId, &selected)?
-        };
-        self.installRouteBindingOnTarget(&commit.binding.nodeId, commit.operation).await?;
-        let response = self.nodeRouter.callSpace(CoreCallRequest::new(
-            format!("edge-chat-init-{}", currentTimeMillis()), CORE_INTERNAL_TARGET,
-            "ensureRoutedChat", CoreValue::Map(BTreeMap::from([
-                ("chatId".into(), CoreValue::String(chatId.clone())),
-            ])),
-        )).await;
-        response.result.map_err(|error| error.to_string())?;
-        Ok(chatId)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn attachEdgePeerChannel(
-        &self,
-        name: String,
-        record: PairedEdgeSessionRecord,
-        channel: Arc<dyn LinkChannel>,
-        session: EdgeSession,
-    ) -> Result<AttachedPeerLink, String> {
-        let localNodeId = self.nodeRouter.localNodeId();
-        if record.deviceId != localNodeId
-            || session.deviceId != localNodeId
-            || session.peerDeviceId != record.edgeDeviceId
-            || session.sessionId != record.sessionId
-        {
-            return Err("Edge session does not match the authenticated Space identities".to_string());
-        }
-        if !self.spaceStore.contains(record.edgeDeviceId.clone())?
-            || self.networkControlStore.nodeIsDisconnected(&record.edgeDeviceId)?
-        {
-            return Err("Edge is not an admitted active member of this Space".to_string());
-        }
-        let chatId = self.ensureEdgeChat(&record.edgeDeviceId).await?;
-        let authenticated = AuthenticatedLinkChannel::new(channel, session);
-        let space = self.spaceStore.space()?;
-        authenticated
-            .send(LinkFrame {
-                messageId: format!("edge-peer-open-{}", currentTimeMillis()),
-                payload: LinkFramePayload::SpaceContext {
-                    spaceId: space.spaceId,
-                    adjacentNodeId: localNodeId,
-                    ttl: u32::try_from(space.members.len()).unwrap_or(u32::MAX).max(1),
-                    chatId,
-                },
-            })
-            .await?;
-        // A successful socket write does not prove the stored pairing is still
-        // accepted by Edge. Require an authenticated PeerLink frame before
-        // publishing this carrier as online, then dispatch that first frame.
-        let first = tokio::time::timeout(std::time::Duration::from_secs(3), authenticated.receive())
-            .await.map_err(|_| "Edge admission acknowledgement timed out".to_string())??
-            .ok_or_else(|| "Edge closed before accepting Space admission".to_string())?;
-        let LinkFramePayload::PeerFrame(firstPeerFrame) = first.payload else {
-            authenticated.close().await;
-            return Err("Edge admission returned a non-PeerLink frame".into());
-        };
-        let attached = attachPeerLinkCarrier(
-            self.nodeRouter.localNodeId(),
-            record.edgeDeviceId,
-            format!("edge-peer-{}-{}", name, currentTimeMillis()),
-            Arc::new(RuntimeEdgePeerCarrier {
-                channel: authenticated.clone(),
-            }),
-            coreNodeTransportClient(self.nodeRouter.clone()),
-            self.spaceStore.clone(),
-        )?;
-        self.edgePeerLinks
-            .lock()
-            .await
-            .insert(name, attached.clone());
-        let receiver = authenticated;
-        let receiverAttached = attached.clone();
-        tokio::spawn(async move {
-            if let Err(error) = receiverAttached.receiveFrame(firstPeerFrame).await {
-                receiverAttached.close(format!("Edge PeerLink admission dispatch failed: {error}"));
-                return;
-            }
-            loop {
-                let frame = match receiver.receive().await {
-                    Ok(Some(frame)) => frame,
-                    Ok(None) => {
-                        receiverAttached.close("Edge PeerLink carrier closed".to_string());
-                        break;
-                    }
-                    Err(error) => {
-                        receiverAttached.close(format!("Edge PeerLink receive failed: {error}"));
-                        break;
-                    }
-                };
-                let LinkFramePayload::PeerFrame(peerFrame) = frame.payload else {
-                    receiverAttached.close("Edge carrier sent a non-PeerLink frame".to_string());
-                    break;
-                };
-                if let Err(error) = receiverAttached.receiveFrame(peerFrame).await {
-                    receiverAttached.close(format!("Edge PeerLink dispatch failed: {error}"));
-                    break;
-                }
-            }
-        });
-        Ok(attached)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn reconnectPersistedEdgePeers(&self) -> Result<(), String> {
-        for (name, record) in self.linkAccessStore.edgeSessions()? {
-            if !self.spaceStore.contains(record.edgeDeviceId.clone())?
-                || self.networkControlStore.nodeIsDisconnected(&record.edgeDeviceId)?
-            {
-                continue;
-            }
-            if isPeerLinkActive(&self.nodeRouter.localNodeId(), &record.edgeDeviceId)? {
-                continue;
-            }
-            let channel = match connectEdgeChannel(&record.endpoint).await {
-                Ok(channel) => channel,
-                Err(error) => {
-                    operit_util::AppLogger::AppLogger::trace(
-                        "RuntimeRemoteLinkService",
-                        &format!("Edge reconnect skipped name={name}: {error}"),
-                    );
-                    continue;
-                }
-            };
-            let secret = BASE64
-                .decode(record.sessionSecret.as_bytes())
-                .map_err(|error| format!("invalid Edge session secret: {error}"))?;
-            let session = EdgeSession {
-                sessionId: record.sessionId.clone(),
-                deviceId: record.deviceId.clone(),
-                peerDeviceId: record.edgeDeviceId.clone(),
-                sessionSecret: secret,
-            };
-            let sessionName = name.clone();
-            if let Err(error) = self
-                .attachEdgePeerChannel(name, record, channel, session)
-                .await
-            {
-                operit_util::AppLogger::AppLogger::trace(
-                    "RuntimeRemoteLinkService",
-                    &format!("Edge reconnect attach failed name={sessionName}: {error}"),
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Completes an Edge pairing after the code displayed by the Edge has
-    /// been entered and keeps the authenticated Link client ready for calls.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub async fn finishEdgePairing(
-        &self,
-        pairingId: String,
-        pairingCode: String,
-        name: String,
-    ) -> Result<PairedEdgeSessionRecord, String> {
-        if pairingId.trim().is_empty() || pairingCode.trim().is_empty() || name.trim().is_empty() {
-            return Err("Edge pairing id, code, and session name are required".to_string());
-        }
-        if self.linkAccessStore.edgeSessions()?.contains_key(&name) {
-            return Err(format!("Edge session already exists: {name}"));
-        }
-        let localNodeId = self.nodeRouter.localNodeId();
-        self.networkControlStore.initializeCurrentSpace()?;
-        let stored = self.linkAccessStore.pendingOutboundEdgePairings()?
-            .get(&pairingId)
-            .cloned()
-            .ok_or_else(|| format!("pending Edge pairing does not exist: {pairingId}"))?;
-        let state: EdgePairStartState = serde_json::from_value(stored.pairingState)
-            .map_err(|error| format!("invalid persisted Edge pairing state: {error}"))?;
-        if !self.networkControlStore.nodeHasCapability(
-            &localNodeId, "network.members.join", Some(&state.edgeDeviceId),
-        )? {
-            return Err("current device cannot admit an Edge into this Space".to_string());
-        }
-        let channel = connectEdgeChannel(&stored.endpoint).await?;
-        let edgeDeviceInfo = RemoteDeviceInfo {
-            platform: state.edgeDeviceInfo.platform.clone(),
-            model: state.edgeDeviceInfo.model.clone(),
-        };
-        let session =
-            finishPairAsClient(channel.clone(), state, pairingCode).await?;
-        let record = PairedEdgeSessionRecord {
-            endpoint: stored.endpoint,
-            sessionId: session.sessionId.clone(),
-            deviceId: session.deviceId.clone(),
-            edgeDeviceId: session.peerDeviceId.clone(),
-            edgeDeviceInfo,
-            pairingServiceVersion: operit_edge_transport::EDGE_PAIRING_SERVICE_VERSION,
-            sessionSecret: BASE64.encode(&session.sessionSecret),
-        };
-        // Check authorization before mutating either the profile or Space
-        // membership, so a denied pairing cannot leave half-admitted state.
-        let localNodeId = self.nodeRouter.localNodeId();
-        self.networkControlStore.initializeCurrentSpace()?;
-        if !self.networkControlStore.nodeHasCapability(
-            &localNodeId,
-            "network.members.join",
-            Some(&record.edgeDeviceId),
-        )? {
-            return Err("current device cannot admit an Edge into this Space".to_string());
-        }
-        // A completed Edge pairing is a normal Space admission. The Edge only
-        // contributes identity/profile metadata; it does not receive local
-        // business storage or a local Host capability registry.
-        self.spaceStore.admitRemoteMember(
-            record.edgeDeviceId.clone(),
-            format!("Edge {}", record.edgeDeviceId),
-            record.edgeDeviceInfo.platform.clone(),
-            record.edgeDeviceInfo.model.clone(),
-            format!("edge-link-{}", record.pairingServiceVersion),
-        )?;
-        let control = self.networkControlStore.currentState()?;
-        if !control.memberNodeIds.contains(&record.edgeDeviceId) {
-            self.networkControlStore
-                .admitMember(record.edgeDeviceId.clone())?;
-        }
-        self.linkAccessStore
-            .saveEdgeSession(name.clone(), record.clone())?;
-        self.attachEdgePeerChannel(name, record.clone(), channel, session)
-            .await?;
-        self.linkAccessStore.removePendingOutboundEdgePairing(&pairingId)?;
-        Ok(record)
-    }
-
-    /// Executes one standard Link call against a paired lightweight Edge.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub async fn callEdge(
-        &self,
-        name: String,
-        request: CoreCallRequest,
-    ) -> Result<CoreCallResponse, String> {
-        let _ = (name, request);
-        Err("Edge calls must use the generated Space route; direct callEdge is disabled".to_string())
-    }
-
-    /// Lists the completed lightweight Edge sessions known by this Core.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub fn edgeSessionsSnapshot(
-        &self,
-    ) -> Result<BTreeMap<String, PairedEdgeSessionRecord>, String> {
-        self.linkAccessStore.edgeSessions()
-    }
-
 
     /// Bootstraps an outbound pairing from a Web Access URL token.
     #[allow(non_snake_case)]
     pub async fn bootstrapPairedRemote(
         &self,
-        baseUrl: String,
+        endpoint: String,
         tokenHash: String,
-        clientDeviceInfo: RemoteDeviceInfo,
-    ) -> Result<PairedRemoteSessionRecord, String> {
-        if baseUrl.trim().is_empty() {
+        clientDeviceInfo: LinkDeviceInfo,
+    ) -> Result<PairedPeerSessionRecord, String> {
+        if endpoint.trim().is_empty() {
             return Err("paired remote base URL must not be empty".to_string());
         }
         if tokenHash.trim().is_empty() {
             return Err("paired remote token hash must not be empty".to_string());
         }
-        let client = RemoteLinkClient::new(baseUrl);
+        let client = RemoteLinkClient::new(endpoint);
         let hello = client.hello(&tokenHash).await?;
         let name = format!(
             "{}-{}-{}",
-            hello.coreDeviceInfo.platform, hello.coreDeviceInfo.model, hello.coreDeviceId
+            hello.peerDeviceInfo.platform, hello.peerDeviceInfo.model, hello.peerNodeId
         );
         if self.linkAccessStore.outboundSessions()?.contains_key(&name) {
             return Err(format!("paired remote session already exists: {name}"));
@@ -1654,7 +1114,7 @@ impl RuntimeRemoteLinkService {
             .pairBootstrap(&tokenHash, identity.deviceId, identity.deviceInfo)
             .await?
             .exportRecord();
-        if hello.coreDeviceId != record.coreDeviceId {
+        if hello.peerNodeId != record.peerNodeId {
             return Err("paired remote identity changed during pairing".to_string());
         }
         self.linkAccessStore
@@ -1667,8 +1127,8 @@ impl RuntimeRemoteLinkService {
     pub fn setPairedRemoteTransport(
         &self,
         name: String,
-        transport: LinkTransportPreference,
-    ) -> Result<PairedRemoteSessionRecord, String> {
+        transport: PeerTransport,
+    ) -> Result<PairedPeerSessionRecord, String> {
         let mut record = self
             .linkAccessStore
             .outboundSessions()?
@@ -1686,25 +1146,25 @@ impl RuntimeRemoteLinkService {
     async fn updatePairedRemoteEndpoint(
         &self,
         name: String,
-        baseUrl: String,
-    ) -> Result<Option<PairedRemoteSessionRecord>, String> {
+        endpoint: String,
+    ) -> Result<Option<PairedPeerSessionRecord>, String> {
         let sessions = self.linkAccessStore.outboundSessions()?;
         let record = sessions
             .get(&name)
             .cloned()
             .ok_or_else(|| format!("paired remote runtime does not exist: {name}"))?;
-        let updated = record.withBaseUrl(baseUrl);
+        let updated = record.withEndpoint(endpoint);
         let session = PairedRemoteSession::fromRecord(updated.clone())?;
         let Some(info) = discoveredEndpointResponse(
             session.sessionInfo().await,
             "session_info",
-            &record.coreDeviceId,
-            &updated.baseUrl,
+            &record.peerNodeId,
+            &updated.endpoint,
         ) else {
             return Ok(None);
         };
-        ensureRemoteIdentity(&updated, &info.coreDeviceId)?;
-        if updated.baseUrl != record.baseUrl {
+        ensureRemoteIdentity(&updated, &info.peerNodeId)?;
+        if updated.endpoint != record.endpoint {
             self.linkAccessStore
                 .saveOutboundSession(name, updated.clone())?;
         }
@@ -1716,7 +1176,7 @@ impl RuntimeRemoteLinkService {
     fn pairedSession(
         &self,
         name: &str,
-    ) -> Result<(PairedRemoteSessionRecord, PairedRemoteSession), String> {
+    ) -> Result<(PairedPeerSessionRecord, PairedRemoteSession), String> {
         let sessions = self.linkAccessStore.outboundSessions()?;
         let record = sessions
             .get(name)
@@ -1736,10 +1196,10 @@ impl RuntimeRemoteLinkService {
         for device in devices {
             for name in sessions
                 .iter()
-                .filter(|(_, session)| session.coreDeviceId == device.deviceId)
+                .filter(|(_, session)| session.peerNodeId == device.deviceId)
                 .map(|(name, _)| name)
             {
-                self.updatePairedRemoteEndpoint(name.clone(), device.baseUrl.clone())
+                self.updatePairedRemoteEndpoint(name.clone(), device.endpoint.clone())
                     .await?;
             }
         }
@@ -1755,26 +1215,26 @@ impl RuntimeRemoteLinkService {
         let mut spaces = BTreeMap::<String, RuntimeRemoteDiscoveredSpace>::new();
         for endpoint in devices {
             let Some(hello) = discoveredEndpointResponse(
-                RemoteLinkClient::new(endpoint.baseUrl.clone())
+                RemoteLinkClient::new(endpoint.endpoint.clone())
                     .hello(&endpoint.tokenHash)
                     .await,
                 "hello",
                 &endpoint.deviceId,
-                &endpoint.baseUrl,
+                &endpoint.endpoint,
             ) else {
                 continue;
             };
-            ensureRemoteIdentityById(&endpoint.deviceId, &hello.coreDeviceId)?;
+            ensureRemoteIdentityById(&endpoint.deviceId, &hello.peerNodeId)?;
             if hello.deviceSpace.deviceCount == 0 {
                 return Err("discovered device space has no devices".to_string());
             }
             let device = RuntimeRemoteDiscoveredDevice {
                 deviceId: endpoint.deviceId,
-                displayName: hello.coreDeviceInfo.displayName(),
+                displayName: hello.peerDeviceInfo.displayName(),
                 userName: hello.deviceSpace.userName,
-                platform: hello.coreDeviceInfo.platform,
-                model: hello.coreDeviceInfo.model,
-                baseUrl: endpoint.baseUrl,
+                platform: hello.peerDeviceInfo.platform,
+                model: hello.peerDeviceInfo.model,
+                endpoint: endpoint.endpoint,
                 hostname: endpoint.hostname,
                 port: endpoint.port,
                 tokenHash: endpoint.tokenHash,
@@ -1840,7 +1300,7 @@ fn discoveredEndpointResponse<T>(
     response: Result<T, String>,
     operation: &str,
     deviceId: &str,
-    baseUrl: &str,
+    endpoint: &str,
 ) -> Option<T> {
     match response {
         Ok(response) => Some(response),
@@ -1849,7 +1309,7 @@ fn discoveredEndpointResponse<T>(
                 "RuntimeRemoteLinkService",
                 &format!(
                     "Discovery request failed operation={operation} device={deviceId} \
-                     endpoint={baseUrl}: {error}"
+                     endpoint={endpoint}: {error}"
                 ),
             );
             None
@@ -1962,30 +1422,30 @@ fn pairedDeviceStatusesFromState(
 /// Merges inbound and outbound pairing records into one device-indexed projection.
 #[allow(non_snake_case)]
 fn mergePairedDevices(
-    outboundSessions: BTreeMap<String, PairedRemoteSessionRecord>,
+    outboundSessions: BTreeMap<String, PairedPeerSessionRecord>,
     inboundSessions: BTreeMap<String, AcceptedRemoteSessionRecord>,
 ) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
     let mut devices = BTreeMap::<String, RuntimePairedDevice>::new();
     for (sessionName, record) in outboundSessions {
         let device = devices
-            .entry(record.coreDeviceId.clone())
+            .entry(record.peerNodeId.clone())
             .or_insert_with(|| RuntimePairedDevice {
-                deviceId: record.coreDeviceId.clone(),
-                deviceInfo: record.remoteDeviceInfo.clone(),
+                deviceId: record.peerNodeId.clone(),
+                deviceInfo: record.peerDeviceInfo.clone(),
                 outboundSessionName: None,
-                outboundBaseUrl: None,
+                outboundEndpoint: None,
                 outboundTransport: None,
                 inboundSessionIds: Vec::new(),
             });
-        ensureDeviceInfoMatches(&device.deviceInfo, &record.remoteDeviceInfo)?;
+        ensureDeviceInfoMatches(&device.deviceInfo, &record.peerDeviceInfo)?;
         if device.outboundSessionName.is_some() {
             return Err(format!(
                 "multiple outgoing pairings target device {}",
-                record.coreDeviceId
+                record.peerNodeId
             ));
         }
         device.outboundSessionName = Some(sessionName);
-        device.outboundBaseUrl = Some(record.baseUrl);
+        device.outboundEndpoint = Some(record.endpoint);
         device.outboundTransport = Some(record.transport);
     }
     for (sessionId, record) in inboundSessions {
@@ -1996,7 +1456,7 @@ fn mergePairedDevices(
                     deviceId: record.deviceId.clone(),
                     deviceInfo: record.deviceInfo.clone(),
                     outboundSessionName: None,
-                    outboundBaseUrl: None,
+                    outboundEndpoint: None,
                     outboundTransport: None,
                     inboundSessionIds: Vec::new(),
                 });
@@ -2006,36 +1466,13 @@ fn mergePairedDevices(
     Ok(devices)
 }
 
-/// Adds authenticated Edge peers without presenting their TCP/UART credentials
-/// as HTTP sessions. The existing device UI uses PeerLink status and removal.
-fn mergeEdgePairedDevices(
-    mut devices: BTreeMap<String, RuntimePairedDevice>,
-    edges: BTreeMap<String, PairedEdgeSessionRecord>,
-) -> Result<BTreeMap<String, RuntimePairedDevice>, String> {
-    for record in edges.into_values() {
-        if let Some(device) = devices.get(&record.edgeDeviceId) {
-            ensureDeviceInfoMatches(&device.deviceInfo, &record.edgeDeviceInfo)?;
-        } else {
-            devices.insert(record.edgeDeviceId.clone(), RuntimePairedDevice {
-                deviceId: record.edgeDeviceId,
-                deviceInfo: record.edgeDeviceInfo,
-                outboundSessionName: None,
-                outboundBaseUrl: None,
-                outboundTransport: None,
-                inboundSessionIds: Vec::new(),
-            });
-        }
-    }
-    Ok(devices)
-}
-
 /// Verifies that the endpoint answered for the paired runtime identity stored locally.
 #[allow(non_snake_case)]
 fn ensureRemoteIdentity(
-    record: &PairedRemoteSessionRecord,
-    coreDeviceId: &str,
+    record: &PairedPeerSessionRecord,
+    peerNodeId: &str,
 ) -> Result<(), String> {
-    if coreDeviceId != record.coreDeviceId {
+    if peerNodeId != record.peerNodeId {
         return Err("remote runtime identity changed".to_string());
     }
     Ok(())
@@ -2056,8 +1493,8 @@ fn ensureRemoteIdentityById(expectedNodeId: &str, observedNodeId: &str) -> Resul
 /// Verifies that directional session records describe the same paired device.
 #[allow(non_snake_case)]
 fn ensureDeviceInfoMatches(
-    expected: &RemoteDeviceInfo,
-    observed: &RemoteDeviceInfo,
+    expected: &LinkDeviceInfo,
+    observed: &LinkDeviceInfo,
 ) -> Result<(), String> {
     if expected.platform != observed.platform || expected.model != observed.model {
         return Err("paired device metadata conflicts across session directions".to_string());
@@ -2085,25 +1522,14 @@ mod tests {
 
     /// Verifies both discovery request phases retain healthy peers around failed requests.
     #[test]
-    fn discovery_requests_isolate_unavailable_devices() {
-        for operation in ["session_info", "hello"] {
+    fn discovery_requests_isolate_unavailable_devices() {for operation in ["session_info", "hello"] {
             let responses = [
-                ("offline-first", Err("connection refused".to_string())),
-                ("online-first", Ok("verified-first")),
-                ("offline-middle", Err("request timed out".to_string())),
-                ("online-last", Ok("verified-last")),
-                ("offline-last", Err("connection reset".to_string())),
-            ];
+                ("offline-first", Err("connection refused".to_string())), ("online-first", Ok("verified-first")), ("offline-middle", Err("request timed out".to_string())), ("online-last", Ok("verified-last")), ("offline-last", Err("connection reset".to_string())), ];
             let mut verified = Vec::new();
             for (device_id, response) in responses {
                 let Some(response) = discoveredEndpointResponse(
-                    response,
-                    operation,
-                    device_id,
-                    "http://192.0.2.1:37194",
-                ) else {
-                    continue;
-                };
+                    response, operation, device_id, "http://192.0.2.1:37194", ) else {
+                    continue;};
                 verified.push((device_id, response));
             }
             assert_eq!(
@@ -2156,12 +1582,12 @@ mod tests {
     fn test_paired_device(device_id: &str) -> RuntimePairedDevice {
         RuntimePairedDevice {
             deviceId: device_id.to_string(),
-            deviceInfo: RemoteDeviceInfo {
+            deviceInfo: LinkDeviceInfo {
                 platform: "test".to_string(),
                 model: "peer".to_string(),
             },
             outboundSessionName: None,
-            outboundBaseUrl: None,
+            outboundEndpoint: None,
             outboundTransport: None,
             inboundSessionIds: Vec::new(),
         }

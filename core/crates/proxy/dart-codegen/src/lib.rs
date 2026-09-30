@@ -341,7 +341,7 @@ fn include_source_tree_model_types(
 ) {
     for type_name in serializable_types.keys() {
         let crate_name = type_name.split("::").next().unwrap_or_default();
-        if !matches!(crate_name, "operit_access_runtime" | "operit_node_runtime") {
+        if !matches!(crate_name, "operit_node_runtime") {
             continue;
         }
         collect_reachable_type(type_name, serializable_types, reachable);

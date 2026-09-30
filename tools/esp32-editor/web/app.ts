@@ -44,7 +44,7 @@ let sourceHash = '';
 interface DeviceState {
   running?: boolean; connected?: boolean; paired?: boolean; pairingCode?: string; spaceState?: string;
   chatPreview?: string; chatScreen?: string; chatTask?: string;
-  chat?: {chatId?: string; messages?: {sender: string; text: string}[];
+  chat?: {chatId?: string; messages?: {sender: string; text: string; images?: string[]}[];
     conversations?: {id: string; title: string; characterCardName?: string}[]; error?: string};
   chatSendResult?: {ok: boolean; error?: string} | null;
 }
@@ -52,10 +52,27 @@ let deviceRunning = false;
 let latestDeviceState: DeviceState | null = null;
 const composer = document.createElement('form');
 composer.className = 'host-composer';
-composer.innerHTML = '<label>电脑键盘输入（支持中文输入法）<input name="message" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><output aria-live="polite"></output>';
+composer.innerHTML = '<label>电脑键盘输入（支持中文输入法）<input name="message" maxlength="120" autocomplete="off" placeholder="输入后发送到屏幕中的当前对话"></label><button type="submit">发送</button><label class="image-picker">发送图片（PNG/JPEG，≤512 KiB）<input id="host-image" type="file" accept="image/png,image/jpeg"></label><output aria-live="polite"></output>';
 stage.after(composer);
 const hostInput = composer.querySelector<HTMLInputElement>('input')!;
 const hostStatus = composer.querySelector<HTMLOutputElement>('output')!;
+const hostImage = composer.querySelector<HTMLInputElement>('#host-image')!;
+hostImage.addEventListener('change', async () => {
+  const file = hostImage.files?.[0];
+  if (!file) return;
+  if (file.size === 0 || file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) {
+    hostStatus.textContent = '只支持小于 512 KiB 的 PNG/JPEG 图片'; hostImage.value = ''; return;
+  }
+  hostStatus.textContent = '正在传输图片…'; hostImage.disabled = true;
+  try {
+    const response = await fetch('/api/simulator/send-image', {method:'POST', headers:{'Content-Type':file.type}, body:file});
+    const result = await response.json() as {error?:string};
+    if (!response.ok) throw new Error(result.error ?? `上传失败 (${response.status})`);
+    // Acceptance only queues the Link call; the state poll confirms delivery.
+    if (hostStatus.textContent === '正在传输图片…') hostStatus.textContent = '等待 Core 确认图片发送…';
+  } catch (error) { hostStatus.textContent = errorMessage(error); }
+  finally { hostImage.disabled = false; hostImage.value = ''; }
+});
 let submittedHostText = '';
 composer.addEventListener('submit', event => {
   event.preventDefault();
@@ -146,9 +163,13 @@ function setDeviceState(state: DeviceState): void {
   const chat = state.chat;
   if (chat) {
     runtime.ccall('operit_lvgl_set_chat_identity', null, ['string', 'string'], [chat.chatId ?? '', state.chatPreview ?? 'Operit']);
-    const messages = (chat.messages ?? []).filter(message => message.text?.trim()).slice(-12);
-    messages.forEach((message, index) => runtime!.ccall('operit_lvgl_set_message', null,
-      ['number', 'number', 'string'], [index, message.sender === 'user' ? 1 : 0, message.text]));
+    const messages = (chat.messages ?? []).filter(message => message.text?.trim() || message.images?.length).slice(-12);
+    messages.forEach((message, index) => {
+      runtime!.ccall('operit_lvgl_set_message', null,
+        ['number', 'number', 'string'], [index, message.sender === 'user' ? 1 : 0, message.text]);
+      for (let image = 0; image < 4; image++) runtime!.ccall('operit_lvgl_set_message_image', null,
+        ['number', 'number', 'string'], [index, image, message.images?.[image] ?? '']);
+    });
     runtime.ccall('operit_lvgl_finish_messages', null, ['number'], [messages.length]);
     const conversations = (chat.conversations ?? []).slice(0, 24);
     conversations.forEach((item, index) => runtime!.ccall('operit_lvgl_set_conversation', null,
@@ -252,8 +273,10 @@ function handleRuntimeAction(value: string): void {
     return;
   }
   if (value.startsWith('edge_')) {
+    if (value.startsWith('edge_image:')) activeImageRequest = Number(value.split(':')[1]);
+    else if (value === 'edge_image_cancel') activeImageRequest = null;
     void fetch('/api/simulator/action', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Operit-Client': imageClient},
       body: JSON.stringify({action: value}),
     }).then(async response => { if (!response.ok) {
       const detail = await response.json() as {error?: string};
@@ -261,7 +284,11 @@ function handleRuntimeAction(value: string): void {
     } })
       .catch(error => {
         log('设备 action 错误: ' + errorMessage(error));
-        runtime?.ccall('operit_lvgl_action_error', null, ['string'], [errorMessage(error)]);
+        if (value.startsWith('edge_image:')) {
+          if (activeImageRequest === Number(value.split(':')[1])) activeImageRequest = null;
+          runtime?.ccall('operit_lvgl_image_error', null, ['number', 'string'],
+            [Number(value.split(':')[1]), errorMessage(error)]);
+        } else runtime?.ccall('operit_lvgl_action_error', null, ['string'], [errorMessage(error)]);
       });
   }
   pageLabel.textContent = value;
@@ -425,3 +452,45 @@ window.setInterval(async () => {
   } catch { /* The editor server can restart while this page stays open. */ }
   finally { debugPolling = false; }
 }, 1000);
+
+// Drain one chunk per poll. The firmware has the same one-chunk backpressure.
+let imagePolling = false;
+const imageClient = crypto.randomUUID();
+let activeImageRequest: number | null = null;
+window.setInterval(async () => {
+  if (!runtime || imagePolling || activeImageRequest === null) return;
+  const request = activeImageRequest;
+  imagePolling = true;
+  try {
+    const response = await fetch('/api/simulator/image', {headers: {'X-Operit-Client': imageClient}});
+    if (request !== activeImageRequest) return;
+    if (response.status === 409) {
+      activeImageRequest = null;
+      runtime.ccall('operit_lvgl_image_error', null, ['number', 'string'],
+        [request, '预览已在其他页面打开，请返回后重试']);
+      return;
+    }
+    if (!response.ok) return;
+    const chunk = await response.json() as {request: number; width: number; height: number;
+      offset: number; bytes: number[]; error?: string} | null;
+    if (!chunk || request !== activeImageRequest || chunk.request !== runtime.ccall('operit_lvgl_image_request', 'number', [], [])) return;
+    if (chunk.error) {
+      activeImageRequest = null;
+      runtime.ccall('operit_lvgl_image_error', null, ['number', 'string'], [chunk.request, chunk.error]);
+    } else {
+      const accepted = runtime.ccall('operit_lvgl_image_chunk', 'number',
+        ['number', 'number', 'number', 'number', 'array', 'number'],
+        [chunk.request, chunk.width, chunk.height, chunk.offset, new Uint8Array(chunk.bytes), chunk.bytes.length]);
+      if (!accepted) {
+        activeImageRequest = null;
+        await fetch('/api/simulator/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Operit-Client': imageClient},
+          body:JSON.stringify({action:'edge_image_cancel'})});
+      } else if (chunk.offset + chunk.bytes.length === chunk.width * chunk.height * 2) {
+        activeImageRequest = null;
+        void fetch('/api/simulator/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Operit-Client': imageClient},
+          body:JSON.stringify({action:'edge_image_cancel'})});
+      }
+    }
+  } catch (error) { log('图片传输失败: ' + errorMessage(error)); }
+  finally { imagePolling = false; }
+}, 100);

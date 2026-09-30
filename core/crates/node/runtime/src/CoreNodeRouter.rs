@@ -1,27 +1,16 @@
 use async_trait::async_trait;
-use operit_access_runtime::CoreNodePeerLink::{
-    activePeerNodeIds, peerLink, CoreNodeLinkClient, PeerLinkClient, RoutedCoreRequest,
-    RoutedCoreRequestKind,
-};
+use operit_peer_link::{activePeerNodeIds, peerLink, CoreNodeLinkClient, PeerLinkClient, RoutedCoreRequest, RoutedCoreRequestKind};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::RuntimeStorageHost;
 use operit_link::route_runtime::CoreRouteRuntime;
-use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
-    CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
-    CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
-    CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT,
-    CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_TARGET,
-};
+use operit_link::{CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient, CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET, CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_TARGET};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingRecord, CoreNodeBindingStore};
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::PreferencesDataStore::StateFlow;
 use serde::{Deserialize, Serialize};
-use operit_tools::runtime_support::{
-    CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus,
-};
+use operit_tools::runtime_support::{CoreNodeToolRuntime, RuntimeCoreNodeRouteState, RuntimeCoreNodeStatus};
 use operit_util::AppLogger::{AppLogger, VERBOSE_LEVEL_5, VERBOSE_LEVEL_6};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -402,7 +391,7 @@ impl CoreNodeRouter {
         let subscription = operit_store::SyncOperationStore::subscribeSyncMutations(move || {
             let _ = changes.try_send(());
         });
-        let mut peers = operit_access_runtime::CoreNodePeerLink::subscribePeerLinkChanges();
+        let mut peers = operit_peer_link::subscribePeerLinkChanges();
         let state = StateFlow::new(Some(self.bindingRouteStatus(key.clone())?));
         let (stop, mut stopped) = oneshot::channel::<()>();
         let observed = state.map(move |value| { let _keepAlive = &stop; value });
@@ -918,6 +907,39 @@ impl CoreNodeRouter {
         self.callSpaceWithOrigin(request, self.localNodeId.clone()).await
     }
 
+    /// Allocate bindings only for explicit creation commands, after caller authorization.
+    async fn prepareCreationBinding(&self, route: &crate::GeneratedSpaceRoute, key: &str,
+        origin: &str) -> Result<(), CoreLinkError> {
+        if route.createBindingCapability.is_empty() { return Ok(()); }
+        self.requireRoutePermission(route, origin, &self.localNodeId)?;
+        let bindings = CoreNodeBindingStore::new(self.localCore.runtimeStorageHost()).map_err(CoreLinkError::internal)?;
+        let commit = if let Some(binding) = bindings.bindingOptional(key).map_err(CoreLinkError::internal)? {
+            if !self.networkControlStore.nodeHasCapability(&binding.nodeId, route.createBindingCapability, None).map_err(CoreLinkError::internal)? {
+                return Err(CoreLinkError::new("ROUTE_PERMISSION_DENIED", "Binding target lacks execution capability"));
+            }
+            bindings.compareAndSet(key, &binding.nodeId, &binding.nodeId).map_err(CoreLinkError::internal)?
+        } else {
+            let mut members = self.spaceStore.space().map_err(CoreLinkError::internal)?.members;
+            members.sort_by_key(|id| (id != &self.localNodeId, id.clone()));
+            let mut selected = None;
+            for member in members {
+                if self.networkControlStore.nodeHasCapability(&member, route.createBindingCapability, None).map_err(CoreLinkError::internal)?
+                    && (member == self.localNodeId || self.nodeIsReachable(&member).map_err(CoreLinkError::internal)?) {
+                    selected = Some(member); break;
+                }
+            }
+            let target = selected.ok_or_else(|| CoreLinkError::new("ROUTE_UNAVAILABLE", "No reachable node has the required execution capability"))?;
+            bindings.create(key, &target).map_err(CoreLinkError::internal)?
+        };
+        if commit.binding.nodeId != self.localNodeId {
+            let target = self.targetForSchema("application").ok_or_else(|| CoreLinkError::internal("Application schema missing"))?;
+            let args = operit_link::toCoreValue(serde_json::json!({"operation": commit.operation})).map_err(|e| CoreLinkError::internal(e.to_string()))?;
+            Box::pin(self.callNode(commit.binding.nodeId, CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("binding-install"), target, "syncApplyImmediateBindingOperation", args))).await.result?;
+        }
+        Ok(())
+    }
+
     /// Executes one Space call while preserving its original caller identity.
     async fn callSpaceWithOrigin(
         &self,
@@ -941,6 +963,9 @@ impl CoreNodeRouter {
             Ok(value) => value,
             Err(error) => return CoreCallResponse::err(requestId, error),
         };
+        if let Err(error) = self.prepareCreationBinding(&route, &bindingKey, &originNodeId).await {
+            return CoreCallResponse::err(requestId, error);
+        }
         let targetNodeId = match self
             .routeNodeId(GeneratedCoreRoute::Binding {
                 scope: 0,
@@ -1451,7 +1476,7 @@ impl CoreNodeRouter {
         let _subscription = operit_store::SyncOperationStore::subscribeSyncMutations(move || {
             let _ = changes.try_send(());
         });
-        let mut peerChanges = operit_access_runtime::CoreNodePeerLink::subscribePeerLinkChanges();
+        let mut peerChanges = operit_peer_link::subscribePeerLinkChanges();
         'outer: loop {
             let binding = match self.effectiveBinding(&bindingKey) {
                 Ok(binding) => binding,
@@ -2492,23 +2517,10 @@ impl CoreRouteRuntime for CoreNodeRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use operit_access_runtime::CoreNodePeerLink::{
-        connectInMemoryPeerLinks, peerLink, CoreNodeTransportClient, RoutedCoreRequest,
-        RoutedCoreRequestKind,
-    };
-    use operit_host_api::HostManager::{
-        defaultHostRuntimeTaskSchedulerHost, setDefaultHostRuntimeTaskSchedulerHost,
-    };
-    use operit_host_api::{
-        FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
-        GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult, HostRuntimeAsyncTask,
-        HostRuntimeTask, HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteConnection,
-        RuntimeSqliteHost, RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost,
-        SqliteRow, SqliteValue,
-    };
-    use operit_link::{
-        CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_TARGET,
-    };
+    use operit_peer_link::{connectInMemoryPeerLinks, peerLink, CoreNodeTransportClient, RoutedCoreRequest, RoutedCoreRequestKind};
+    use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, setDefaultHostRuntimeTaskSchedulerHost};
+    use operit_host_api::{FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost, HostSecretStore, RuntimeSqliteConnection, RuntimeSqliteHost, RuntimeSqliteTransaction, RuntimeStorageEntry, RuntimeStorageHost, SqliteRow, SqliteValue};
+    use operit_link::{CoreEventKind, CorePushRequest, CoreStream, CoreStreamSource, CORE_INTERNAL_TARGET};
     use operit_model::ChatMessage::ChatMessage;
     use operit_model::ChatTurnOptions::ChatTurnOptions;
     use operit_model::InputProcessingState::InputProcessingState;
@@ -3385,9 +3397,11 @@ mod tests {
     /// resolution, and an outgoing PeerLink carrying a live chat watch.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn edge_peer_chat_watch_crosses_adjacent_router() {
-        use operit_edge_transport::{EdgePeerLink, EdgeSpaceRouteClient, LinkChannel};
-        use operit_access_runtime::CoreNodePeerLink::{attachPeerLinkCarrier, PeerLinkCarrier};
-        use operit_link::{LinkFrame, LinkFramePayload, PeerFrame};
+        use operit_peer_link::PeerRouteClient;
+use operit_peer_link::transport::LinkChannel;
+        use operit_peer_link::{attachPeerLinkCarrier, PeerLinkCarrier};
+        use operit_link::{PeerFrame};
+use operit_peer_link::{LinkFrame, LinkFramePayload};
         struct Channel {
             tx: tokio::sync::mpsc::UnboundedSender<LinkFrame>,
             rx: Mutex<tokio::sync::mpsc::UnboundedReceiver<LinkFrame>>,
@@ -3442,7 +3456,7 @@ mod tests {
         let (coreTx, edgeRx) = tokio::sync::mpsc::unbounded_channel();
         let attached = attachPeerLinkCarrier(router.localNodeId(), "edge-watch-client".into(),
             "edge-watch-channel".into(), Arc::new(Carrier(coreTx)),
-            TestCoreNodeRouterEndpoint::new(router.clone()), router.spaceStore.clone()).unwrap();
+            TestCoreNodeRouterEndpoint::new(router.clone()), Some(Arc::new(crate::remote::topology::SpacePeerObserver(router.spaceStore.clone())))).unwrap();
         let receiverLink = attached.clone();
         let receiverTask = tokio::spawn(async move {
             while let Some(frame) = coreRx.recv().await {
@@ -3450,8 +3464,20 @@ mod tests {
                 receiverLink.receiveFrame(frame).await.unwrap();
             }
         });
-        let peer = EdgePeerLink::new(Arc::new(Channel { tx: edgeTx, rx: Mutex::new(edgeRx) }));
-        let client = EdgeSpaceRouteClient::throughAdjacent(
+        let deviceChannel = Arc::new(Channel { tx: edgeTx, rx: Mutex::new(edgeRx) });
+        let deviceLink = attachPeerLinkCarrier("edge-watch-client".into(), router.localNodeId(),
+            "device-watch-channel".into(),
+            Arc::new(operit_peer_link::transport::channel::ChannelPeerCarrier(deviceChannel.clone())),
+            Arc::new(TestClientEndpoint), None).unwrap();
+        let receiver = deviceLink.clone();
+        let deviceReceiverTask = tokio::spawn(async move {
+            while let Some(frame) = deviceChannel.receive().await.unwrap() {
+                let LinkFramePayload::PeerFrame(frame) = frame.payload else { panic!("expected PeerFrame") };
+                receiver.receiveFrame(frame).await.unwrap();
+            }
+        });
+        let peer = deviceLink.client();
+        let client = PeerRouteClient::throughAdjacent(
             peer,
             router.spaceStore.space().unwrap().spaceId,
             "edge-watch-client".into(),
@@ -3469,8 +3495,14 @@ mod tests {
         let event = tokio::time::timeout(Duration::from_secs(5), stream.recv()).await.unwrap().unwrap();
         let messages: Vec<RoutedChatMessage> = operit_link::fromCoreValue(event.value).unwrap();
         assert_eq!(messages[0].text, "from executor");
+        // An idle chat must stay connected past the Core watchdog deadline.
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(!attached.isClosed(), "Edge must acknowledge Core heartbeat probes");
+        assert!(client.isConnected());
         drop(stream);
         receiverTask.abort();
+        deviceReceiverTask.abort();
+        deviceLink.close("test complete".into());
         attached.close("test complete".into());
         executorLink.close();
     }

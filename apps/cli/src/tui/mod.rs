@@ -46,7 +46,7 @@ use app::{
 use approval::TuiApprovalBridge;
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
-use operit_access_runtime::{RemoteLinkServer, RemoteLinkServerConfig};
+use operit_node_runtime::remote::{RemoteLinkServer, RemoteLinkServerConfig};
 use operit_core_application::CoreApplication;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;

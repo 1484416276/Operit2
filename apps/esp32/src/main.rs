@@ -2,6 +2,9 @@
 
 mod config;
 mod edge_chat;
+mod edge_image;
+#[cfg(target_os = "espidf")]
+mod edge_plugin;
 #[cfg(target_os = "espidf")]
 mod edge_link;
 #[cfg(target_os = "espidf")]
@@ -42,7 +45,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     use std::sync::Arc;
 
     use crate::config::Esp32FirmwareConfig;
-    use crate::edge_store::Esp32EdgePairingStore;
+    use crate::edge_store::Esp32PairingStore;
     use crate::lvgl::{updateStatus, Esp32Lvgl};
     use crate::settings::{Esp32SettingsStore, Esp32SetupServer};
     use crate::status::FirmwareStatus;
@@ -65,7 +68,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let modem = peripherals.modem;
     let nvsPartition =
         EspDefaultNvsPartition::take().map_err(|error| HostError::new(format!("nvs: {error}")))?;
-    let edgeStore = Arc::new(Esp32EdgePairingStore::new(nvsPartition.clone())?);
+    let edgeStore = Arc::new(Esp32PairingStore::new(nvsPartition.clone())?);
     let settingsStore = Esp32SettingsStore::new(nvsPartition.clone())?;
     let settings = settingsStore.load()?;
     let config = Esp32FirmwareConfig::fromSettings(&settings);
@@ -93,8 +96,13 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     // optional diagnostic framebuffer so pairing and chat retain heap headroom.
     board.screenMirror().disablePixelMirror();
     let mut lvgl = Esp32Lvgl::new(&board)?;
-    let hostManager = board.installIntoHostManager();
+    let scheduler = Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
+    operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(scheduler.clone());
+    let hostManager = board.installIntoHostManager().withHostRuntimeTaskSchedulerHost(scheduler);
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
+    let edgeNode = Arc::new(operit_node_edge::EdgeNode::fromHostManager(hostManager.clone())
+        .withPlugin(Arc::new(edge_plugin::DeviceStatusPlugin::new(Arc::clone(&status))))
+        .map_err(|error| HostError::new(error.message))?);
     let setExpression = |expression: &str| -> operit_host_api::HostResult<()> {
         let state = faceHost.setExpression(operit_host_api::RobotFaceExpressionRequest {
             expression: expression.to_string(),
@@ -148,9 +156,11 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     };
     let mut edgeLink = edge_link::Esp32EdgeLinkServer::start(
         config.edgePort,
+        hostManager.tcpHost.clone().ok_or_else(|| HostError::new("TCP Host is not installed"))?,
         config.edgeToken.clone(),
         Arc::clone(&status),
         edgeStore,
+        edgeNode,
         // UART0 is shared with the USB console; TCP+mDNS is the Windows Core
         // discovery path and avoids spawning a second reader task.
         None,
@@ -225,12 +235,17 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                         lvgl.chatSendResult(Err(error));
                     }
                 }
+                "edge_image_cancel" => crate::edge_image::cancel(),
+                action if action.starts_with("edge_image:") => {
+                    if let Err(error) = crate::edge_chat::openImage(&action[11..]) { lvgl.imageError(&error); }
+                }
                 _ => log::debug!("operit-esp32 LVGL action: {action}"),
             }
         }
         if let Some(result) = crate::edge_chat::takeSendResult() {
             lvgl.chatSendResult(result);
         }
+        if let Some(event) = crate::edge_image::take() { lvgl.imageEvent(event); }
         if let Ok(face) = faceHost.getExpression() {
             if face.expression != lastExpression {
                 lastExpression = face.expression.clone();
@@ -255,8 +270,9 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         let chatRevision = crate::edge_chat::revision();
         let chatConnected = crate::edge_chat::isConnected();
         if chatRevision != lastChatRevision || chatConnected != lastChatConnected {
-            lvgl.setChatState(&crate::edge_chat::snapshot());
-            lvgl.setChatScreen(&crate::edge_chat::screenText());
+            let chatState = crate::edge_chat::snapshot();
+            lvgl.setChatState(&chatState);
+            lvgl.setChatScreen(&crate::edge_chat::screenTextFromSnapshot(&chatState));
             lvgl.setChatTask(&crate::edge_chat::taskStatus());
             lastChatRevision = chatRevision;
             lastChatConnected = chatConnected;

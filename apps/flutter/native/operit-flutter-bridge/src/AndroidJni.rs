@@ -289,7 +289,7 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_startWebAccess
             );
         }
     };
-    let deviceInfo = match serde_json::from_str::<RemoteDeviceInfo>(&deviceInfoJson) {
+    let deviceInfo = match serde_json::from_str::<LinkDeviceInfo>(&deviceInfoJson) {
         Ok(value) => value,
         Err(error) => {
             return new_java_string(

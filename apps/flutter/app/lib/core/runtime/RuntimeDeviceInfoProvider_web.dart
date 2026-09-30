@@ -7,7 +7,7 @@ import '../proxy/generated/CoreProxyModels.g.dart' as generated;
 class RuntimeDeviceInfoProvider {
   const RuntimeDeviceInfoProvider._();
 
-  static Future<generated.RemoteDeviceInfo> current() async {
+  static Future<generated.LinkDeviceInfo> current() async {
     final navigator = html.window.navigator;
     final userAgent = navigator.userAgent;
     final platform = navigator.platform;
@@ -15,7 +15,7 @@ class RuntimeDeviceInfoProvider {
       throw FormatException('browser platform is not available');
     }
     final browser = _browserName(userAgent);
-    return generated.RemoteDeviceInfo(platform: platform, model: browser);
+    return generated.LinkDeviceInfo(platform: platform, model: browser);
   }
 }
 

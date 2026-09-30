@@ -38,8 +38,8 @@ use operit_proxy_local::LocalCoreProxy;
 mod mdnss;
 
 #[cfg(not(target_arch = "wasm32"))]
-use operit_access_runtime::{
-    link_token_hash, LinkAccessHostConfig, RemoteDeviceInfo, RemoteLinkServer,
+use operit_node_runtime::remote::{
+    linkTokenHash, LinkAccessHostConfig, LinkDeviceInfo, RemoteLinkServer,
     RemoteLinkServerConfig, RemoteWebAccessConfig,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -327,7 +327,7 @@ impl OperitFlutterBridge {
         #[cfg(not(target_arch = "wasm32"))]
         let coreApplication = CoreApplication::startWithSharedLocalClient(
             localCore.clone(),
-            RemoteDeviceInfo::native(),
+            LinkDeviceInfo::native(),
         )?;
         operit_util::AppLogger::AppLogger::i(
             "OperitFlutterBridge",
@@ -394,7 +394,7 @@ impl OperitFlutterBridge {
         token: String,
         shutdownToken: String,
         _webRoot: PathBuf,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
         enableWebAccess: bool,
         enableDiscovery: bool,
     ) -> Result<String, String> {
@@ -440,7 +440,7 @@ impl OperitFlutterBridge {
                 props.insert("displayName".to_string(), identity.deviceInfo.displayName());
                 props.insert("platform".to_string(), identity.deviceInfo.platform.clone());
                 props.insert("model".to_string(), identity.deviceInfo.model.clone());
-                props.insert("tokenHash".to_string(), link_token_hash(&token));
+                props.insert("tokenHash".to_string(), linkTokenHash(&token));
                 props.insert("version".to_string(), "1".to_string());
                 mdns.register(&deviceId, address.port(), props)?;
                 *mdns_guard = Some(mdns);
@@ -450,7 +450,7 @@ impl OperitFlutterBridge {
             .parse()
             .map_err(|error| format!("invalid bind address: {error}"))?;
         let presenceBaseUrl = webAccessPresenceBaseUrl(listener_address);
-        let presenceTokenHash = link_token_hash(&token);
+        let presenceTokenHash = linkTokenHash(&token);
         let webAccess = RemoteWebAccessConfig { shutdownToken };
         let (serverStartSender, serverStartReceiver) = mpsc::channel();
         let task = self.runtime.spawn(async move {

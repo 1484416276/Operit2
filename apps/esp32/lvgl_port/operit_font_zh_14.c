@@ -25095,6 +25095,7 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
 };
 
 extern const lv_font_t operit_font_format;
+extern bool operit_font_text_glyph(const lv_font_t *, lv_font_glyph_dsc_t *, uint32_t, uint32_t);
 
 
 /*-----------------
@@ -25107,7 +25108,7 @@ const lv_font_t operit_font_zh_14 = {
 #else
 lv_font_t operit_font_zh_14 = {
 #endif
-    .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
+    .get_glyph_dsc = operit_font_text_glyph,    /*Prefer supplementary punctuation through fallback*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
     .line_height = 19,          /*The maximum line height required by the font*/
     .base_line = 4,             /*Baseline measured from the bottom of the line*/

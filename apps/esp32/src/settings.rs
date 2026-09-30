@@ -98,7 +98,7 @@ impl Esp32SetupServer {
         let savedStore = Arc::clone(&settingsStore);
         server
             .fn_handler("/settings", Method::Post, move |mut request| {
-                let mut body = [0u8; 1024];
+                let mut body = vec![0u8; 1024];
                 let length = request.read(&mut body)?;
                 let form = parseUrlEncoded(&body[..length]);
                 let settings = Esp32FirmwareSettings {

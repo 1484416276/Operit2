@@ -20,43 +20,42 @@ class RemotePairingBridge {
 
   /// Starts one runtime-owned pairing after hashing the user-supplied Link token.
   Future<RemotePairStartResult> startWithToken({
-    required String baseUrl,
+    required String endpoint,
     required String token,
   }) {
     return startWithTokenHash(
-      baseUrl: baseUrl,
+      endpoint: endpoint,
       tokenHash: _linkTokenHash(token),
     );
   }
 
   /// Starts one runtime-owned pairing using an already-derived Link token hash.
   Future<RemotePairStartResult> startWithTokenHash({
-    required String baseUrl,
+    required String endpoint,
     required String tokenHash,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
     final result = await _clients.server.runtimeRemoteLinkService
         .startPairedRemote(
-          baseUrl: baseUrl,
+          endpoint: endpoint,
           tokenHash: tokenHash,
           clientDeviceInfo: clientDeviceInfo,
         );
     return RemotePairStartResult(
       pairingId: result.pairingId,
       pairingServiceVersion: result.pairingServiceVersion,
-      coreDeviceId: result.coreDeviceId,
-      coreDeviceInfo: result.coreDeviceInfo,
+      peerNodeId: result.peerNodeId,
+      peerDeviceInfo: result.peerDeviceInfo,
       coreUserName: result.coreUserName,
     );
   }
 
   /// Completes one runtime-owned pairing and stores the named remote runtime.
-  Future<generated.PairedRemoteSessionRecord> finish({
+  Future<generated.PairedPeerSessionRecord> finish({
     required String pairingId,
     required String pairingCode,
     required String name,
-    generated.LinkTransportPreference transport =
-        generated.LinkTransportPreference.http,
+    generated.PeerTransport? transport,
   }) async {
     final session = await _clients.server.runtimeRemoteLinkService
         .finishPairedRemote(
@@ -64,7 +63,7 @@ class RemotePairingBridge {
           pairingCode: pairingCode,
           name: name,
         );
-    if (session.transport == transport) {
+    if (transport == null || session.transport == transport) {
       return session;
     }
     return _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
@@ -74,56 +73,19 @@ class RemotePairingBridge {
   }
 
   /// Bootstraps one Web Access pairing from the URL token and stores it locally.
-  Future<generated.PairedRemoteSessionRecord> bootstrap({
-    required String baseUrl,
+  Future<generated.PairedPeerSessionRecord> bootstrap({
+    required String endpoint,
     required String token,
   }) async {
     final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
     return _clients.server.runtimeRemoteLinkService.bootstrapPairedRemote(
-      baseUrl: baseUrl,
+      endpoint: endpoint,
       tokenHash: _linkTokenHash(token),
       clientDeviceInfo: clientDeviceInfo,
     );
   }
 
-  /// Starts the standard Link pairing exchange with a lightweight Edge.
-  Future<generated.RuntimeEdgePairStartResult> startEdgeWithToken({
-    required String endpoint,
-    required String token,
-  }) async {
-    final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
-    return _clients.server.runtimeRemoteLinkService.startEdgePairingWithToken(
-      endpoint: endpoint,
-      token: token,
-      clientDeviceInfo: clientDeviceInfo,
-    );
-  }
 
-  /// Starts pairing with an mDNS-discovered Edge using its advertised hash.
-  Future<generated.RuntimeEdgePairStartResult> startEdgeWithTokenHash({
-    required String endpoint,
-    required String tokenHash,
-  }) async {
-    final clientDeviceInfo = await RuntimeDeviceInfoProvider.current();
-    return _clients.server.runtimeRemoteLinkService.startEdgePairing(
-      endpoint: endpoint,
-      tokenHash: tokenHash,
-      clientDeviceInfo: clientDeviceInfo,
-    );
-  }
-
-  /// Completes Edge pairing and registers the Edge as a Space PeerLink member.
-  Future<generated.PairedEdgeSessionRecord> finishEdge({
-    required String pairingId,
-    required String pairingCode,
-    required String name,
-  }) {
-    return _clients.server.runtimeRemoteLinkService.finishEdgePairing(
-      pairingId: pairingId,
-      pairingCode: pairingCode,
-      name: name,
-    );
-  }
 }
 
 /// Derives the Link protocol token hash from the user-provided secret.
@@ -133,14 +95,14 @@ String _linkTokenHash(String token) {
 
 /// Builds one stable local session key for a completed remote pairing.
 String remotePairingSessionName(RemotePairStartResult pairing) {
-  return '${pairing.coreDeviceInfo.platform}-${pairing.coreDeviceInfo.model}-${pairing.coreDeviceId}';
+  return '${pairing.peerDeviceInfo.platform}-${pairing.peerDeviceInfo.model}-${pairing.peerNodeId}';
 }
 
 /// Builds the stable local session key from a persisted remote session record.
 String remotePairingSessionNameFromRecord(
-  generated.PairedRemoteSessionRecord session,
+  generated.PairedPeerSessionRecord session,
 ) {
-  return '${session.remoteDeviceInfo.platform}-${session.remoteDeviceInfo.model}-${session.coreDeviceId}';
+  return '${session.peerDeviceInfo.platform}-${session.peerDeviceInfo.model}-${session.peerNodeId}';
 }
 
 class RemotePairStartResult {
@@ -148,8 +110,8 @@ class RemotePairStartResult {
   const RemotePairStartResult({
     required this.pairingId,
     required this.pairingServiceVersion,
-    required this.coreDeviceId,
-    required this.coreDeviceInfo,
+    required this.peerNodeId,
+    required this.peerDeviceInfo,
     required this.coreUserName,
   });
 
@@ -158,9 +120,9 @@ class RemotePairStartResult {
     return RemotePairStartResult(
       pairingId: json['pairingId'] as String,
       pairingServiceVersion: json['pairingServiceVersion'] as int,
-      coreDeviceId: json['coreDeviceId'] as String,
-      coreDeviceInfo: generated.RemoteDeviceInfo.fromJson(
-        json['coreDeviceInfo'] as Map<String, Object?>,
+      peerNodeId: json['peerNodeId'] as String,
+      peerDeviceInfo: generated.LinkDeviceInfo.fromJson(
+        json['peerDeviceInfo'] as Map<String, Object?>,
       ),
       coreUserName: json['coreUserName'] as String,
     );
@@ -168,7 +130,7 @@ class RemotePairStartResult {
 
   final String pairingId;
   final int pairingServiceVersion;
-  final String coreDeviceId;
-  final generated.RemoteDeviceInfo coreDeviceInfo;
+  final String peerNodeId;
+  final generated.LinkDeviceInfo peerDeviceInfo;
   final String coreUserName;
 }

@@ -60,3 +60,5 @@ pub use ArchiveTransferManager::*;
 #[path = "SyncBlobTransferManager.rs"]
 pub mod SyncBlobTransferManager;
 pub use SyncBlobTransferManager::*;
+
+pub(crate) mod media;

@@ -40,9 +40,6 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
   bool _discoverable = false;
   bool _scanning = false;
   String? _scanError;
-  String? _edgeScanError;
-  List<generated.RuntimeEdgeDiscoveredDevice> _discoveredEdges =
-      <generated.RuntimeEdgeDiscoveredDevice>[];
   String? _connectionMessage;
   bool _connectionFailed = false;
   List<generated.RuntimeRemoteDiscoveredSpace> _discoveredDeviceSpaces =
@@ -115,34 +112,6 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
             ),
           ],
         ),
-        if (_edgeScanError != null) ...<Widget>[
-          const SizedBox(height: 8),
-          _DiscoveryStatus(message: _edgeScanError!, failed: true),
-        ],
-        if (_discoveredEdges.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 12),
-          Divider(
-            height: 1,
-            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 4),
-          for (final edge in _discoveredEdges)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.memory_outlined),
-              title: Text(edge.displayName),
-              subtitle: Text('${edge.deviceId} · ${edge.model}\n${edge.endpoint}'),
-              isThreeLine: true,
-              trailing: IconButton(
-                icon: const Icon(Icons.link_outlined),
-                tooltip: l10n.settingsRuntimeConnect,
-                onPressed: _controlsEnabled
-                    ? () => _pairDiscoveredEdge(edge)
-                    : null,
-              ),
-            ),
-        ],
         if (_scanError != null) ...<Widget>[
           const SizedBox(height: 8),
           _DiscoveryStatus(message: _scanError!, failed: true),
@@ -192,7 +161,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     subtitle: Text(
-                      '${device.displayName}\n${device.baseUrl}',
+                      '${device.displayName}\n${device.endpoint}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -271,73 +240,16 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
-  /// Scans Core spaces and Edge advertisements through the same scan action.
+  /// Scans the LAN and groups directly connectable devices by Space.
   Future<void> _scanAllDevices() async {
     setState(() {
       _scanning = true;
       _scanError = null;
-      _edgeScanError = null;
       _discoveredDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
-      _discoveredEdges = <generated.RuntimeEdgeDiscoveredDevice>[];
     });
-    await Future.wait<void>([_scanCoreSpaces(), _scanEdges()]);
+    await _scanCoreSpaces();
     if (mounted) {
       setState(() => _scanning = false);
-    }
-  }
-
-  /// Requests Edge discovery through the host-owned runtime capability.
-  Future<void> _scanEdges() async {
-    try {
-      final edges = await widget.clients.server.runtimeRemoteLinkService
-          .discoverEdges(timeoutMs: 2000);
-      if (mounted) {
-        setState(() => _discoveredEdges = edges);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _edgeScanError = error.toString());
-      }
-    }
-  }
-
-  /// Pairs a discovered Edge without depending on its board model.
-  Future<void> _pairDiscoveredEdge(
-    generated.RuntimeEdgeDiscoveredDevice edge,
-  ) async {
-    _setBusy(true);
-    try {
-      final pairing = await const RemotePairingBridge().startEdgeWithTokenHash(
-        endpoint: edge.endpoint,
-        tokenHash: edge.tokenHash,
-      );
-      if (!mounted) return;
-      final code = await _EdgeCodeDialog.show(context, edge.displayName);
-      if (code == null || !mounted) return;
-      await const RemotePairingBridge().finishEdge(
-        pairingId: pairing.pairingId,
-        pairingCode: code,
-        name: 'edge-${pairing.edgeDeviceId}',
-      );
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimePairingComplete;
-          _connectionFailed = false;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimeConnectionFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      _setBusy(false);
     }
   }
 
@@ -437,7 +349,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     _setBusy(true);
     try {
       final pairing = await const RemotePairingBridge().startWithTokenHash(
-        baseUrl: device.baseUrl,
+        endpoint: device.endpoint,
         tokenHash: device.tokenHash,
       );
       if (!mounted) {
@@ -558,69 +470,6 @@ class _DiscoveryStatus extends StatelessWidget {
   }
 }
 
-class _EdgeCodeDialog extends StatefulWidget {
-  const _EdgeCodeDialog({required this.deviceName});
-
-  final String deviceName;
-
-  /// Opens the protocol-level pairing code prompt.
-  static Future<String?> show(BuildContext context, String deviceName) {
-    return showDialog<String>(
-      context: context,
-      builder: (_) => _EdgeCodeDialog(deviceName: deviceName),
-    );
-  }
-
-  /// Creates state for the pairing input.
-  @override
-  State<_EdgeCodeDialog> createState() => _EdgeCodeDialogState();
-}
-
-class _EdgeCodeDialogState extends State<_EdgeCodeDialog> {
-  final _code = TextEditingController();
-
-  /// Releases the pairing code controller.
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  /// Builds a device-neutral, localized pairing prompt.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.edgePairingCodeTitle(widget.deviceName)),
-      content: TextField(
-        controller: _code,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        maxLength: 6,
-        decoration: InputDecoration(
-          labelText: l10n.settingsRuntimePairCode,
-          hintText: l10n.edgePairingCodeHint,
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(
-          onPressed: () {
-            final code = _code.text.trim();
-            if (RegExp(r'^[0-9]{6}$').hasMatch(code)) {
-              Navigator.of(context).pop(code);
-            }
-          },
-          child: Text(l10n.settingsRuntimeConnect),
-        ),
-      ],
-    );
-  }
-}
-
 class _RemotePairDialog extends StatefulWidget {
   const _RemotePairDialog();
 
@@ -641,8 +490,8 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
   final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
-  generated.LinkTransportPreference _transport =
-      generated.LinkTransportPreference.http;
+  generated.PeerTransport _transport =
+      generated.PeerTransport.http;
   RemotePairStartResult? _pairing;
   bool _busy = false;
   String? _error;
@@ -674,7 +523,7 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
     });
     try {
       final pairing = await const RemotePairingBridge().startWithToken(
-        baseUrl: baseUrl,
+        endpoint: baseUrl,
         token: token,
       );
       if (mounted) {
@@ -837,8 +686,8 @@ class _RemotePairCodeDialog extends StatefulWidget {
 
 class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
   final TextEditingController _codeController = TextEditingController();
-  generated.LinkTransportPreference _transport =
-      generated.LinkTransportPreference.http;
+  generated.PeerTransport _transport =
+      generated.PeerTransport.http;
   bool _busy = false;
   String? _error;
 
@@ -950,21 +799,21 @@ class _RemotePairResult {
   });
 
   final String name;
-  final generated.PairedRemoteSessionRecord session;
+  final generated.PairedPeerSessionRecord session;
   final String userName;
 }
 
 class _LinkTransportSelector extends StatelessWidget {
   const _LinkTransportSelector({required this.value, required this.onChanged});
 
-  final generated.LinkTransportPreference value;
-  final ValueChanged<generated.LinkTransportPreference> onChanged;
+  final generated.PeerTransport value;
+  final ValueChanged<generated.PeerTransport> onChanged;
 
   /// Builds the explicit Link carrier selector shared by pairing dialogs.
   @override
   Widget build(BuildContext context) {
     return OperitFormStyles.dropdownButtonFormField<
-      generated.LinkTransportPreference
+      generated.PeerTransport
     >(
       context,
       initialValue: value,
@@ -973,13 +822,13 @@ class _LinkTransportSelector extends StatelessWidget {
         border: OutlineInputBorder(),
         isDense: true,
       ),
-      items: const <DropdownMenuItem<generated.LinkTransportPreference>>[
+      items: const <DropdownMenuItem<generated.PeerTransport>>[
         DropdownMenuItem(
-          value: generated.LinkTransportPreference.http,
+          value: generated.PeerTransport.http,
           child: Text('HTTP'),
         ),
         DropdownMenuItem(
-          value: generated.LinkTransportPreference.webSocket,
+          value: generated.PeerTransport.webSocket,
           child: Text('WebSocket'),
         ),
       ],

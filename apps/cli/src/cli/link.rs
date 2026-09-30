@@ -8,13 +8,13 @@ use crate::{
     create_cli_core_application_without_space_sync,
 };
 
-use operit_access_runtime::{
-    link_token_hash, AcceptedRemoteSessionRecord, LinkAccessStore, LinkTransportPreference,
-    PairedRemoteSession, PairedRemoteSessionRecord, RemoteDeviceInfo, RemoteLinkClient,
+use operit_node_runtime::remote::{
+    linkTokenHash, AcceptedRemoteSessionRecord, LinkAccessStore, PeerTransport,
+    PairedRemoteSession, PairedPeerSessionRecord, LinkDeviceInfo, RemoteLinkClient,
 };
 use operit_core_application::CoreRemoteLinkServerConfig;
 use operit_link::{
-    CoreEvent, CoreEventKind, CoreEventStream, CoreLinkSharedClient, CoreStreamDescriptor,
+    CoreCallRequest, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkSharedClient, CoreStreamDescriptor,
     CoreValue, CoreWatchRequest, CORE_STREAM_TARGET,
 };
 use operit_model::PromptTurn::PromptTurn;
@@ -57,11 +57,38 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
         Some("ping") => run_link_ping_command(&args[1..]).await,
         Some("refresh") => run_link_refresh_command(&args[1..]).await,
         Some("stream-probe") => run_link_stream_probe_command(&args[1..]).await,
+        Some("edge-plugin") => run_link_edge_plugin_command(&args[1..]).await,
         _ => {
             print_link_usage();
             Ok(())
         }
     }
+}
+
+async fn run_link_edge_plugin_command(args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link edge-plugin <device> <list|invoke <plugin-id> <action> [json-args]>";
+    let device = args.first().ok_or(USAGE)?;
+    let coreApplication = create_cli_core_application("client").await?;
+    let topology = coreApplication.accessServices().deviceSpaceTopology()?;
+    let deviceId = network_device_id(&topology, device)?;
+    let client = operit_node_runtime::NodeClient::NodeClient::new(coreApplication.nodeRouter(), deviceId);
+    let mut proxy = operit_proxy_edge::EdgeProxy::new(client);
+    let json: serde_json::Value = match args.get(1).map(String::as_str) {
+        Some("list") if args.len() == 2 => serde_json::to_value(
+            proxy.plugins().list().await.map_err(|error| error.to_string())?
+        ).map_err(|error| error.to_string())?,
+        Some("invoke") if (4..=5).contains(&args.len()) => {
+            let value: serde_json::Value = serde_json::from_str(args.get(4).map(String::as_str).unwrap_or("{}"))
+                .map_err(|error| error.to_string())?;
+            let value = operit_link::toCoreValue(value).map_err(|error| error.to_string())?;
+            let result = proxy.plugins().invoke(&args[2], &args[3], value).await.map_err(|error| error.to_string())?;
+            operit_link::fromCoreValue(result).map_err(|error| error.to_string())?
+        }
+        _ => return Err(USAGE.into()),
+    };
+    if cli_json_mode() { emit_cli_json(json); }
+    else { println!("{}", serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?); }
+    Ok(())
 }
 
 async fn run_link_serve_command(args: &[String]) -> Result<(), String> {
@@ -172,7 +199,7 @@ async fn run_link_hello_command(args: &[String]) -> Result<(), String> {
         parse_remote_url_token(args, "usage: operit2 cli link hello <url> --token <token>")?;
     let _coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let client = RemoteLinkClient::new(url);
-    let token_hash = link_token_hash(&token);
+    let token_hash = linkTokenHash(&token);
     let hello = client.hello(&token_hash).await?;
     if cli_json_mode() {
         emit_cli_json(serde_json::to_value(&hello).map_err(|error| error.to_string())?);
@@ -210,23 +237,13 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let service = coreApplication.accessServices();
     let spaces = service.discoverSpaces(timeout_ms).await?;
-    let edges = service.discoverEdges(timeout_ms).await?;
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "spaces": spaces, "edges": edges }));
+        emit_cli_json(serde_json::json!({ "spaces": spaces }));
     } else {
         for space in spaces {
             println!("{} — {} devices", space.spaceName, space.memberCount);
             for device in space.devices {
-                println!("  {} — {}", device.displayName, device.baseUrl);
-            }
-        }
-        if edges.is_empty() {
-            println!("No Edge devices found.");
-        } else {
-            println!("Edge devices:");
-            for edge in edges {
-                println!("  {} [{}] — {}", edge.displayName, edge.deviceId, edge.endpoint);
-                println!("    platform={} model={} version={}", edge.platform, edge.model, edge.version);
+                println!("  {} — {}", device.displayName, device.endpoint);
             }
         }
     }
@@ -240,59 +257,12 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     let name = save_name.ok_or_else(|| USAGE.to_string())?;
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
-    if is_edge_endpoint(&url) {
-        if transport.is_some() {
-            return Err("--transport is only valid for Core HTTP/WebSocket sessions".to_string());
-        }
-        let endpoint = normalize_edge_endpoint(&url)?;
-        let pairing = service
-            .startEdgePairingWithToken(
-                endpoint,
-                token,
-                RemoteDeviceInfo::nativeCli("client"),
-            )
-            .await?;
-        if !cli_json_mode() {
-            println!("Pairing with {}", pairing.edgeDeviceInfo.displayName());
-            println!("Pairing started");
-            println!("Read the pairing code from the Edge screen.");
-            print!("Pairing code: ");
-        }
-        io::stdout().flush().map_err(|error| error.to_string())?;
-        let mut code = String::new();
-        let bytes_read = io::stdin()
-            .read_line(&mut code)
-            .map_err(|error| error.to_string())?;
-        if bytes_read == 0 {
-            return Err(
-                "pairing code input reached EOF; use pair-start and pair-finish for non-interactive use"
-                    .to_string(),
-            );
-        }
-        let session = service
-            .finishEdgePairing(pairing.pairingId, code.trim().to_string(), name.clone())
-            .await?;
-        if cli_json_mode() {
-            emit_cli_json(serde_json::json!({
-                "name": name,
-                "pairedDevice": session.edgeDeviceInfo.displayName(),
-                "deviceId": session.edgeDeviceId,
-                "localDeviceId": session.deviceId,
-                "transport": "tcp",
-            }));
-        } else {
-            println!("Paired Edge device {}", session.edgeDeviceInfo.displayName());
-            println!("Saved as: {name}");
-            println!("Use: operit2 cli link sessions");
-        }
-        return Ok(());
-    }
-    let token_hash = link_token_hash(&token);
+    let token_hash = linkTokenHash(&token);
     let pairing = service
-        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
+        .startPairedRemote(url, token_hash, LinkDeviceInfo::nativeCli("client"))
         .await?;
     if !cli_json_mode() {
-        println!("Pairing with {}", pairing.coreDeviceInfo.displayName());
+        println!("Pairing with {}", pairing.peerDeviceInfo.displayName());
         println!("Pairing started");
         println!("Check the server terminal for the pairing code.");
         print!("Pairing code: ");
@@ -317,13 +287,13 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({
             "name": name,
-            "pairedDevice": session.remoteDeviceInfo.displayName(),
-            "deviceId": session.coreDeviceId,
+            "pairedDevice": session.peerDeviceInfo.displayName(),
+            "deviceId": session.peerNodeId,
             "localDeviceId": session.deviceId,
             "transport": link_transport_name(&session.transport),
         }));
     } else {
-        println!("Paired device {}", session.remoteDeviceInfo.displayName());
+        println!("Paired device {}", session.peerDeviceInfo.displayName());
         println!("Saved as: {name}");
         println!("Join its device space with: operit2 cli link space join {name}");
     }
@@ -332,51 +302,28 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
 
 /// Starts a pairing transaction and persists its client-side state for a later finish command.
 async fn run_link_pair_start_command(args: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: operit2 cli link pair-start <url> --token <token>";
-    let (url, token) = parse_remote_url_token(args, USAGE)?;
+    const USAGE: &str = "usage: operit2 cli link pair-start <url> <--token <token>|--token-hash <discovered-hash>>";
+    let (url, token_hash) = match args {
+        [url, flag, value] if flag == "--token-hash" && !value.trim().is_empty() => (url.clone(), value.clone()),
+        [url, flag, value] if flag == "--token" && !value.trim().is_empty() => (url.clone(), linkTokenHash(value)),
+        _ => return Err(USAGE.into()),
+    };
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
-    if is_edge_endpoint(&url) {
-        let pairing = service
-            .startEdgePairingWithToken(
-                normalize_edge_endpoint(&url)?,
-                token,
-                RemoteDeviceInfo::nativeCli("client"),
-            )
-            .await?;
-        if cli_json_mode() {
-            emit_cli_json(serde_json::json!({
-                "pairingId": pairing.pairingId,
-                "pairedDevice": pairing.edgeDeviceInfo.displayName(),
-                "deviceId": pairing.edgeDeviceId,
-                "transport": "tcp",
-            }));
-        } else {
-            println!("Pairing started with {}", pairing.edgeDeviceInfo.displayName());
-            println!("Pairing ID: {}", pairing.pairingId);
-            println!("Read the pairing code from the Edge screen.");
-            println!(
-                "Finish with: operit2 cli link pair-finish {} --code <pairing-code> --save <name>",
-                pairing.pairingId
-            );
-        }
-        return Ok(());
-    }
-    let token_hash = link_token_hash(&token);
     let pairing = service
-        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
+        .startPairedRemote(url, token_hash, LinkDeviceInfo::nativeCli("client"))
         .await?;
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({
             "pairingId": pairing.pairingId,
-            "pairedDevice": pairing.coreDeviceInfo.displayName(),
-            "deviceId": pairing.coreDeviceId,
+            "pairedDevice": pairing.peerDeviceInfo.displayName(),
+            "deviceId": pairing.peerNodeId,
             "userName": pairing.coreUserName,
         }));
     } else {
         println!(
             "Pairing started with {}",
-            pairing.coreDeviceInfo.displayName()
+            pairing.peerDeviceInfo.displayName()
         );
         println!("Pairing ID: {}", pairing.pairingId);
         println!("Read the pairing code from the server terminal.");
@@ -395,27 +342,6 @@ async fn run_link_pair_finish_command(args: &[String]) -> Result<(), String> {
     let (pairing_id, pairing_code, name, transport) = parse_pair_finish_args(args, USAGE)?;
     let coreApplication = create_cli_core_application("client").await?;
     let service = coreApplication.accessServices();
-    let kind = service.outboundPairingKind(pairing_id.clone())?;
-    if kind == operit_access_runtime::OutboundPairingKind::Edge {
-        if transport.is_some() {
-            return Err("--transport is only valid for Core HTTP/WebSocket sessions".to_string());
-        }
-        let session = service.finishEdgePairing(pairing_id, pairing_code, name.clone()).await?;
-        if cli_json_mode() {
-            emit_cli_json(serde_json::json!({
-                "name": name,
-                "pairedDevice": session.edgeDeviceInfo.displayName(),
-                "deviceId": session.edgeDeviceId,
-                "localDeviceId": session.deviceId,
-                "transport": "tcp",
-            }));
-        } else {
-            println!("Paired Edge device {}", session.edgeDeviceInfo.displayName());
-            println!("Saved as: {name}");
-            println!("Use: operit2 cli link sessions");
-        }
-        return Ok(());
-    }
     let mut session = service
         .finishPairedRemote(pairing_id, pairing_code, name.clone())
         .await?;
@@ -425,13 +351,13 @@ async fn run_link_pair_finish_command(args: &[String]) -> Result<(), String> {
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({
             "name": name,
-            "pairedDevice": session.remoteDeviceInfo.displayName(),
-            "deviceId": session.coreDeviceId,
+            "pairedDevice": session.peerDeviceInfo.displayName(),
+            "deviceId": session.peerNodeId,
             "localDeviceId": session.deviceId,
             "transport": link_transport_name(&session.transport),
         }));
     } else {
-        println!("Paired device {}", session.remoteDeviceInfo.displayName());
+        println!("Paired device {}", session.peerDeviceInfo.displayName());
         println!("Saved as: {name}");
         println!("Join its device space with: operit2 cli link space join {name}");
     }
@@ -735,28 +661,19 @@ fn run_link_control_policy_command(
 async fn run_link_sessions_command() -> Result<(), String> {
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let sessions = load_link_sessions(&coreApplication.accessStore())?;
-    let edgeSessions = coreApplication.accessServices().edgeSessionsSnapshot()?;
     if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "sessions": sessions, "edgeSessions": edgeSessions }));
+        emit_cli_json(serde_json::json!({ "sessions": sessions }));
     } else {
         for (name, session) in sessions {
             println!(
                 "{} — {} — {}",
                 name,
-                session.remoteDeviceInfo.displayName(),
-                session.baseUrl
+                session.peerDeviceInfo.displayName(),
+                session.endpoint
             );
             println!("  Transport: {}", link_transport_name(&session.transport));
         }
-        for (name, session) in edgeSessions {
-            println!(
-                "{} — {} — {}",
-                name,
-                session.edgeDeviceInfo.displayName(),
-                session.endpoint
-            );
-            println!("  Transport: tcp (ESP32 Edge)");
-        }
+
     }
     Ok(())
 }
@@ -792,10 +709,9 @@ async fn run_link_session_delete_command(args: &[String]) -> Result<(), String> 
         .ok_or_else(|| "usage: operit2 cli link session-delete <name>".to_string())?;
     let coreApplication = create_cli_core_application_without_space_sync("client").await?;
     let accessStore = coreApplication.accessStore();
-    if accessStore.edgeSessions()?.contains_key(name) {
-        accessStore.removeEdgeSession(name)?;
-    } else if accessStore.outboundSessions()?.contains_key(name) {
+    if accessStore.outboundSessions()?.contains_key(name) {
         accessStore.removeOutboundSession(name)?;
+
     } else {
         return Err(format!("link session not found: {name}"));
     }
@@ -853,8 +769,8 @@ async fn run_link_ping_command(args: &[String]) -> Result<(), String> {
     } else {
         println!(
             "Session active: {} ({})",
-            info.coreDeviceInfo.displayName(),
-            info.coreDeviceId
+            info.peerDeviceInfo.displayName(),
+            info.peerNodeId
         );
         println!("Client device: {}", info.clientDeviceId);
         println!("Transports: {}", info.transports.join(", "));
@@ -876,18 +792,18 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
     if !json_mode {
         println!(
             "Probe joined space {name} on {} ({} members)",
-            record.coreDeviceId,
+            record.peerNodeId,
             space.members.len()
         );
     }
 
     let chatId = format!("route-probe-{}", link_probe_unix_millis());
     CoreNodeBindingStore::new(coreApplication.nodeRuntime().runtimeStorageHost())?
-        .create(&chatId, &record.coreDeviceId)?;
+        .create(&chatId, &record.peerNodeId)?;
     if !json_mode {
         println!(
             "Probe binding created for chat {chatId} -> {}",
-            record.coreDeviceId
+            record.peerNodeId
         );
     }
 
@@ -999,7 +915,7 @@ async fn run_link_stream_probe_command(args: &[String]) -> Result<(), String> {
         emit_cli_json(serde_json::json!({
             "ok": true,
             "space": name,
-            "remoteNode": record.coreDeviceId,
+            "remoteNode": record.peerNodeId,
             "chatId": chatId,
             "messages": messages.len(),
             "contentStreams": contentStreamCount,
@@ -1118,27 +1034,6 @@ fn parse_link_refresh_args(args: &[String]) -> Result<(Option<String>, u64), Str
     Ok((session_name, timeout_ms))
 }
 
-fn is_edge_endpoint(value: &str) -> bool {
-    let value = value.trim();
-    value.starts_with("serial://")
-        || (!value.starts_with("http://") && !value.starts_with("https://") && !value.starts_with("ws://") && !value.starts_with("wss://"))
-        || value.starts_with("tcp://")
-}
-
-fn normalize_edge_endpoint(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    let endpoint = value
-        .strip_prefix("tcp://")
-        .or_else(|| value.strip_prefix("http://"))
-        .or_else(|| value.strip_prefix("https://"))
-        .unwrap_or(value)
-        .trim_end_matches('/');
-    if endpoint.is_empty() || endpoint.contains('/') {
-        return Err("Edge endpoint must be host:port, tcp://host:port, or serial://COMx".to_string());
-    }
-    Ok(endpoint.to_string())
-}
-
 fn parse_remote_url_token(args: &[String], usage: &str) -> Result<(String, String), String> {
     let (url, token, _, _) = parse_remote_url_token_save(args, usage)?;
     Ok((url, token))
@@ -1152,14 +1047,14 @@ fn parse_remote_url_token_save(
         String,
         String,
         Option<String>,
-        Option<LinkTransportPreference>,
+        Option<PeerTransport>,
     ),
     String,
 > {
     let url = args.get(0).ok_or_else(|| usage.to_string())?.clone();
     let mut token = None::<String>;
     let mut save_name = None::<String>;
-    let mut transport = None::<LinkTransportPreference>;
+    let mut transport = None::<PeerTransport>;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -1193,11 +1088,11 @@ fn parse_remote_url_token_save(
 fn parse_pair_finish_args(
     args: &[String],
     usage: &str,
-) -> Result<(String, String, String, Option<LinkTransportPreference>), String> {
+) -> Result<(String, String, String, Option<PeerTransport>), String> {
     let pairing_id = args.get(0).ok_or_else(|| usage.to_string())?.clone();
     let mut pairing_code = None::<String>;
     let mut save_name = None::<String>;
-    let mut transport = None::<LinkTransportPreference>;
+    let mut transport = None::<PeerTransport>;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -1228,26 +1123,30 @@ fn parse_pair_finish_args(
 }
 
 /// Parses the explicit Link carrier selection accepted by the CLI.
-fn parse_link_transport(value: &str) -> Result<LinkTransportPreference, String> {
+fn parse_link_transport(value: &str) -> Result<PeerTransport, String> {
     match value {
-        "http" => Ok(LinkTransportPreference::Http),
-        "ws" => Ok(LinkTransportPreference::WebSocket),
+        "http" => Ok(PeerTransport::Http),
+        "ws" => Ok(PeerTransport::WebSocket),
+        "tcp" => Ok(PeerTransport::Tcp),
+        "serial" => Ok(PeerTransport::Serial),
         _ => Err("Link transport must be http or ws".to_string()),
     }
 }
 
 /// Returns the stable CLI spelling for one Link carrier selection.
-fn link_transport_name(value: &LinkTransportPreference) -> &'static str {
+fn link_transport_name(value: &PeerTransport) -> &'static str {
     match value {
-        LinkTransportPreference::Http => "http",
-        LinkTransportPreference::WebSocket => "ws",
+        PeerTransport::Http => "http",
+        PeerTransport::WebSocket => "ws",
+        PeerTransport::Tcp => "tcp",
+        PeerTransport::Serial => "serial",
     }
 }
 
 /// Loads all saved paired session records.
 fn load_link_sessions(
     accessStore: &LinkAccessStore,
-) -> Result<BTreeMap<String, PairedRemoteSessionRecord>, String> {
+) -> Result<BTreeMap<String, PairedPeerSessionRecord>, String> {
     accessStore.outboundSessions()
 }
 
@@ -1255,7 +1154,7 @@ fn load_link_sessions(
 fn load_link_session_record(
     accessStore: &LinkAccessStore,
     name: &str,
-) -> Result<PairedRemoteSessionRecord, String> {
+) -> Result<PairedPeerSessionRecord, String> {
     let sessions = load_link_sessions(accessStore)?;
     sessions
         .get(name)
@@ -1281,35 +1180,35 @@ pub(crate) async fn load_link_session_resolved(
 /// Updates one paired session record when discovery advertises the same core device.
 async fn refresh_link_session_record_from_devices(
     name: &str,
-    record: PairedRemoteSessionRecord,
+    record: PairedPeerSessionRecord,
     devices: &[crate::mdns::DiscoveredDevice],
-) -> Result<(PairedRemoteSessionRecord, bool), String> {
+) -> Result<(PairedPeerSessionRecord, bool), String> {
     let Some(device) = discovered_device_for_link_record(&record, devices) else {
         return Ok((record, false));
     };
-    let updated = record.withBaseUrl(device.base_url.clone());
-    if updated.baseUrl == record.baseUrl {
+    let updated = record.withEndpoint(device.base_url.clone());
+    if updated.endpoint == record.endpoint {
         return Ok((record, false));
     }
     verify_link_session_record(&updated).await?;
     if !cli_json_mode() {
-        eprintln!("session address updated: {name} {}", updated.baseUrl);
+        eprintln!("session address updated: {name} {}", updated.endpoint);
     }
     Ok((updated, true))
 }
 
 /// Selects the discovered device whose identity matches a paired session record.
 fn discovered_device_for_link_record<'a>(
-    record: &PairedRemoteSessionRecord,
+    record: &PairedPeerSessionRecord,
     devices: &'a [crate::mdns::DiscoveredDevice],
 ) -> Option<&'a crate::mdns::DiscoveredDevice> {
     devices
         .iter()
-        .find(|device| device.device_id == record.coreDeviceId)
+        .find(|device| device.device_id == record.peerNodeId)
 }
 
 /// Verifies a paired session record against its configured endpoint.
-async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Result<(), String> {
+async fn verify_link_session_record(record: &PairedPeerSessionRecord) -> Result<(), String> {
     let session = PairedRemoteSession::fromRecord(record.clone())?;
     let info = session.sessionInfo().await?;
     if info.protocolVersion != 4 {
@@ -1318,7 +1217,7 @@ async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Resul
             info.protocolVersion
         ));
     }
-    if info.coreDeviceId != record.coreDeviceId {
+    if info.peerNodeId != record.peerNodeId {
         return Err("remote runtime identity changed".to_string());
     }
     Ok(())
@@ -1328,7 +1227,7 @@ async fn verify_link_session_record(record: &PairedRemoteSessionRecord) -> Resul
 fn save_link_session(
     accessStore: &LinkAccessStore,
     name: &str,
-    record: PairedRemoteSessionRecord,
+    record: PairedPeerSessionRecord,
 ) -> Result<(), String> {
     let mut sessions = load_link_sessions(accessStore)?;
     sessions.insert(name.to_string(), record);
@@ -1338,7 +1237,7 @@ fn save_link_session(
 /// Writes the complete paired session map to disk.
 fn write_link_sessions(
     accessStore: &LinkAccessStore,
-    sessions: BTreeMap<String, PairedRemoteSessionRecord>,
+    sessions: BTreeMap<String, PairedPeerSessionRecord>,
 ) -> Result<(), String> {
     for (name, record) in sessions {
         accessStore.saveOutboundSession(name, record)?;
@@ -1368,14 +1267,14 @@ fn remove_link_server_session(
 fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }),
+            serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe|edge-plugin>" }),
         );
         return;
     }
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
-    println!("operit2 cli link discover [--timeout-ms <ms>]  # includes Core Spaces and raw Edge devices");
+    println!("operit2 cli link discover [--timeout-ms <ms>]  # includes Core Spaces");
     println!("operit2 cli link hello <url> --token <token>");
-    println!("operit2 cli link pair-start <url> --token <token>");
+    println!("operit2 cli link pair-start <url> <--token <token>|--token-hash <discovered-hash>>");
     println!("operit2 cli link pair-finish <pairing-id> --code <pairing-code> --save <name> [--transport <http|ws>]");
     println!(
         "operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]"
@@ -1392,4 +1291,6 @@ fn print_link_usage() {
     println!("operit2 cli link ping <name>");
     println!("operit2 cli link refresh [session] [--timeout-ms <ms>]");
     println!("operit2 cli link stream-probe <session>");
+    println!("operit2 cli link edge-plugin <device> list");
+    println!("operit2 cli link edge-plugin <device> invoke <plugin-id> <action> [json-args]");
 }

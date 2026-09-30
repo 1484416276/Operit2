@@ -35,6 +35,11 @@ test('SVG layout, real conversation rows, keyboard bounds and pairing states', a
   call('set_message', ['number','number','string'], [1,0,'当然可以。🥺\n先列出最重要的三件事。😊 ❤️']);
   call('finish_messages', ['number'], [2]); await capture('chat');
   assert.equal(node('message_text_1').text, '当然可以。🥺\n先列出最重要的三件事。😊 ❤️');
+  call('set_message', ['number','number','string'], [1,0,'## 计划\n- **重点** [打开文档](https://example.com)\n> 先处理————']);
+  call('finish_messages', ['number'], [2]); await pump();
+  assert.equal(node('message_text_1').text, '计划\n· 重点 打开文档\n| 先处理————');
+  call('set_message', ['number','number','string'], [1,0,'当然可以。🥺\n先列出最重要的三件事。😊 ❤️']);
+  call('finish_messages', ['number'], [2]); await pump();
   assert.equal(node('voice_button').enabled, false);
   assert.equal(node('composer_row').rect.y, 198);
   for (let i = 0; i < 6; i++) call('set_conversation',

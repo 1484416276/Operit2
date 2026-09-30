@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn operit_lvgl_navigate_home();
     fn operit_lvgl_set_connection(wifi_ready: bool, edge_ready: bool);
     fn operit_lvgl_set_paired(paired: bool);
+    fn operit_lvgl_set_theme(index: u32, circular: bool);
     fn operit_lvgl_set_expression(expression: *const c_char);
     fn operit_lvgl_set_pairing_code(code: *const c_char);
     fn operit_lvgl_set_space_state(state: *const c_char);
@@ -41,6 +42,10 @@ unsafe extern "C" {
     fn operit_lvgl_set_chat_screen(text: *const c_char);
     fn operit_lvgl_set_chat_identity(id: *const c_char, character: *const c_char);
     fn operit_lvgl_set_message(index: u32, user: bool, text: *const c_char);
+    fn operit_lvgl_set_message_image(index: u32, image: u32, id: *const c_char);
+    fn operit_lvgl_image_request() -> u32;
+    fn operit_lvgl_image_chunk(request: u32, width: u32, height: u32, offset: u32, bytes: *const u8, length: u32) -> bool;
+    fn operit_lvgl_image_error(request: u32, error: *const c_char);
     fn operit_lvgl_finish_messages(count: u32);
     fn operit_lvgl_set_conversation(index: u32, id: *const c_char, title: *const c_char, character: *const c_char, selected: bool);
     fn operit_lvgl_finish_conversations(count: u32);
@@ -127,6 +132,10 @@ impl Esp32Lvgl {
         unsafe { operit_lvgl_set_paired(paired) };
     }
 
+    pub fn setTheme(&mut self, index: usize) {
+        unsafe { operit_lvgl_set_theme(index as u32, false) };
+    }
+
     /// Updates the face app's expression label.
     pub fn setExpression(&mut self, expression: &str) {
         let mut bytes = expression.as_bytes().to_vec();
@@ -152,12 +161,23 @@ impl Esp32Lvgl {
     pub fn setChatState(&mut self, state: &serde_json::Value) {
         let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
         let id = state["chatId"].as_str().unwrap_or("");
-        let name = crate::edge_chat::preview();
+        let name = state["conversations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|chat| chat["id"].as_str() == Some(id))
+            .and_then(|chat| chat["characterCardName"].as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Operit");
         unsafe { operit_lvgl_set_chat_identity(string(id).as_ptr(), string(&name).as_ptr()); }
         let rows = state["messages"].as_array().into_iter().flatten()
-            .filter(|row| row["text"].as_str().is_some_and(|text| !text.trim().is_empty())).collect::<Vec<_>>();
+            .filter(|row| row["text"].as_str().is_some_and(|text| !text.trim().is_empty()) || row["images"].as_array().is_some_and(|a| !a.is_empty())).collect::<Vec<_>>();
         let rows = &rows[rows.len().saturating_sub(12)..];
         for (index, row) in rows.iter().enumerate() {
+            for image in 0..4 {
+                unsafe { operit_lvgl_set_message_image(index as u32, image as u32,
+                    string(row["images"][image].as_str().unwrap_or("")).as_ptr()); }
+            }
             unsafe { operit_lvgl_set_message(index as u32, row["sender"] == "user",
                 string(row["text"].as_str().unwrap_or("")).as_ptr()); }
         }
@@ -174,6 +194,24 @@ impl Esp32Lvgl {
 
     pub fn setChatTask(&mut self, text: &str) {
         setText(text, operit_lvgl_set_chat_task);
+    }
+
+    pub fn imageError(&mut self, error: &str) {
+        let text = CString::new(error.replace('\0', "")).unwrap();
+        unsafe { operit_lvgl_image_error(operit_lvgl_image_request(), text.as_ptr()); }
+    }
+
+    pub fn imageEvent(&mut self, event: crate::edge_image::ImageEvent) {
+        match event.chunk {
+            Ok(chunk) => unsafe {
+                if !operit_lvgl_image_chunk(event.request, chunk.width as u32, chunk.height as u32,
+                    chunk.offset as u32, chunk.bytes.as_ptr(), chunk.bytes.len() as u32) { crate::edge_image::cancel(); }
+            },
+            Err(error) => {
+                let text = CString::new(error.replace('\0', "")).unwrap();
+                unsafe { operit_lvgl_image_error(event.request, text.as_ptr()); }
+            }
+        }
     }
 
     /// Returns the bounded draft captured by the LVGL text area.

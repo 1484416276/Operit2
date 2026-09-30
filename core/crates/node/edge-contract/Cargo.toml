@@ -6,3 +6,7 @@ license.workspace = true
 publish.workspace = true
 description = "Shared address contract for Operit Edge Services."
 
+
+[dependencies]
+operit-link = { path = "../../foundation/link" }
+serde.workspace = true

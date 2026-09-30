@@ -5,13 +5,24 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+test-support = ["operit-peer-link/test-support"]
+
 [dependencies]
+hmac = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde_bytes = "0.11"
+sha2.workspace = true
+uuid.workspace = true
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+operit-peer-link = { path = "../peer-link", features = ["tcp", "serial"] }
 async-trait.workspace = true
+futures-util.workspace = true
 base64.workspace = true
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
-operit-access-runtime = { path = "../../access/runtime" }
-operit-edge-transport = { path = "../edge-transport" }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
 operit-store = { path = "../../persistence/store" }
 operit-tools = { path = "../../tool/services", default-features = false }
@@ -25,7 +36,11 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
-operit-access-runtime = { path = "../../access/runtime", features = ["test-support"] }
+operit-peer-link = { path = "../peer-link", features = ["test-support"] }
 operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = { version = "0.7", features = ["ws"] }
+tokio = { workspace = true, features = ["net", "rt"] }

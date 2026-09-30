@@ -1976,30 +1976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-access-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-runtime",
- "operit-store",
- "operit-util",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "operit-command-core"
 version = "0.1.0"
 dependencies = [
@@ -2022,7 +1998,6 @@ dependencies = [
 name = "operit-core-application"
 version = "0.1.0"
 dependencies = [
- "operit-access-runtime",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
@@ -2041,6 +2016,7 @@ dependencies = [
  "hmac",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "rand_core 0.6.4",
  "serde",
  "sha2",
@@ -2062,7 +2038,6 @@ dependencies = [
  "jni",
  "js-sys",
  "mdns-sd",
- "operit-access-runtime",
  "operit-core-application",
  "operit-host-android-native",
  "operit-host-api",
@@ -2391,20 +2366,40 @@ name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
- "operit-access-runtime",
+ "futures-util",
+ "hmac",
  "operit-edge-transport",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "operit-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
  "quote",
+ "rand_core 0.6.4",
  "serde",
+ "serde_bytes",
  "serde_json",
+ "sha2",
  "syn",
  "tokio",
+ "uuid",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "operit-peer-link"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2507,7 +2502,6 @@ name = "operit-proxy-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "operit-access-runtime",
  "operit-command-core",
  "operit-host-api",
  "operit-link",

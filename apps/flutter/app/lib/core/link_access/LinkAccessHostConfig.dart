@@ -114,8 +114,7 @@ class LinkAccessHostConfigStore {
 
   /// Reads host listener settings from the runtime-owned Link Access datastore.
   static Future<LinkAccessHostConfig> read() async {
-    final config = await _clients.linkAccess.linkAccessStore
-        .initializeHostConfig();
+    final config = await _clients.server.remote.linkAccessStore.initializeHostConfig();
     return LinkAccessHostConfig(
       webAccessEnabled: config.webAccessEnabled,
       discoveryEnabled: config.discoveryEnabled,
@@ -132,7 +131,7 @@ class LinkAccessHostConfigStore {
 
   /// Writes host listener settings to the runtime-owned Link Access datastore.
   static Future<void> write(LinkAccessHostConfig config) async {
-    await _clients.linkAccess.linkAccessStore.saveHostConfig(
+    await _clients.server.remote.linkAccessStore.saveHostConfig(
       config: generated.LinkAccessHostConfig(
         bindAddress: config.bindAddress,
         token: config.token,

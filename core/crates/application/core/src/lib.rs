@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use operit_access_runtime::{LinkAccessIdentity, LinkAccessStore, RemoteDeviceInfo};
+use operit_node_runtime::remote::{LinkAccessIdentity, LinkAccessStore, LinkDeviceInfo};
 #[cfg(not(target_arch = "wasm32"))]
-use operit_access_runtime::{RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
+use operit_node_runtime::remote::{RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::PluginSdkIpc::PluginSdkIpcEndpoint;
 use operit_node_runtime::{
@@ -21,14 +21,14 @@ type LocalClientConfigurator = Box<dyn FnOnce(&mut LocalCoreProxy) -> Result<(),
 /// Contains the host-provided inputs needed to start one Core tree.
 pub struct CoreApplicationConfig {
     pub hostManager: HostManager,
-    pub deviceInfo: RemoteDeviceInfo,
+    pub deviceInfo: LinkDeviceInfo,
     startSpaceSync: bool,
     localClientConfigurator: Option<LocalClientConfigurator>,
 }
 
 impl CoreApplicationConfig {
     /// Creates a Core application config from host capabilities and device identity.
-    pub fn new(hostManager: HostManager, deviceInfo: RemoteDeviceInfo) -> Self {
+    pub fn new(hostManager: HostManager, deviceInfo: LinkDeviceInfo) -> Self {
         Self {
             hostManager,
             deviceInfo,
@@ -123,7 +123,7 @@ impl CoreApplication {
     #[allow(non_snake_case)]
     pub fn startWithLocalClient(
         localClient: LocalCoreProxy,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
     ) -> Result<Self, String> {
         Self::startWithSharedLocalClient(Arc::new(localClient), deviceInfo)
     }
@@ -132,7 +132,7 @@ impl CoreApplication {
     #[allow(non_snake_case)]
     pub fn startWithSharedLocalClient(
         localClient: Arc<LocalCoreProxy>,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
     ) -> Result<Self, String> {
         Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)
     }
@@ -141,7 +141,7 @@ impl CoreApplication {
     #[allow(non_snake_case)]
     fn startWithSharedLocalClientConfigured(
         localClient: Arc<LocalCoreProxy>,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
         startSpaceSync: bool,
     ) -> Result<Self, String> {
         let nodeRuntime = localClient.coreNodeLocalRuntime();
@@ -164,8 +164,12 @@ impl CoreApplication {
                 })
             },
         ))?;
+        accessServices.startConnections()?;
         if startSpaceSync {
-            accessServices.startSpaceSync()?;
+            if let Err(error) = accessServices.startSpaceSync() {
+                let _ = accessServices.stopConnections();
+                return Err(error);
+            }
         }
         let pluginSdkIpcBridge = localClient
             .hostManager()
@@ -223,7 +227,7 @@ impl CoreApplication {
     #[allow(non_snake_case)]
     pub fn updateAccessIdentity(
         &mut self,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
     ) -> Result<LinkAccessIdentity, String> {
         let accessIdentity = self.accessStore.updateIdentityDeviceInfo(deviceInfo)?;
         self.accessIdentity = accessIdentity.clone();
@@ -266,6 +270,7 @@ impl CoreApplication {
             let _ = bridge.stop();
         }
         let _ = self.accessServices.stopSpaceSync();
+        let _ = self.accessServices.stopConnections();
         operit_link::clearCoreRouteRuntime();
     }
 }
@@ -277,5 +282,6 @@ impl Drop for CoreApplication {
             let _ = bridge.stop();
         }
         let _ = self.accessServices.stopSpaceSync();
+        let _ = self.accessServices.stopConnections();
     }
 }

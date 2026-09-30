@@ -21,6 +21,9 @@ let output = '';
 let token = '';
 let sequence = 0;
 let lifecycle = 0;
+// Each browser has its own LVGL request counter. Only the page that opened
+// the preview may drain the simulator's destructive, single-chunk queue.
+let imageOwner: string | null = null;
 let previousExit: Promise<void> = Promise.resolve();
 const pending = new Map<number, {resolve: (value: unknown) => void; reject: (error: Error) => void}>();
 
@@ -124,6 +127,7 @@ async function start(): Promise<void> {
 }
 
 export function stopSimulator(): void {
+  imageOwner = null;
   lifecycle += 1;
   const processToStop = child;
   child = null;
@@ -166,6 +170,22 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         if (typeof raw.address === 'string') raw.address = advertisedAddress(raw.address);
       }
       reply(200, {running: !!child || starting, ready, output, token: ready ? token : '', device});
+    } else if (url.pathname === '/api/simulator/image' && req.method === 'GET') {
+      const client = req.headers['x-operit-client'];
+      if (!imageOwner || client !== imageOwner) reply(409, {error: '图片预览已关闭或已在其他页面打开'});
+      else reply(200, ready ? await rpc('image') : null);
+    } else if (url.pathname === '/api/simulator/send-image' && req.method === 'POST') {
+      const mimeType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
+      if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') throw new Error('只支持 PNG/JPEG 图片');
+      const chunks: Buffer[] = []; let total = 0;
+      for await (const part of req) {
+        const chunk = Buffer.from(part); total += chunk.length;
+        if (total > 512 * 1024) throw new Error('图片不能超过 512 KiB');
+        chunks.push(chunk);
+      }
+      if (!total) throw new Error('图片为空');
+      const base64 = Buffer.concat(chunks).toString('base64');
+      reply(200, await rpc('sendImage', {mimeType, bytes: base64}));
     } else if (url.pathname === '/api/simulator/debug/commands' && req.method === 'GET') {
       reply(200, takeUiCommands());
     } else if (url.pathname === '/api/simulator/debug/result' && req.method === 'POST') {
@@ -207,6 +227,15 @@ export async function simulatorRoute(req: IncomingMessage, res: ServerResponse, 
         return true;
       }
       if (typeof input.action !== 'string') throw new Error('缺少设备 action');
+      if (input.action.startsWith('edge_image:') || input.action === 'edge_image_cancel') {
+        const client = req.headers['x-operit-client'];
+        if (typeof client !== 'string' || !/^[a-zA-Z0-9-]{16,64}$/.test(client))
+          throw new Error('缺少图片预览页面标识，请刷新页面');
+        if (input.action === 'edge_image_cancel') {
+          if (client !== imageOwner) { reply(200, {ok: true}); return true; }
+          imageOwner = null;
+        } else imageOwner = client;
+      }
       reply(200, await rpc('action', {action: input.action}));
     } else reply(404, {error: 'Unknown simulator endpoint'});
   } catch (e) { reply(400, {error: String(e)}); }

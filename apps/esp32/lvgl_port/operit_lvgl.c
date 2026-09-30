@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "operit_font_zh_14.h"
+#include "operit_emoji.h"
 LV_FONT_DECLARE(operit_font_digits_28);
 
 /* A shared palette and geometry keep every component aligned at 320x240. */
@@ -15,6 +16,10 @@ enum {
     OPERIT_SCREEN_HEIGHT = 240,
     OPERIT_HEADER_HEIGHT = 40,
     OPERIT_COMPOSER_HEIGHT = 34,
+    OPERIT_MESSAGE_WIDTH = 266,
+    OPERIT_MESSAGE_NAV_WIDTH = 30,
+    OPERIT_MESSAGE_NAV_HEIGHT = 26,
+    OPERIT_MESSAGE_NAV_GAP = 6,
     OPERIT_DRAWER_WIDTH = 240,
     OPERIT_DRAWER_VIEWPORT_HEIGHT = 119,
     OPERIT_DRAWER_FOOTER_HEIGHT = 44,
@@ -37,7 +42,7 @@ static const theme_t themes[] = {
     {0x20121d, 0x382436, 0x30202d, 0x5a3546, 0x2c1c28, 0xffb575, 0x2b1720,
      0xfff5eb, 0xc4a2b3, 0x553747, 0x160b13, 0x9b788c, "Ember"},
     {0x111827, 0x253149, 0x1d273b, 0x3c5278, 0x192335, 0x94b8ff, 0x18253c,
-     0xf4f7ff, 0x9daecb, 0x34435e, 0x090e18, 0x7183a5, "Orbit"}
+     0xf4f7ff, 0x9daecb, 0x34435e, 0x090e18, 0x7183a5, "Orbit"},
 };
 typedef struct {
     int type, parent, x, y, w, h;
@@ -69,11 +74,12 @@ static lv_obj_t *chat_voice_button;
 static lv_obj_t *drawer_layer, *drawer_panel, *drawer_scrim, *character_viewport;
 static lv_obj_t *sidebar_preview_label;
 static lv_obj_t *message_list, *dialog_layer;
+static lv_obj_t *message_page_label, *message_prev_button, *message_next_button;
 static void reset_message_nodes(void);
 static char chat_draft[512] = "";
 static char submitted_draft[512] = "";
 static bool chat_send_pending;
-static lv_obj_t *chat_scroll, *wifi_label, *pairing_hint;
+static lv_obj_t *wifi_label, *pairing_hint;
 static uint16_t touch_x, touch_y;
 static bool touch_pressed, wifi_ready, edge_ready;
 static bool paired;
@@ -88,6 +94,7 @@ static bool sidebar_open;
 static int sidebar_width = OPERIT_DRAWER_WIDTH;
 static bool last_touch_pressed;
 static uint16_t touch_start_x, touch_start_y;
+static int message_scroll_y;
 static bool keyboard_dragging;
 static int keyboard_saved_scroll;
 static int keyboard_drag_offset_x, keyboard_drag_offset_y;
@@ -99,6 +106,8 @@ static int64_t last_tick;
 static void home(void);
 static void builtin_home(void);
 static void page(const char *name);
+static void close_image(void);
+static void show_image(const char *id);
 static size_t copy_utf8(char *destination, size_t capacity, const char *source);
 static const theme_t *theme(void) { return &themes[theme_index]; }
 
@@ -289,6 +298,8 @@ static const char *debug_build_json(bool snapshot) {
     offset += (size_t)snprintf(debug_json + offset, sizeof(debug_json) - offset, "320");
     debug_json_char(&offset, ','); debug_json_string(&offset, "height"); debug_json_char(&offset, ':');
     offset += (size_t)snprintf(debug_json + offset, sizeof(debug_json) - offset, "240");
+    debug_json_char(&offset, ','); debug_json_string(&offset, "emojiStyle"); debug_json_char(&offset, ':');
+    offset += (size_t)snprintf(debug_json + offset, sizeof(debug_json) - offset, "%u", operit_emoji_style());
     if (snapshot) {
         debug_json_char(&offset, ','); debug_json_string(&offset, "sidebarOpen"); debug_json_char(&offset, ':');
         offset += (size_t)snprintf(debug_json + offset, sizeof(debug_json) - offset, "%s", sidebar_open ? "true" : "false");
@@ -344,7 +355,8 @@ static lv_obj_t *label(lv_obj_t *p, const char *text, int x, int y, int w, uint3
 }
 static void clicked(lv_event_t *e) {
     const char *name = lv_event_get_user_data(e);
-    if (!strncmp(name,"edge_",5) || !strncmp(name,"dialog_",7)) queue_route(name);
+    if (!strncmp(name,"edge_",5) || !strncmp(name,"dialog_",7) || !strncmp(name,"emoji_",6) ||
+        !strncmp(name,"image_open:",11) || !strcmp(name,"image_close")) queue_route(name);
     else if (!strcmp(name,"Home")) queue_route("home");
     else if (!strcmp(name,"Palette")) queue_route("theme_next");
     else if (!strcmp(name,"Shape")) queue_route("shape_toggle");
@@ -368,6 +380,7 @@ static lv_obj_t *button(lv_obj_t *p, const char *text, const char *action, int x
     return o;
 }
 static void clear(void) {
+    close_image();
     active_page[0]=0;
     swipe_left[0]=swipe_right[0]=0;
     clock_label = connection_label = face_label = tiles = NULL;
@@ -376,10 +389,11 @@ static void clear(void) {
     chat_page = chat_header = chat_title_label = message_viewport = composer_host = composer_row = NULL;
     chat_input = chat_keyboard = keyboard_window = keyboard_header = NULL;
     keyboard_drag_handle = keyboard_close = chat_send_button = chat_voice_button = NULL;
-    chat_scroll = wifi_label = pairing_hint = NULL;
+    wifi_label = pairing_hint = NULL;
     drawer_layer = drawer_panel = drawer_scrim = character_viewport = NULL;
     sidebar_preview_label = NULL;
     message_list = dialog_layer = NULL;
+    message_page_label = message_prev_button = message_next_button = NULL;
     reset_message_nodes();
     lv_obj_clean(root);
     lv_obj_set_style_bg_color(root, lv_color_hex(theme()->background), 0);
@@ -476,10 +490,25 @@ static void layout_chat_keyboard(void) {
     lv_obj_set_pos(composer_host, 0, composer_y);
     lv_obj_set_size(composer_host, OPERIT_SCREEN_WIDTH, OPERIT_COMPOSER_HEIGHT);
     int viewport_bottom = composer_y - OPERIT_KEYBOARD_GAP;
-    int viewport_height = viewport_bottom - (OPERIT_HEADER_HEIGHT + 6);
+    int viewport_height = viewport_bottom - (OPERIT_HEADER_HEIGHT + 32);
     if (viewport_height < 8) viewport_height = 8;
-    lv_obj_set_pos(message_viewport, 8, OPERIT_HEADER_HEIGHT + 6);
-    lv_obj_set_size(message_viewport, OPERIT_SCREEN_WIDTH - 16, viewport_height);
+    lv_obj_set_pos(message_viewport, 8, OPERIT_HEADER_HEIGHT + 32);
+    lv_obj_set_size(message_viewport, OPERIT_MESSAGE_WIDTH, viewport_height);
+    /* Keep pagination beside the message, including when the keyboard moves. */
+    int nav_height = 2 * OPERIT_MESSAGE_NAV_HEIGHT + OPERIT_MESSAGE_NAV_GAP;
+    int nav_y = OPERIT_HEADER_HEIGHT + 32 + (viewport_height - nav_height) / 2;
+    lv_obj_t *nav_buttons[] = {message_prev_button, message_next_button};
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!nav_buttons[i]) continue;
+        lv_obj_set_pos(nav_buttons[i], OPERIT_SCREEN_WIDTH - 8 - OPERIT_MESSAGE_NAV_WIDTH,
+                       nav_y + i * (OPERIT_MESSAGE_NAV_HEIGHT + OPERIT_MESSAGE_NAV_GAP));
+        if (viewport_height < nav_height) lv_obj_add_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    int max_scroll = lv_obj_get_height(message_list) - viewport_height;
+    if (max_scroll < 0) max_scroll = 0;
+    if (message_scroll_y > max_scroll) message_scroll_y = max_scroll;
+    lv_obj_set_y(message_list, -message_scroll_y);
 }
 
 static int keyboard_y_for_touch(int y) {
@@ -525,15 +554,17 @@ static void hide_chat_keyboard(void) {
     keyboard_dragging = false;
     layout_chat_keyboard();
     if (was_open && message_viewport) {
-        lv_obj_update_layout(message_viewport);
-        lv_obj_scroll_to_y(message_viewport, keyboard_saved_scroll, LV_ANIM_OFF);
+        int max_scroll = lv_obj_get_height(message_list) - lv_obj_get_height(message_viewport);
+        if (max_scroll < 0) max_scroll = 0;
+        message_scroll_y = LV_MIN(keyboard_saved_scroll, max_scroll);
+        lv_obj_set_y(message_list, -message_scroll_y);
     }
 }
 
 static void show_chat_keyboard(void) {
     if (!chat_keyboard || !chat_input || !keyboard_window) return;
     if (lv_obj_has_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN))
-        keyboard_saved_scroll = lv_obj_get_scroll_y(message_viewport);
+        keyboard_saved_scroll = message_scroll_y;
     lv_keyboard_set_textarea(chat_keyboard, chat_input);
     lv_obj_clear_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_pos(keyboard_window, 8, OPERIT_SCREEN_HEIGHT - OPERIT_KEYBOARD_HEIGHT - 2);
@@ -696,13 +727,29 @@ static void draw_chat(void) {
     debug_set_id(connection_label, "connection_status");
     lv_obj_set_style_text_align(connection_label, LV_TEXT_ALIGN_RIGHT, 0);
 
-    message_viewport = ui_box(chat_page, 8, 46, 304, 146, theme()->background, 0);
-    chat_scroll = message_viewport;
+    message_prev_button = ui_box(chat_page, OPERIT_SCREEN_WIDTH - 8 - OPERIT_MESSAGE_NAV_WIDTH, 103,
+                                 OPERIT_MESSAGE_NAV_WIDTH, OPERIT_MESSAGE_NAV_HEIGHT, theme()->surface, 4);
+    debug_register(message_prev_button, "button", "message_prev", NULL);
+    lv_obj_add_flag(message_prev_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(message_prev_button, message_page_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+    label(message_prev_button, LV_SYMBOL_UP, 7, 4, 18, theme()->text);
+    message_page_label = label(chat_page, "", 48, 48, 224, theme()->text_secondary);
+    debug_set_id(message_page_label, "message_page_label");
+    lv_obj_set_style_text_align(message_page_label, LV_TEXT_ALIGN_CENTER, 0);
+    message_next_button = ui_box(chat_page, OPERIT_SCREEN_WIDTH - 8 - OPERIT_MESSAGE_NAV_WIDTH, 135,
+                                 OPERIT_MESSAGE_NAV_WIDTH, OPERIT_MESSAGE_NAV_HEIGHT, theme()->surface, 4);
+    debug_register(message_next_button, "button", "message_next", NULL);
+    lv_obj_add_flag(message_next_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(message_next_button, message_page_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+    label(message_next_button, LV_SYMBOL_DOWN, 7, 4, 18, theme()->text);
+
+    message_viewport = ui_box(chat_page, 8, 72, OPERIT_MESSAGE_WIDTH, 120, theme()->background, 0);
     debug_set_id(message_viewport, "message_viewport");
-    lv_obj_add_flag(message_viewport, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(message_viewport, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(message_viewport, LV_SCROLLBAR_MODE_AUTO);
-    message_list = ui_box(message_viewport, 0, 0, 304, 1, theme()->background, 0);
+    /* One message is rendered at a time. Scrolling this container would make
+     * a vertical swipe compete with message pagination. */
+    lv_obj_clear_flag(message_viewport, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(message_viewport, LV_SCROLLBAR_MODE_OFF);
+    message_list = ui_box(message_viewport, 0, 0, OPERIT_MESSAGE_WIDTH, 1, theme()->background, 0);
     debug_set_id(message_list, "message_list");
     render_messages();
 
@@ -829,6 +876,8 @@ static void draw_pairing(void) {
               theme()->surface, theme()->text_secondary);
 }
 
+#include "operit_image_view.inc"
+
 static void page(const char *name) {
     copy_utf8(page_name, sizeof(page_name), name);
     current_page = page_name;
@@ -843,10 +892,22 @@ static void page(const char *name) {
         draw_pairing();
     } else if (!strcmp(name, "Settings")) {
         label(page_host, "设置", 18, 14, 200, theme()->text);
-        label(page_host, "连接状态", 18, 55, 280, theme()->text_secondary);
-        wifi_label = label(page_host, wifi_ready ? "Wi-Fi 已连接" : "Wi-Fi 不可用", 18, 76, 280, theme()->text);
-        space_label = label(page_host, edge_ready ? space_state : "等待 Core 连接", 18, 98, 280, theme()->text_secondary);
-        button(page_host, "切换主题", "Palette", 18, 144, 284, 38);
+        wifi_label = label(page_host, wifi_ready ? "Wi-Fi 已连接" : "Wi-Fi 不可用", 18, 43, 280, theme()->text);
+        space_label = label(page_host, edge_ready ? space_state : "等待 Core 连接", 18, 64, 280, theme()->text_secondary);
+        button(page_host, "切换主题", "Palette", 18, 88, 284, 28);
+        label(page_host, "Emoji", 18, 124, 90, theme()->text_secondary);
+        lv_obj_t *preview = label(page_host, "🐖 🥺 😊 ❤️", 124, 123, 178, theme()->text);
+        debug_register(preview, "label", "emoji_preview", "");
+        const char *styles[] = {"原有单色", "Google 彩色"};
+        const char *actions[] = {"emoji_mono", "emoji_google"};
+        for (unsigned i = 0; i < OPERIT_EMOJI_STYLE_COUNT; ++i) {
+            if (i == OPERIT_EMOJI_GOOGLE && !operit_emoji_color_available()) continue;
+            lv_obj_t *choice = button(page_host, styles[i], actions[i], 18 + i * 146, 151, 138, 32);
+            if (operit_emoji_style() == i) {
+                lv_obj_set_style_border_width(choice, 2, 0);
+                lv_obj_set_style_border_color(choice, lv_color_hex(theme()->accent), 0);
+            }
+        }
         button(page_host, "返回聊天", "edge_chat", 18, 204, 284, 28);
     } else if (!strcmp(name, "Tasks")) {
         label(page_host, "任务", 18, 14, 200, theme()->text);
@@ -871,7 +932,7 @@ static void read_touch(lv_indev_t *dev, lv_indev_data_t *data) {
 }
 bool operit_lvgl_init(uint16_t w, uint16_t h, operit_lvgl_flush_cb_t f, operit_lvgl_touch_cb_t t, operit_lvgl_action_cb_t a, void *user) {
     (void)t; if (w!=320 || h!=240 || !f) return false;
-    flush_cb=f; action_cb=a; context=user; lv_init();operit_store_init();
+    flush_cb=f; action_cb=a; context=user; lv_init();operit_store_init();operit_emoji_init();
     display=lv_display_create(w,h); if (!display) return false;
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(display, draw_buffer, NULL, sizeof(draw_buffer), LV_DISPLAY_RENDER_MODE_PARTIAL);
@@ -899,6 +960,22 @@ void operit_lvgl_set_touch(uint16_t x,uint16_t y,bool pressed) {
         if (abs(dx) > 35 && abs(dx) > abs(dy) && !strcmp(current_page, "Chat")) {
             if (!sidebar_open && touch_start_x <= 24 && dx > 35) queue_route("sidebar_open");
             else if (sidebar_open && dx < -35) queue_route("sidebar_close");
+        } else if (abs(dy) > 45 && abs(dy) > abs(dx) && !strcmp(current_page, "Chat") &&
+                   !sidebar_open && !image_layer && message_viewport &&
+                   touch_start_x >= (uint16_t)lv_obj_get_x(message_viewport) &&
+                   touch_start_x < (uint16_t)(lv_obj_get_x(message_viewport) + lv_obj_get_width(message_viewport)) &&
+                   touch_start_y >= (uint16_t)lv_obj_get_y(message_viewport) &&
+                   touch_start_y < (uint16_t)(lv_obj_get_y(message_viewport) + lv_obj_get_height(message_viewport)) &&
+                   (!keyboard_window || lv_obj_has_flag(keyboard_window, LV_OBJ_FLAG_HIDDEN))) {
+            int max_scroll = lv_obj_get_height(message_list) - lv_obj_get_height(message_viewport);
+            if (max_scroll < 0) max_scroll = 0;
+            if (dy > 0 && message_scroll_y > 0) {
+                message_scroll_y = LV_MAX(0, message_scroll_y - dy);
+                lv_obj_set_y(message_list, -message_scroll_y);
+            } else if (dy < 0 && message_scroll_y < max_scroll) {
+                message_scroll_y = LV_MIN(max_scroll, message_scroll_y - dy);
+                lv_obj_set_y(message_list, -message_scroll_y);
+            } else page_message(dy > 0 ? -1 : 1);
         }
     }
     last_touch_pressed = pressed;
@@ -955,9 +1032,7 @@ void operit_lvgl_set_expression(const char *value) {
 /* Host controls shared by the firmware and the WebAssembly developer host. */
 void operit_lvgl_set_chat_screen(const char *text) {
     if (!text || !strcmp(chat_screen, text)) return;
-    bool at_bottom = !chat_scroll || lv_obj_get_scroll_bottom(chat_scroll) <= 4;
     copy_utf8(chat_screen, sizeof(chat_screen), text);
-    (void)at_bottom;
     render_messages();
 }
 void operit_lvgl_set_chat_task(const char *text) {
@@ -984,6 +1059,13 @@ void operit_lvgl_set_theme(unsigned index, bool circular) {
     theme_index = index % (sizeof(themes) / sizeof(themes[0]));
     round_icons = circular;
     page(current_page);
+}
+
+unsigned operit_lvgl_emoji_style(void) { return operit_emoji_style(); }
+bool operit_lvgl_set_emoji_style(unsigned style) {
+    if (!operit_emoji_set_style(style)) return false;
+    page(current_page);
+    return true;
 }
 void operit_lvgl_navigate_apps(void) {
     sidebar_open = true;
@@ -1197,8 +1279,12 @@ static void execute_route(const char *action) {
     else if(!strcmp(action,"apps")) { sidebar_open = true; page("Chat"); }
     else if(!strncmp(action,"page:",5)) navigate_document(action+5);
     else if(!strcmp(action,"theme_next") || !strcmp(action,"shape_toggle")) {
-        if(!strcmp(action,"theme_next")) theme_index=(theme_index+1)%3; else round_icons=!round_icons;
+        if(!strcmp(action,"theme_next")) theme_index=(theme_index+1)%(sizeof(themes)/sizeof(themes[0])); else round_icons=!round_icons;
         page(current_page);
+    }
+    else if(!strcmp(action,"emoji_mono") || !strcmp(action,"emoji_google")) {
+        unsigned style = !strcmp(action,"emoji_google") ? OPERIT_EMOJI_GOOGLE : OPERIT_EMOJI_MONO;
+        if (!operit_lvgl_set_emoji_style(style)) show_dialog("无法保存表情风格，请重试", false);
     }
     else if(!strncmp(action,"builtin:",8)) {
         page(action+8);
@@ -1208,6 +1294,8 @@ static void execute_route(const char *action) {
     else if(!strcmp(action,"sidebar_close")) set_sidebar_open(false, true);
     else if(!strcmp(action,"sidebar_toggle")) set_sidebar_open(!sidebar_open, true);
     else if(!strcmp(action,"chat_keyboard_close")) hide_chat_keyboard();
+    else if(!strcmp(action,"image_close")) close_image();
+    else if(!strncmp(action,"image_open:",11)) show_image(action+11);
     else if(!strcmp(action,"edge_new") || !strncmp(action,"edge_select:",12)) {
         if (!edge_ready) { show_dialog("设备已离线，请等待重新连接", false); return; }
         if(action_cb) action_cb(action,context);

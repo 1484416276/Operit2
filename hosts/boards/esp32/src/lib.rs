@@ -8,8 +8,8 @@ use operit_host_api::{
     HostOnboardingRequirement, HostRequirementAction, HostRequirementStatus,
 };
 
-#[cfg(target_os = "espidf")]
-pub mod link_channel;
+#[cfg(any(target_os = "espidf", test))]
+pub mod tcp;
 
 pub mod face;
 pub mod mirror_color;
@@ -57,9 +57,12 @@ pub use touch::{mapRawToLogical, TouchPoint};
 
 /// Creates the HostManager used by an ESP32 Edge Core app.
 pub fn createRuntimeHostManager(deviceIoHost: Arc<dyn DeviceIoHost>) -> HostManager {
-    HostManager::new()
+    let manager = HostManager::new()
         .withDeviceIoHost(deviceIoHost)
-        .withHostEnvironment(esp32_2432s028HostEnvironment())
+        .withHostEnvironment(esp32_2432s028HostEnvironment());
+    #[cfg(target_os = "espidf")]
+    let manager = manager.withTcpHost(Arc::new(tcp::Esp32TcpHost));
+    manager
 }
 
 /// Builds the ESP32-2432S028 host environment descriptor.

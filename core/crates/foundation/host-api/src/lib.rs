@@ -3,6 +3,8 @@
 pub mod HostManager;
 pub mod PluginSdkIpc;
 pub mod TimeUtils;
+pub mod Tcp;
+pub use Tcp::{TcpConnection, TcpHost, TcpListener};
 pub mod SerialPort;
 pub use SerialPort::{SerialPortConnection, SerialPortHost};
 

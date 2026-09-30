@@ -11,10 +11,14 @@ name = "operit-esp32"
 path = "src/main.rs"
 
 [dependencies]
+operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-scheduler", default-features = false }
+operit-peer-link = { path = "../../core/crates/node/peer-link", features = ["tcp"] }
+operit-edge-contract = { path = "../../core/crates/node/edge-contract" }
 async-trait = "0.1"
+base64 = "0.22"
 log = "0.4"
 operit-board-esp32 = { path = "../../hosts/boards/esp32" }
-operit-edge-transport = { path = "../../core/crates/node/edge-transport" }
+operit-node-edge = { path = "../../core/crates/node/edge" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-link = { path = "../../core/crates/foundation/link" }
 operit-ui = { path = "../../core/crates/ui" }

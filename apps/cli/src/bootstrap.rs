@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_access_runtime::RemoteDeviceInfo;
+use operit_node_runtime::remote::LinkDeviceInfo;
 use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{HostResult, ToastHost};
@@ -141,7 +141,7 @@ pub(crate) async fn create_cli_core_application(
 ) -> Result<CoreApplication, String> {
     CoreApplication::start(CoreApplicationConfig::new(
         create_cli_host_manager(),
-        RemoteDeviceInfo::nativeCli(deviceName),
+        LinkDeviceInfo::nativeCli(deviceName),
     ))
     .await
 }
@@ -153,7 +153,7 @@ pub(crate) async fn create_cli_core_application_without_space_sync(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
-            RemoteDeviceInfo::nativeCli(deviceName),
+            LinkDeviceInfo::nativeCli(deviceName),
         )
         .withSpaceSync(false),
     )
@@ -168,7 +168,7 @@ pub(crate) async fn create_cli_core_application_configured(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
-            RemoteDeviceInfo::nativeCli(deviceName),
+            LinkDeviceInfo::nativeCli(deviceName),
         )
         .withLocalClientConfigurator(configurator),
     )
@@ -184,7 +184,7 @@ pub(crate) async fn create_cli_core_application_configured_with_toast_host(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager_with_toast_host(toastHost),
-            RemoteDeviceInfo::nativeCli(deviceName),
+            LinkDeviceInfo::nativeCli(deviceName),
         )
         .withLocalClientConfigurator(configurator),
     )

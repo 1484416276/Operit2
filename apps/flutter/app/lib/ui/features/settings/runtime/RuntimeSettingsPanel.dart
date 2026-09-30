@@ -262,7 +262,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   /// Persists the explicit Link carrier selected for one outbound paired device.
   Future<void> _setPairedDeviceTransport(
     generated.RuntimePairedDevice device,
-    generated.LinkTransportPreference transport,
+    generated.PeerTransport transport,
   ) async {
     final name = device.outboundSessionName;
     if (name == null) {
@@ -1067,7 +1067,7 @@ class _PairedDeviceList extends StatelessWidget {
   final ValueChanged<String> onDelete;
   final void Function(
     generated.RuntimePairedDevice,
-    generated.LinkTransportPreference,
+    generated.PeerTransport,
   )
   onTransportChanged;
   final VoidCallback onRemovedFromSpace;
@@ -1125,7 +1125,7 @@ class _PairedDeviceTile extends StatelessWidget {
   final bool inCurrentSpace;
   final VoidCallback? onJoin;
   final VoidCallback onDelete;
-  final ValueChanged<generated.LinkTransportPreference> onTransportChanged;
+  final ValueChanged<generated.PeerTransport> onTransportChanged;
   final VoidCallback onRemovedFromSpace;
 
   @override
@@ -1134,7 +1134,7 @@ class _PairedDeviceTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final probeState = state ?? _PairedRemoteProbeState.checking;
-    final outboundBaseUrl = device.outboundBaseUrl;
+    final outboundEndpoint = device.outboundEndpoint;
     final statusColor = switch (probeState) {
       _PairedRemoteProbeState.checking => colorScheme.onSurfaceVariant,
       _PairedRemoteProbeState.online => colorScheme.primary,
@@ -1200,7 +1200,7 @@ class _PairedDeviceTile extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          outboundBaseUrl ?? device.deviceId,
+                          outboundEndpoint ?? device.deviceId,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: textTheme.bodySmall?.copyWith(
@@ -1283,21 +1283,21 @@ class _PairedDeviceTile extends StatelessWidget {
                 const Spacer(),
                 SizedBox(
                   width: 104,
-                  child: SegmentedButton<generated.LinkTransportPreference>(
+                  child: SegmentedButton<generated.PeerTransport>(
                     segments:
                         const <
-                          ButtonSegment<generated.LinkTransportPreference>
+                          ButtonSegment<generated.PeerTransport>
                         >[
                           ButtonSegment(
-                            value: generated.LinkTransportPreference.http,
+                            value: generated.PeerTransport.http,
                             label: Text('HTTP'),
                           ),
                           ButtonSegment(
-                            value: generated.LinkTransportPreference.webSocket,
+                            value: generated.PeerTransport.webSocket,
                             label: Text('WS'),
                           ),
                         ],
-                    selected: <generated.LinkTransportPreference>{
+                    selected: <generated.PeerTransport>{
                       device.outboundTransport!,
                     },
                     showSelectedIcon: false,

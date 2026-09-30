@@ -854,7 +854,7 @@ impl ChatServiceCore {
     }
 
     /// Creates a new chat and makes it available through chat history state.
-    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write", create_binding = "runtime.execute")]
     pub async fn ensureRoutedChat(&mut self, chatId: String) -> Result<(), String> {
         self.chatHistoryDelegate
             .chatHistoryManager
@@ -2150,6 +2150,7 @@ impl ChatServiceCore {
     pub async fn routedChatListFlow(&self, chatId: String) -> StateFlow<Vec<ChatHistoryListItem>> {
         let _ = chatId;
         self.chatHistoryDelegate.chatHistoryListItemsFlow()
+            .map(crate::services::core::EdgeChatProjection::compactEdgeHistories)
     }
 
     /// Creates a conversation without changing another device's UI selection.
@@ -2170,6 +2171,47 @@ impl ChatServiceCore {
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
     pub async fn chatMessagesFlow(&self, chatId: String) -> StateFlow<Vec<ChatMessage>> {
         self.localChatMessagesFlow(chatId)
+    }
+
+    /// Returns a compact transcript for memory-constrained Edge displays.
+    /// Tool parameters and oversized result payloads never cross the Edge link.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn edgeChatMessagesFlow(&self, chatId: String) -> StateFlow<Vec<ChatMessage>> {
+        self.localChatMessagesFlow(chatId).map(crate::services::core::EdgeChatProjection::compactEdgeMessages)
+    }
+
+    /// Authorizes image access before generic media processing. Display limits belong to callers.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatImagePreviewChunk(
+        &self, chatId: String, imageId: String, offset: u32,
+        width: u32, height: u32, format: String, chunkSize: u32,
+    ) -> Result<CoreValue, String> {
+        use crate::services::media::images::{self, PixelFormat, PreviewOptions};
+        let messages = self.localChatMessagesFlow(chatId).value();
+        authorizeChatImage(&messages, &imageId)?;
+        let pixel_format = match format.as_str() {
+            "rgb565le" => PixelFormat::Rgb565Le,
+            _ => return Err("Unsupported preview format".into()),
+        };
+        let chunk = images::preview_chunk(&imageId, PreviewOptions {
+            width, height, format: pixel_format,
+        }, offset as usize, chunkSize as usize)?;
+        Ok(CoreValue::Map(std::collections::BTreeMap::from([
+            ("format".into(), CoreValue::String(format)),
+            ("width".into(), CoreValue::Unsigned(chunk.width as u64)),
+            ("height".into(), CoreValue::Unsigned(chunk.height as u64)),
+            ("offset".into(), CoreValue::Unsigned(chunk.offset as u64)),
+            ("bytes".into(), CoreValue::Bytes(chunk.bytes)),
+        ])))
+    }
+
+    /// Registers validated image input and projects its pool ID into chat markup.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
+    pub async fn registerChatImage(&self, chatId: String, imageBytes: Vec<u8>, mimeType: String) -> Result<String, String> {
+        let _ = chatId;
+        let id = crate::services::media::images::register(&imageBytes, &mimeType)?;
+        Ok(format!("<link type=\"image\" id=\"{id}\"></link>"))
     }
 
     /// Builds a routed diagnostic chat message flow with one embedded response stream.
@@ -2851,4 +2893,28 @@ fn toolFailureMessage(result: &ToolResult) -> String {
         return message;
     }
     result.result.toString()
+}
+
+/// Membership is checked on every request, independently of media-cache state.
+fn authorizeChatImage(messages: &[ChatMessage], id: &str) -> Result<(), String> {
+    use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
+    if id.is_empty() || id.len() > 80 || !messages.iter().any(|message|
+        MediaLinkParser::extract_image_link_ids(&message.displayText()).iter().any(|candidate| candidate == id)) {
+        return Err("Image is not referenced by this chat".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod image_access_tests {
+    use super::*;
+    #[test]
+    fn image_access_is_scoped_to_the_current_transcript() {
+        let messages = vec![ChatMessage::new_with_markdown("user".into(),
+            "<link type=\"image\" id=\"image-1\"></link>".into())];
+        assert!(authorizeChatImage(&messages, "image-1").is_ok());
+        assert!(authorizeChatImage(&[], "image-1").is_err());
+        assert!(authorizeChatImage(&messages, "image-2").is_err());
+        assert!(authorizeChatImage(&messages, "").is_err());
+    }
 }

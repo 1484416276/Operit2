@@ -1,17 +1,12 @@
-use operit_access_runtime::{
-    coreNodeTransportClient,
-    CoreNodePeerLink::{disconnectPeerLink, isPeerLinkActive, openOutboundPeerLink},
-    LinkAccessStore, PairedRemoteSession, PairedRemoteSessionRecord,
-};
+use operit_peer_link::{disconnectPeerLink, isPeerLinkActive};
+use crate::remote::{LinkAccessStore, PairedRemoteSession, PairedPeerSessionRecord};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDevicePresence, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
-use operit_store::SyncOperationStore::{
-    subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation,
-};
+use operit_store::SyncOperationStore::{subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -21,9 +16,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::RuntimeRemoteLinkDiscovery::{
-    subscribeRemoteDeviceAnnouncements, RuntimeRemoteDiscoveryEndpoint,
-};
+use crate::RuntimeRemoteLinkDiscovery::{subscribeRemoteDeviceAnnouncements, RuntimeRemoteDiscoveryEndpoint};
 
 const SYNC_DOMAINS: [&str; 6] = [
     "preferences",
@@ -38,7 +31,6 @@ const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
 
 static SPACE_SYNC_SERVICES: OnceLock<Mutex<BTreeMap<String, Arc<SpacePersistenceSyncState>>>> =
     OnceLock::new();
-static PEER_LINK_OPEN_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
 struct SpacePersistenceSyncState {
@@ -239,21 +231,21 @@ impl SpacePersistenceSyncService {
         let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
         let mut errors = Vec::new();
         for (name, record) in sessions {
-            if control.nodeIsDisconnected(&record.coreDeviceId)? {
-                disconnectPeerLink(&localNodeId, &record.coreDeviceId)?;
+            if control.nodeIsDisconnected(&record.peerNodeId)? {
+                disconnectPeerLink(&localNodeId, &record.peerNodeId)?;
                 continue;
             }
             if let Err(error) = self.ensurePeerLink(&localNodeId, &record).await {
                 errors.push(format!(
                     "CoreNode {} Peer Link: {error}",
-                    record.coreDeviceId
+                    record.peerNodeId
                 ));
                 continue;
             }
             if let Err(error) = self.exchangePairedDeviceSpaceProjection(&record).await {
                 errors.push(format!(
                     "CoreNode {} Space projection exchange: {error}",
-                    record.coreDeviceId
+                    record.peerNodeId
                 ));
             }
         }
@@ -297,7 +289,7 @@ impl SpacePersistenceSyncService {
         let inboundSessions = self.state.linkAccessStore.inboundSessions()?;
         let paired = outboundSessions
             .values()
-            .any(|record| record.coreDeviceId == endpoint.deviceId)
+            .any(|record| record.peerNodeId == endpoint.deviceId)
             || inboundSessions
                 .values()
                 .any(|record| record.deviceId == endpoint.deviceId);
@@ -309,20 +301,20 @@ impl SpacePersistenceSyncService {
             .writeObservedDevicePresence(CoreSpaceDevicePresence {
                 nodeId: endpoint.deviceId.clone(),
                 active: true,
-                baseUrl: endpoint.baseUrl.clone(),
+                baseUrl: endpoint.endpoint.clone(),
                 tokenHash: endpoint.tokenHash.clone(),
                 version: endpoint.version.clone(),
                 updatedAt: currentTimeMillis(),
             })?;
         for (name, record) in outboundSessions
             .into_iter()
-            .filter(|(_, record)| record.coreDeviceId == endpoint.deviceId)
+            .filter(|(_, record)| record.peerNodeId == endpoint.deviceId)
         {
-            let updated = record.withBaseUrl(endpoint.baseUrl.clone());
+            let updated = record.withEndpoint(endpoint.endpoint.clone());
             let session = PairedRemoteSession::fromRecord(updated.clone())?;
             let info = session.sessionInfo().await?;
-            ensureRemoteIdentity(&updated, &info.coreDeviceId)?;
-            if updated.baseUrl != record.baseUrl {
+            ensureRemoteIdentity(&updated, &info.peerNodeId)?;
+            if updated.endpoint != record.endpoint {
                 self.state
                     .linkAccessStore
                     .saveOutboundSession(name.clone(), updated.clone())?;
@@ -345,13 +337,13 @@ impl SpacePersistenceSyncService {
         }
         let (record, session) = self.pairedSession(&name)?;
         let info = session.sessionInfo().await?;
-        ensureRemoteIdentity(&record, &info.coreDeviceId)?;
+        ensureRemoteIdentity(&record, &info.peerNodeId)?;
         let localNodeId = self.state.nodeRouter.localNodeId();
         self.ensurePeerLink(&localNodeId, &record).await?;
         if !self.exchangePairedDeviceSpaceProjection(&record).await? {
             return Ok(());
         }
-        self.synchronizeNodeOperations(&record.coreDeviceId, limit, bootstrap)
+        self.synchronizeNodeOperations(&record.peerNodeId, limit, bootstrap)
             .await
     }
 
@@ -530,13 +522,13 @@ impl SpacePersistenceSyncService {
     #[allow(non_snake_case)]
     async fn exchangePairedDeviceSpaceProjection(
         &self,
-        record: &PairedRemoteSessionRecord,
+        record: &PairedPeerSessionRecord,
     ) -> Result<bool, String> {
         let localNodeId = self.state.nodeRouter.localNodeId();
         let localSpace = self.state.spaceStore.initialize()?;
         let remoteSpace: CoreSpace = callRemoteService(
             &self.state.nodeRouter,
-            &record.coreDeviceId,
+            &record.peerNodeId,
             "server.runtimeRemoteLinkService",
             "deviceSpace",
             Value::Null,
@@ -545,16 +537,16 @@ impl SpacePersistenceSyncService {
         if !remoteSpace
             .members
             .iter()
-            .any(|member| member == &record.coreDeviceId)
+            .any(|member| member == &record.peerNodeId)
         {
             return Err("Paired device is not present in its announced device space".to_string());
         }
         self.state
             .spaceStore
-            .observePairedDeviceSpace(record.coreDeviceId.clone(), remoteSpace)?;
+            .observePairedDeviceSpace(record.peerNodeId.clone(), remoteSpace)?;
         let _: CoreSpace = callRemoteService(
             &self.state.nodeRouter,
-            &record.coreDeviceId,
+            &record.peerNodeId,
             "server.runtimeRemoteLinkService",
             "observePairedDeviceSpace",
             json!({
@@ -566,7 +558,7 @@ impl SpacePersistenceSyncService {
         let currentLocalSpace = self.state.spaceStore.space()?;
         let currentRemoteSpace: CoreSpace = callRemoteService(
             &self.state.nodeRouter,
-            &record.coreDeviceId,
+            &record.peerNodeId,
             "server.runtimeRemoteLinkService",
             "deviceSpace",
             Value::Null,
@@ -847,16 +839,16 @@ impl SpacePersistenceSyncService {
     /// Validates that every direct Space peer has one unambiguous outbound session.
     fn validateDirectPeerSessions(
         &self,
-        sessions: &BTreeMap<String, PairedRemoteSessionRecord>,
+        sessions: &BTreeMap<String, PairedPeerSessionRecord>,
     ) -> Result<(), String> {
         let mut sessionNameByPeer = BTreeMap::<String, String>::new();
         for (name, record) in sessions {
             if let Some(existingName) =
-                sessionNameByPeer.insert(record.coreDeviceId.clone(), name.clone())
+                sessionNameByPeer.insert(record.peerNodeId.clone(), name.clone())
             {
                 return Err(format!(
                     "multiple direct pairings target CoreNode {}: {}, {}",
-                    record.coreDeviceId, existingName, name
+                    record.peerNodeId, existingName, name
                 ));
             }
         }
@@ -867,35 +859,18 @@ impl SpacePersistenceSyncService {
     async fn ensurePeerLink(
         &self,
         localNodeId: &str,
-        record: &PairedRemoteSessionRecord,
+        record: &PairedPeerSessionRecord,
     ) -> Result<(), String> {
-        let control = NetworkControlStore::new(self.state.localRuntime.runtimeStorageHost())?;
-        if control.nodeIsDisconnected(&record.coreDeviceId)? {
-            disconnectPeerLink(localNodeId, &record.coreDeviceId)?;
-            return Err(format!(
-                "CoreNode {} is revoked from direct connections and routing",
-                record.coreDeviceId
-            ));
-        }
-        let _peerLinkOpenGuard = peerLinkOpenLock().lock().await;
-        if isPeerLinkActive(localNodeId, &record.coreDeviceId)? {
-            return Ok(());
-        }
-        let session = PairedRemoteSession::fromRecord(record.clone())?;
-        openOutboundPeerLink(
-            session,
-            coreNodeTransportClient(self.state.nodeRouter.clone()),
-            self.state.spaceStore.clone(),
-        )
-        .await?;
-        Ok(())
+        // Persistence consumes connectivity; only the application connection manager opens carriers.
+        if isPeerLinkActive(localNodeId, &record.peerNodeId)? { return Ok(()); }
+        Err(format!("Peer {} is offline", record.peerNodeId))
     }
 
     /// Resolves a named persisted outbound record into its authenticated remote session.
     fn pairedSession(
         &self,
         name: &str,
-    ) -> Result<(PairedRemoteSessionRecord, PairedRemoteSession), String> {
+    ) -> Result<(PairedPeerSessionRecord, PairedRemoteSession), String> {
         let sessions = self.state.linkAccessStore.outboundSessions()?;
         let record = sessions
             .get(name)
@@ -925,9 +900,7 @@ impl SpacePersistenceSyncService {
 
 /// Returns the process-wide guard that serializes direct Peer Link carrier opens.
 #[allow(non_snake_case)]
-fn peerLinkOpenLock() -> &'static tokio::sync::Mutex<()> {
-    PEER_LINK_OPEN_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
+
 
 /// Reports whether the paired CoreNode owns one verified synchronization blob.
 async fn remoteHasBlob(
@@ -1121,10 +1094,10 @@ where
 
 /// Verifies that the endpoint answered for the paired runtime identity stored locally.
 fn ensureRemoteIdentity(
-    record: &PairedRemoteSessionRecord,
-    coreDeviceId: &str,
+    record: &PairedPeerSessionRecord,
+    peerNodeId: &str,
 ) -> Result<(), String> {
-    if coreDeviceId != record.coreDeviceId {
+    if peerNodeId != record.peerNodeId {
         return Err("remote runtime identity changed".to_string());
     }
     Ok(())

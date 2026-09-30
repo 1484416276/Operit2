@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use esp_idf_hal::delay::{self, FreeRtos};
+use esp_idf_hal::delay;
 use esp_idf_hal::uart::UartDriver;
-use operit_edge_transport::serial_codec::{encodeSerialFrame, SerialFrameDecoder};
-use operit_edge_transport::LinkChannel;
+use operit_peer_link::transport::serial_codec::{encodeSerialFrame, SerialFrameDecoder};
+use operit_peer_link::transport::LinkChannel;
 use operit_host_api::{HostError, HostResult};
-use operit_link::LinkFrame;
+use operit_peer_link::LinkFrame;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 /// UART0 carrier for the USB-UART bridge used by the ESP32 board.
@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 pub struct Esp32UartLinkChannel {
     uart: Arc<UartDriver<'static>>,
     writeLock: Mutex<()>,
-    receiver: AsyncMutex<mpsc::UnboundedReceiver<LinkFrame>>,
+    receiver: AsyncMutex<mpsc::Receiver<LinkFrame>>,
     closed: Arc<AtomicBool>,
     _reader: JoinHandle<()>,
 }
@@ -31,45 +31,36 @@ impl Esp32UartLinkChannel {
     pub fn new(uart: UartDriver<'static>) -> HostResult<Arc<Self>> {
         let uart = Arc::new(uart);
         let closed = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = mpsc::channel(4);
         let readerUart = Arc::clone(&uart);
         let readerClosed = Arc::clone(&closed);
         let reader = std::thread::Builder::new()
             .name("operit-edge-uart-reader".to_string())
             .spawn(move || {
-                let mut decoder = SerialFrameDecoder::new();
-                let mut bytes = [0u8; 1024];
+                let mut decoder = SerialFrameDecoder::withMaxFrameBytes(48 * 1024);
+                let mut bytes = vec![0u8; 1024];
                 loop {
                     match readerUart.read(&mut bytes, delay::BLOCK) {
                         Ok(0) => continue,
-                        Ok(count) => loop {
-                            match decoder.push(&bytes[..count]) {
-                                Ok(Some(frame)) => {
-                                    if sender.send(frame).is_err() {
-                                        readerClosed.store(true, Ordering::Release);
-                                        return;
+                        Ok(count) => {
+                            let mut input = &bytes[..count];
+                            loop {
+                                match decoder.push(input) {
+                                    Ok(Some(frame)) => {
+                                        if sender.blocking_send(frame).is_err() {
+                                            readerClosed.store(true, Ordering::Release);
+                                            return;
+                                        }
+                                    }
+                                    Ok(None) => break,
+                                    Err(error) => {
+                                        log::warn!("ESP32 Edge UART frame: {error}");
+                                        break;
                                     }
                                 }
-                                Ok(None) => break,
-                                Err(error) => {
-                                    log::warn!("ESP32 Edge UART frame: {error}");
-                                    break;
-                                }
+                                input = &[];
                             }
-                            match decoder.push(&[]) {
-                                Ok(Some(frame)) => {
-                                    if sender.send(frame).is_err() {
-                                        readerClosed.store(true, Ordering::Release);
-                                        return;
-                                    }
-                                }
-                                Ok(None) => break,
-                                Err(error) => {
-                                    log::warn!("ESP32 Edge UART frame: {error}");
-                                    break;
-                                }
-                            }
-                        },
+                        }
                         Err(error) => {
                             log::warn!("ESP32 Edge UART read: {error}");
                             readerClosed.store(true, Ordering::Release);
@@ -77,7 +68,6 @@ impl Esp32UartLinkChannel {
                         }
                     }
                 }
-                FreeRtos::delay_ms(10);
             })
             .map_err(|error| HostError::new(format!("Edge UART reader thread: {error}")))?;
         Ok(Arc::new(Self {

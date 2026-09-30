@@ -1,6 +1,6 @@
 //! Volatile UI state; all chat execution and persistence belongs to Space.
 #![allow(non_snake_case)]
-use operit_edge_transport::EdgeSpaceRouteClient;
+use operit_peer_link::PeerRouteClient;
 use operit_link::{
     CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
 };
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 struct ChatSession {
-    client: EdgeSpaceRouteClient,
+    client: PeerRouteClient,
     histories: Mutex<CoreValue>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     chatId: String,
@@ -22,7 +22,35 @@ struct ChatSession {
     streamTasks: Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
 }
 
-#[derive(Default)]
+fn isMissingSpaceRoute(error: &operit_link::CoreLinkError) -> bool {
+    let text = error.to_string();
+    text.contains("SPACE_ROUTE_NOT_FOUND") || text.contains("route is not registered")
+}
+
+async fn watchChatMessages(
+    client: &PeerRouteClient,
+    chatId: &str,
+) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
+    let args = operit_link::toCoreValue(serde_json::json!({"chatId": chatId}))
+        .map_err(|error| operit_link::CoreLinkError::new("INVALID_ARGS", error.to_string()))?;
+    match client
+        .watchRouted(CoreWatchRequest::new(
+            "edge-ui-messages",
+            CORE_INTERNAL_TARGET,
+            "edgeChatMessagesFlow",
+            args,
+        ))
+        .await
+    {
+        Ok(stream) => Ok(stream),
+        Err(error) if isMissingSpaceRoute(&error) => Err(operit_link::CoreLinkError::new(
+            "EDGE_CHAT_UNSUPPORTED", "当前 Core 不支持轻量聊天接口，请升级 Core 后重新连接",
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Default, Clone)]
 struct StreamText {
     text: String,
     completed: bool,
@@ -43,11 +71,14 @@ impl StreamText {
                 self.text.clear();
                 self.savepoints.clear();
             }
-            Some("chunk") => self
-                .text
-                .push_str(event.get("value").and_then(|v| v.as_str()).unwrap_or("")),
+            Some("chunk") => appendBounded(
+                &mut self.text,
+                event.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+                MAX_CHAT_STRING_BYTES,
+            ),
             Some("savepoint") => {
                 if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
+                    if self.savepoints.len() >= 4 { self.savepoints.clear(); }
                     self.savepoints.insert(id.into(), self.text.clone());
                 }
             }
@@ -65,17 +96,71 @@ impl StreamText {
     }
 }
 
+const MAX_STREAM_DESCRIPTORS: usize = 8;
+const MAX_STREAM_SCAN_DEPTH: usize = 8;
+const MAX_STREAM_SCAN_ITEMS: usize = 32;
+
+fn collectMessageStreams(value: &CoreValue, streams: &mut Vec<operit_link::CoreStreamDescriptor>) {
+    collectMessageStreamsBounded(value, streams, 0);
+}
+
+fn collectMessageStreamsBounded(
+    value: &CoreValue,
+    streams: &mut Vec<operit_link::CoreStreamDescriptor>,
+    depth: usize,
+) {
+    if depth > MAX_STREAM_SCAN_DEPTH || streams.len() >= MAX_STREAM_DESCRIPTORS {
+        return;
+    }
+    match value {
+        CoreValue::List(items) => {
+            for item in items.iter().take(MAX_STREAM_SCAN_ITEMS) {
+                collectMessageStreamsBounded(item, streams, depth + 1);
+            }
+        }
+        CoreValue::Map(fields) => {
+            if let Some(CoreValue::Map(content_stream)) = fields.get("contentStream") {
+                if let Some(CoreValue::Map(descriptor)) = content_stream.get("$coreStream") {
+                    let streamId = match descriptor.get("streamId") {
+                        Some(CoreValue::String(value)) => value.clone(),
+                        _ => String::new(),
+                    };
+                    let target = match descriptor.get("target") {
+                        Some(CoreValue::String(value)) => value.clone(),
+                        _ => String::new(),
+                    };
+                    let propertyName = match descriptor.get("propertyName") {
+                        Some(CoreValue::String(value)) => value.clone(),
+                        _ => String::new(),
+                    };
+                    let args = descriptor
+                        .get("args")
+                        .cloned()
+                        .unwrap_or_else(CoreValue::emptyMap);
+                    if !streamId.is_empty() && !propertyName.is_empty() {
+                        streams.push(operit_link::CoreStreamDescriptor {
+                            streamId,
+                            target,
+                            propertyName,
+                            args,
+                        });
+                    }
+                }
+            }
+            for item in fields.values().take(MAX_STREAM_SCAN_ITEMS) {
+                collectMessageStreamsBounded(item, streams, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
-    let value = serde_json::to_value(messages).unwrap_or_default();
-    let active = value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|message| {
-            message
-                .pointer("/contentStream/$coreStream/streamId")
-                .and_then(|v| v.as_str())
-        })
+    let mut descriptors = Vec::new();
+    collectMessageStreams(messages, &mut descriptors);
+    let active = descriptors
+        .iter()
+        .map(|descriptor| descriptor.streamId.as_str())
         .collect::<std::collections::BTreeSet<_>>();
     session.streamTasks.lock().unwrap().retain(|id, task| {
         if active.contains(id.as_str()) {
@@ -90,18 +175,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
         .lock()
         .unwrap()
         .retain(|id, _| active.contains(id.as_str()));
-    for message in value.as_array().into_iter().flatten() {
-        let Some(descriptor) = message
-            .get("contentStream")
-            .and_then(|v| v.get("$coreStream"))
-        else {
-            continue;
-        };
-        let Ok(descriptor) =
-            serde_json::from_value::<operit_link::CoreStreamDescriptor>(descriptor.clone())
-        else {
-            continue;
-        };
+    for descriptor in descriptors {
         {
             let mut streams = session.streams.lock().unwrap();
             if streams.contains_key(&descriptor.streamId) {
@@ -123,7 +197,8 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
             );
             args.insert(
                 operit_link::CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT.into(),
-                CoreValue::String("chatMessagesFlow".into()),
+                // Reopen through the projection so XML and tool payloads stay on Core.
+                CoreValue::String("edgeChatMessagesFlow".into()),
             );
             args.insert(
                 operit_link::CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT.into(),
@@ -179,16 +254,145 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
 
 static UI_REVISION: AtomicU32 = AtomicU32::new(1);
 static SESSION: OnceLock<Mutex<Option<Arc<ChatSession>>>> = OnceLock::new();
+const MAX_CHAT_MESSAGES: usize = 12;
+const MAX_CONVERSATIONS: usize = 24;
+const MAX_CHAT_STRING_BYTES: usize = 1536;
+const MAX_TOOL_NAME_BYTES: usize = 96;
+const MAX_PART_TEXT_BYTES: usize = 768;
+const MAX_NESTED_LIST_ITEMS: usize = 64;
+const MAX_CORE_BYTES: usize = 1024;
+const MAX_CORE_VALUE_DEPTH: usize = 16;
+
+fn boundedText(value: &str) -> String {
+    if value.len() <= MAX_CHAT_STRING_BYTES {
+        return value.to_string();
+    }
+    let mut end = MAX_CHAT_STRING_BYTES;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+fn appendBounded(target: &mut String, value: &str, limit: usize) {
+    if target.len() >= limit {
+        return;
+    }
+    let remaining = limit - target.len();
+    let mut end = value.len().min(remaining);
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    target.push_str(&value[..end]);
+}
+
+fn visibleEdgeText(source: &str) -> String {
+    let mut result = String::new();
+    let mut rest = source;
+    while !rest.is_empty() && result.len() < MAX_CHAT_STRING_BYTES {
+        let Some(open) = rest.find('<') else {
+            appendBounded(&mut result, rest, MAX_CHAT_STRING_BYTES);
+            break;
+        };
+        appendBounded(&mut result, &rest[..open], MAX_CHAT_STRING_BYTES);
+        rest = &rest[open..];
+        let Some(close) = rest.find('>') else { break; };
+        let tag = &rest[1..close];
+        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/')
+            .next().unwrap_or("");
+        if name == "link" && (tag.contains("type=\"image\"") || tag.contains("type='image'")) {
+            let after_tag = &rest[close + 1..];
+            let Some(end) = after_tag.find("</link>") else { break; };
+            appendBounded(&mut result, &rest[..=close], MAX_CHAT_STRING_BYTES);
+            appendBounded(&mut result, "</link>", MAX_CHAT_STRING_BYTES);
+            rest = &after_tag[end + "</link>".len()..];
+            continue;
+        }
+        if name == "tool" && !tag.starts_with('/') {
+            let tool = tag.split_once("name=\"")
+                .and_then(|(_, tail)| tail.split_once('"').map(|(name, _)| name))
+                .or_else(|| tag.split_once("name='")
+                    .and_then(|(_, tail)| tail.split_once('\'').map(|(name, _)| name)));
+            if let Some(tool) = tool.filter(|name| !name.is_empty()) {
+                if !result.is_empty() { appendBounded(&mut result, "\n", MAX_CHAT_STRING_BYTES); }
+                appendBounded(&mut result, "调用工具：", MAX_CHAT_STRING_BYTES);
+                appendBounded(&mut result, tool, MAX_CHAT_STRING_BYTES);
+            }
+        }
+        rest = &rest[close + 1..];
+        if !tag.starts_with('/') && !name.is_empty() {
+            let closing = format!("</{name}>");
+            if let Some(end) = rest.find(&closing) { rest = &rest[end + closing.len()..]; }
+            else if !tag.trim_end().ends_with('/') { break; }
+        }
+    }
+    result
+}
+
+/// Bounds payload fields before they are retained by the long-lived chat state.
+/// Collection shape is preserved so subsequent Core deltas still address valid paths.
+fn boundCoreValue(value: &mut CoreValue, depth: usize) {
+    if depth > MAX_CORE_VALUE_DEPTH {
+        *value = CoreValue::Null;
+        return;
+    }
+    match value {
+        CoreValue::String(text) => {
+            if text.len() > MAX_CHAT_STRING_BYTES {
+                let bounded = boundedText(text);
+                *text = bounded;
+            }
+        }
+        CoreValue::Bytes(bytes) => bytes.truncate(MAX_CORE_BYTES),
+        CoreValue::List(items) => {
+            for item in items {
+                boundCoreValue(item, depth + 1);
+            }
+        }
+        CoreValue::Map(fields) => {
+            for item in fields.values_mut() {
+                boundCoreValue(item, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn mapString<'a>(fields: &'a BTreeMap<String, CoreValue>, key: &str) -> &'a str {
+    match fields.get(key) {
+        Some(CoreValue::String(value)) => value,
+        _ => "",
+    }
+}
+
+fn simpleJson(value: Option<&CoreValue>) -> serde_json::Value {
+    match value {
+        Some(CoreValue::String(value)) => boundedText(value).into(),
+        Some(CoreValue::Bool(value)) => (*value).into(),
+        Some(CoreValue::Signed(value)) => (*value).into(),
+        Some(CoreValue::Unsigned(value)) => (*value).into(),
+        Some(CoreValue::Float(value)) => (*value).into(),
+        _ => serde_json::Value::Null,
+    }
+}
 
 /// A transient carrier reconnect preserves the conversation selected on Edge.
-pub fn reconnect(client: EdgeSpaceRouteClient, provisionedChatId: String) {
+pub fn reconnect(client: PeerRouteClient, defaultChatId: String) -> tokio::task::JoinHandle<()> {
     let chatId = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap()
-        .as_ref().map(|session| session.chatId.clone()).unwrap_or(provisionedChatId);
-    install(client, chatId);
+        .as_ref().map(|session| session.chatId.clone()).unwrap_or(defaultChatId);
+    tokio::spawn(async move {
+        while client.isConnected() {
+            let request = CoreCallRequest::new(operit_link::nextCoreRouteRequestId("ensureRoutedChat"),
+                CORE_INTERNAL_TARGET, "ensureRoutedChat",
+                operit_link::toCoreValue(serde_json::json!({"chatId": chatId})).unwrap());
+            if client.callRouted(request).await.result.is_ok() { install(client, chatId); return; }
+            if operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(2000).await.is_err() { return; }
+        }
+    })
 }
 
 /// Called on the authenticated Link runtime after Space provisions the chat.
-pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
+pub fn install(client: PeerRouteClient, chatId: String) {
     clear();
     let session = Arc::new(ChatSession {
         client,
@@ -207,16 +411,7 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
     let owner = session.clone();
     let historySession = session.clone();
     let task = tokio::spawn(async move {
-        let args = operit_link::toCoreValue(serde_json::json!({"chatId": session.chatId})).unwrap();
-        let result = session
-            .client
-            .watchRouted(CoreWatchRequest::new(
-                "edge-ui-messages",
-                CORE_INTERNAL_TARGET,
-                "chatMessagesFlow",
-                args,
-            ))
-            .await;
+        let result = watchChatMessages(&session.client, &session.chatId).await;
         match result {
             Ok(mut stream) => {
                 while let Some(event) = stream.recv().await {
@@ -226,7 +421,10 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
                     let mut messages = session.messages.lock().unwrap();
                     if event.kind == CoreEventKind::Delta {
                         match messages.applyIncrementalDelta(&event.value) {
-                            Ok(value) => *messages = value,
+                            Ok(mut value) => {
+                                boundCoreValue(&mut value, 0);
+                                *messages = value;
+                            }
                             Err(error) => {
                                 *session.error.lock().unwrap() = Some(error);
                                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
@@ -234,7 +432,9 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
                             }
                         }
                     } else {
-                        *messages = event.value;
+                        let mut value = event.value;
+                        boundCoreValue(&mut value, 0);
+                        *messages = value;
                     }
                     openMessageStreams(&session, &messages);
                     UI_REVISION.fetch_add(1, Ordering::Relaxed);
@@ -271,6 +471,7 @@ pub fn install(client: EdgeSpaceRouteClient, chatId: String) {
                 } else { *histories = event.value; }
                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
             },
+            Err(error) if isMissingSpaceRoute(&error) => {}
             Err(error) => {
                 *session.error.lock().unwrap() = Some(format!("对话列表加载失败：{}", error));
                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
@@ -299,6 +500,7 @@ pub fn revision() -> u32 {
 /// Drops the local chat route and display state. Pairing credentials are
 /// cleared separately by the Edge pairing authority.
 pub fn clear() {
+    crate::edge_image::cancel();
     UI_REVISION.fetch_add(1, Ordering::Relaxed);
     let session = SESSION
         .get_or_init(|| Mutex::new(None))
@@ -320,12 +522,18 @@ pub fn snapshot() -> serde_json::Value {
         .unwrap()
         .clone();
     match session {
-        Some(session) => serde_json::json!({
-            "connected": session.client.isConnected(), "chatId": session.chatId,
-            "conversations": *session.histories.lock().unwrap(),
-            "sending": session.sending.load(Ordering::Acquire),
-            "messages": displayMessages(&session.messages.lock().unwrap(), &session.streams.lock().unwrap()), "error": *session.error.lock().unwrap(),
-        }),
+        Some(session) => {
+            // Do not hold UI state locks while serializing or acquiring another
+            // lock: the single-threaded network runtime also updates this state.
+            let streams = session.streams.lock().unwrap().clone();
+            let error = session.error.lock().unwrap().clone();
+            serde_json::json!({
+                "connected": session.client.isConnected(), "chatId": session.chatId,
+                "conversations": displayConversations(&session.histories.lock().unwrap()),
+                "sending": session.sending.load(Ordering::Acquire),
+                "messages": displayMessages(&session.messages.lock().unwrap(), &streams), "error": error,
+            })
+        },
         None => {
             serde_json::json!({"connected": false, "messages": [], "error": "请先在 Space 中配对此设备"})
         }
@@ -348,8 +556,14 @@ pub fn selectChat(id: &str) -> Result<(), String> {
     let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
         .ok_or("设备尚未连接")?;
     if !session.client.isConnected() { return Err("设备已离线".into()); }
-    let value = serde_json::to_value(&*session.histories.lock().unwrap()).unwrap_or_default();
-    if !value.as_array().into_iter().flatten().any(|chat| chat["id"].as_str() == Some(id)) {
+    let exists = match &*session.histories.lock().unwrap() {
+        CoreValue::List(items) => items.iter().any(|item| match item {
+            CoreValue::Map(fields) => mapString(fields, "id") == id,
+            _ => false,
+        }),
+        _ => false,
+    };
+    if !exists {
         return Err("对话已不存在，请刷新列表".into());
     }
     let _guard = session.runtime.enter();
@@ -425,46 +639,135 @@ pub fn taskStatus() -> String {
 /// Empty/error state only; actual messages are rendered as individual rows.
 pub fn screenText() -> String {
     let value = snapshot();
+    screenTextFromSnapshot(&value)
+}
+
+pub fn screenTextFromSnapshot(value: &serde_json::Value) -> String {
     if let Some(error) = value["error"].as_str() { return error.to_string(); }
     if value["messages"].as_array().is_some_and(|items| !items.is_empty()) { return String::new(); }
     if isConnected() { "输入消息开始对话".into() } else { "已离线，等待重新连接".into() }
 }
 
 fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
-    let mut messages = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
-    if let Some(messages) = messages.as_array_mut() {
-        for message in messages {
-            let mut text = message
-                .get("parts")
-                .and_then(|v| v.as_array())
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter(|p| {
-                            matches!(
-                                p.get("kind").and_then(|v| v.as_str()),
-                                Some("markdown" | "status")
-                            )
-                        })
-                        .filter_map(|p| p.get("content").and_then(|v| v.as_str()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default();
-            if let Some(stream) = message
-                .pointer("/contentStream/$coreStream/streamId")
-                .and_then(|v| v.as_str())
-                .and_then(|id| streams.get(id))
-            {
-                if !stream.text.is_empty() { text = stream.text.clone(); }
+    let CoreValue::List(items) = value else { return serde_json::json!([]); };
+    let start = items.len().saturating_sub(MAX_CHAT_MESSAGES);
+    let mut result = Vec::with_capacity(items.len() - start);
+    for item in &items[start..] {
+        let CoreValue::Map(fields) = item else { continue; };
+        let mut text = String::new();
+        if let Some(CoreValue::List(parts)) = fields.get("parts") {
+            for part in parts.iter().take(MAX_NESTED_LIST_ITEMS) {
+                let CoreValue::Map(part) = part else { continue; };
+                let kind = mapString(part, "kind");
+                let (prefix, content) = match kind {
+                    "markdown" | "status" => ("", mapString(part, "content")),
+                    "tool_call" => ("调用工具：", mapString(part, "toolName")),
+                    "tool_result" => continue,
+                    _ => continue,
+                };
+                let visible;
+                let content = if kind == "markdown" || kind == "status" {
+                    visible = visibleEdgeText(content);
+                    visible.as_str()
+                } else { content };
+                if content.is_empty() { continue; }
+                if !text.is_empty() { appendBounded(&mut text, "\n", MAX_CHAT_STRING_BYTES); }
+                appendBounded(&mut text, prefix, MAX_CHAT_STRING_BYTES);
+                if kind == "tool_call" {
+                    appendBounded(&mut text, content, MAX_TOOL_NAME_BYTES);
+                } else {
+                    appendBounded(&mut text, content, MAX_PART_TEXT_BYTES);
+                }
             }
-            message["text"] = text.into();
         }
+        if let Some(CoreValue::Map(content)) = fields.get("contentStream") {
+            if let Some(CoreValue::Map(descriptor)) = content.get("$coreStream") {
+                if let Some(stream) = streams.get(mapString(descriptor, "streamId")) {
+                    if !stream.text.is_empty() {
+                        text.clear();
+                        text = visibleEdgeText(&stream.text);
+                    }
+                }
+            }
+        }
+        let (text, images) = crate::edge_image::extract(&text);
+        if text.trim().is_empty() && images.is_empty() { continue; }
+        result.push(serde_json::json!({
+            "sender": mapString(fields, "sender"),
+            "text": text,
+            "images": images,
+        }));
     }
-    messages
+    serde_json::Value::Array(result)
+}
+
+fn displayConversations(value: &CoreValue) -> serde_json::Value {
+    let CoreValue::List(items) = value else { return serde_json::json!([]); };
+    let start = items.len().saturating_sub(MAX_CONVERSATIONS);
+    let mut result = Vec::with_capacity(items.len() - start);
+    for item in &items[start..] {
+        let CoreValue::Map(fields) = item else { continue; };
+        result.push(serde_json::json!({
+            "id": boundedText(mapString(fields, "id")),
+            "title": boundedText(mapString(fields, "title")),
+            "characterCardName": boundedText(mapString(fields, "characterCardName")),
+            "group": simpleJson(fields.get("group")),
+            "characterGroupId": simpleJson(fields.get("characterGroupId")),
+        }));
+    }
+    serde_json::Value::Array(result)
 }
 
 /// Bridges a synchronous firmware HTTP callback to its existing Link runtime.
+pub fn openImage(input: &str) -> Result<(), String> {
+    let (request, id) = input.split_once(':').ok_or("无效的图片请求")?;
+    let request = request.parse::<u32>().map_err(|_| "无效的图片请求")?;
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
+    if !session.client.isConnected() { return Err("设备已离线".into()); }
+    let messages = displayMessages(&session.messages.lock().unwrap(), &session.streams.lock().unwrap());
+    if !messages.as_array().into_iter().flatten().any(|m| m["images"].as_array().into_iter().flatten().any(|v| v == id)) {
+        return Err("图片已不在当前对话中".into());
+    }
+    crate::edge_image::start(session.client.clone(), session.chatId.clone(), id.into(), request, &session.runtime);
+    Ok(())
+}
+
+/// Uploads one already bounded image as binary Link data, then sends its Core-owned media link.
+pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() > 512 * 1024 || !matches!(mime.as_str(), "image/png" | "image/jpeg") {
+        return Err("只支持小于 512 KiB 的 PNG/JPEG 图片".into());
+    }
+    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
+    if !session.client.isConnected() { return Err("设备已离线".into()); }
+    if session.sending.swap(true, Ordering::AcqRel) { return Err("请等待当前消息发送完成".into()); }
+    let runtime = session.runtime.clone();
+    runtime.spawn(async move {
+        let result = async {
+            let args = operit_link::CoreValue::Map(std::collections::BTreeMap::from([
+                ("chatId".into(), CoreValue::String(session.chatId.clone())),
+                ("mimeType".into(), CoreValue::String(mime)),
+                ("imageBytes".into(), CoreValue::Bytes(bytes)),
+            ]));
+            let response = session.client.callRouted(CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("registerChatImage"), CORE_INTERNAL_TARGET,
+                "registerChatImage", args,
+            )).await;
+            let link = match response.result.map_err(|e| e.to_string())? {
+                CoreValue::String(link) if link.len() <= 100 => link,
+                _ => return Err("Core 未返回有效的图片引用".into()),
+            };
+            if !link.starts_with("<link type=\"image\" id=\"") { return Err("Core 返回了无效图片引用".into()); }
+            sendImageMessage(&session, link).await
+        }.await;
+        if let Err(error) = &result { *session.error.lock().unwrap() = Some(error.clone()); }
+        *session.sendResult.lock().unwrap() = Some(result);
+        session.sending.store(false, Ordering::Release);
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    });
+    Ok(())
+}
+
+/// Bridges a synchronous firmware callback to its existing Link runtime.
 pub fn send(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
@@ -484,28 +787,7 @@ pub fn send(text: String) -> Result<(), String> {
     *session.error.lock().unwrap() = None;
     let runtime = session.runtime.clone();
     runtime.spawn(async move {
-        let args = operit_link::toCoreValue(serde_json::json!({
-            "promptFunctionType": "CHAT", "roleCardIdOverride": null,
-            "chatIdOverride": session.chatId, "messageText": text,
-            "proxySenderNameOverride": null, "chatProviderIdOverride": null,
-            "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
-            "turnOptions": {"persistTurn": true, "notifyReply": null, "hideUserMessage": false,
-                "disableWarning": false, "chatInputSubmitRequestedHandled": false},
-        }))
-        .unwrap();
-        let response = session
-            .client
-            .callRouted(CoreCallRequest::new(
-                operit_link::nextCoreRouteRequestId("sendUserMessage"),
-                CORE_INTERNAL_TARGET,
-                "sendUserMessage",
-                args,
-            ))
-            .await;
-        let result = response
-            .result
-            .map(|_| ())
-            .map_err(|error| error.to_string());
+        let result = sendImageMessage(&session, text).await;
         if let Err(error) = &result {
             *session.error.lock().unwrap() = Some(error.clone());
         }
@@ -514,6 +796,21 @@ pub fn send(text: String) -> Result<(), String> {
         UI_REVISION.fetch_add(1, Ordering::Relaxed);
     });
     Ok(())
+}
+
+async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), String> {
+    let args = operit_link::toCoreValue(serde_json::json!({
+        "promptFunctionType": "CHAT", "roleCardIdOverride": null,
+        "chatIdOverride": session.chatId, "messageText": text,
+        "proxySenderNameOverride": null, "chatProviderIdOverride": null,
+        "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
+        "turnOptions": {"persistTurn": true, "notifyReply": null, "hideUserMessage": false,
+            "disableWarning": false, "chatInputSubmitRequestedHandled": false},
+    })).unwrap();
+    session.client.callRouted(CoreCallRequest::new(
+        operit_link::nextCoreRouteRequestId("sendUserMessage"), CORE_INTERNAL_TARGET,
+        "sendUserMessage", args,
+    )).await.result.map(|_| ()).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -131,6 +131,9 @@ impl OperitApplication {
         if let Some(discoveryHost) = hostManager.serviceDiscoveryHost.clone() {
             operit_host_api::HostManager::setDefaultServiceDiscoveryHost(discoveryHost);
         }
+        if let Some(host) = hostManager.tcpHost.clone() {
+            operit_host_api::HostManager::setDefaultTcpHost(host);
+        }
         if let Some(serialPortHost) = hostManager.serialPortHost.clone() {
             setDefaultSerialPortHost(serialPortHost);
         }

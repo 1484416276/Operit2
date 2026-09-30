@@ -1,7 +1,7 @@
 use super::*;
 use crate::create_cli_core_application;
 
-use operit_access_runtime::{link_token_hash, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
+use operit_node_runtime::remote::{linkTokenHash, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
 use std::collections::HashMap;
 
 use crate::mdns::MdnsRegistration;
@@ -163,7 +163,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         props.insert("displayName".to_string(), device_display_name.clone());
         props.insert("platform".to_string(), device_info.platform.clone());
         props.insert("model".to_string(), device_info.model.clone());
-        props.insert("tokenHash".to_string(), link_token_hash(&config.token));
+        props.insert("tokenHash".to_string(), linkTokenHash(&config.token));
         props.insert("version".to_string(), "1".to_string());
         let registration = MdnsRegistration::register(port, props)?;
         if !cli_json_mode() {

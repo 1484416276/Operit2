@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../features/announcement/RemoteAnnouncementHost.dart';
+
 import '../screens/OperitMainScreen.dart';
 
 typedef StartupRouteCompleteCallback = void Function();
@@ -99,13 +101,13 @@ class _StartupRouteHostState extends State<StartupRouteHost> {
           return const StartupRouteShell();
         }
         if (_startupRouteCompleted) {
-          return const OperitMainScreen();
+          return const RemoteAnnouncementHost(child: OperitMainScreen());
         }
         final decision = snapshot.data;
         if (decision != null) {
           return decision.builder(context, _completeStartupRoute);
         }
-        return const OperitMainScreen();
+        return const RemoteAnnouncementHost(child: OperitMainScreen());
       },
     );
   }

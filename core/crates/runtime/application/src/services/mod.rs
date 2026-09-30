@@ -14,6 +14,8 @@ pub mod ProviderRuntimeSupportService;
 pub mod RuntimeBrowserService;
 #[path = "RuntimeEventIngressService.rs"]
 pub mod RuntimeEventIngressService;
+#[path = "RemoteAnnouncementService.rs"]
+pub mod RemoteAnnouncementService;
 #[path = "RuntimeHostInfoService.rs"]
 pub mod RuntimeHostInfoService;
 #[path = "RuntimeHostInteractionService.rs"]
@@ -42,6 +44,7 @@ pub use LocalProviderService::*;
 pub use ProviderRuntimeSupportService::*;
 pub use RuntimeBrowserService::*;
 pub use RuntimeEventIngressService::*;
+pub use RemoteAnnouncementService::*;
 pub use RuntimeHostInfoService::*;
 pub use RuntimeHostInteractionService::*;
 pub use RuntimeTerminalService::*;

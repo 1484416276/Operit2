@@ -51,7 +51,7 @@ async fn run() -> Result<(), CliError> {
     AppLogger::set_enable_console_logging(false);
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
-        return tui::run_tui_command(&[]).await.map_err(CliError::internal);
+        return tui::run_tui_command(&[]).await.map_err(map_tui_error);
     }
 
     match args[0].as_str() {
@@ -60,16 +60,24 @@ async fn run() -> Result<(), CliError> {
             Ok(())
         }
         "cli" => cli::run_cli_root(&args[1..]).await.map_err(CliError::user),
-        "tui" => tui::run_tui_command(&args[1..])
-            .await
-            .map_err(CliError::internal),
+        "tui" => tui::run_tui_command(&args[1..]).await.map_err(map_tui_error),
         "install" | "uninstall" => cli::run_cli_root(&args).await.map_err(CliError::user),
-        value if value.starts_with('-') => tui::run_tui_command(&args)
-            .await
-            .map_err(CliError::internal),
+        value if value.starts_with('-') => {
+            tui::run_tui_command(&args).await.map_err(map_tui_error)
+        }
         _ => {
             cli::print_root_usage();
             Ok(())
         }
+    }
+}
+
+/// Classifies TUI startup failures: argument errors surface as user errors,
+/// everything else keeps the internal diagnostics (location and backtrace).
+fn map_tui_error(error: String) -> CliError {
+    if error.starts_with("usage:") {
+        CliError::user(error)
+    } else {
+        CliError::internal(error)
     }
 }

@@ -79,6 +79,10 @@ struct TuiLinkStartupArgs {
 
 /// Runs the local TUI directly against the local Core after completing setup.
 pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{}", tui_usage_text());
+        return Ok(());
+    }
     let (shell_args, link_args) = parse_tui_startup_args(args)?;
     let approval_bridge = TuiApprovalBridge::new();
     let initial_chat_id_cell = Arc::new(StdMutex::new(None::<String>));
@@ -164,9 +168,15 @@ fn tui_toast_host(sender: mpsc::Sender<String>) -> Arc<dyn operit_host_api::Toas
     })
 }
 
+/// Returns the TUI startup usage text, shared by `tui --help` and argument
+/// parsing errors.
+fn tui_usage_text() -> &'static str {
+    "usage: operit2 tui [--link-server --link-bind <addr:port> --link-token <token>] [--link-join <session>] [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]"
+}
+
 /// Splits TUI Link startup arguments from normal shell startup arguments.
 fn parse_tui_startup_args(args: &[String]) -> Result<(ShellArgs, TuiLinkStartupArgs), String> {
-    let usage = "usage: operit2 tui [--link-server --link-bind <addr:port> --link-token <token>] [--link-join <session>] [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]";
+    let usage = tui_usage_text();
     let mut shell_arg_tokens = Vec::new();
     let mut link_args = TuiLinkStartupArgs::default();
     let mut index = 0;

@@ -345,6 +345,97 @@ void main() {
     expect(find.textContaining('before snapshot after snapshot'), findsWidgets);
   });
 
+  testWidgets('retains the list delegate and live stream during width changes', (
+    tester,
+  ) async {
+    final size = ValueNotifier<Size>(const Size(744, 500));
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(false);
+    var listens = 0;
+    var cancels = 0;
+    final stream = StreamController<MarkdownStreamEvent>.broadcast(
+      onListen: () => listens++,
+      onCancel: () => cancels++,
+    );
+    addTearDown(() async {
+      await stream.close();
+      size.dispose();
+      scrollController.dispose();
+      autoScrollToBottom.dispose();
+    });
+    await tester.pumpWidget(
+      _chatArea(
+        message: _aiMessage(parts: const [], stream: stream.stream),
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+        bodyBuilder: (child) => Align(
+          alignment: Alignment.topLeft,
+          child: ValueListenableBuilder<Size>(
+            valueListenable: size,
+            child: child,
+            builder: (context, value, child) => SizedBox(
+              width: value.width,
+              height: value.height,
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    stream
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('before sidebar'));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.textContaining('before sidebar'), findsWidgets);
+    final list = tester.widget<ListView>(find.byType(ListView));
+    final position = scrollController.position;
+    final rendererState = tester.state(find.byType(StreamMarkdownRenderer));
+    final baselineListens = listens;
+    expect(baselineListens, greaterThan(0));
+    for (var cycle = 0; cycle < 3; cycle++) {
+      for (final width in <double>[
+        700,
+        640,
+        600,
+        580,
+        520,
+        580,
+        600,
+        640,
+        744,
+      ]) {
+        size.value = Size(width, 500);
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tester.widget<ListView>(find.byType(ListView)), same(list));
+        expect(scrollController.position, same(position));
+        expect(
+          tester.state(find.byType(StreamMarkdownRenderer)),
+          same(rendererState),
+        );
+        expect(listens, baselineListens);
+        expect(cancels, 0);
+      }
+    }
+    // Height changes must still update the navigator without replacing the list.
+    size.value = const Size(744, 400);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.widget<ListView>(find.byType(ListView)), same(list));
+    expect(
+      tester
+          .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+          .viewportHeight,
+      400,
+    );
+    stream.add(_markdownBlockChunk(' after sidebar'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.textContaining('before sidebar after sidebar'), findsWidgets);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('interpolates the cursor position across a stream line break', (
     tester,
   ) async {
@@ -512,7 +603,11 @@ void main() {
     );
     streamController
       ..add(_markdownBlockStart())
-      ..add(_markdownBlockChunk('first paragraph\n\nsecond paragraph\n\nthird paragraph'));
+      ..add(
+        _markdownBlockChunk(
+          'first paragraph\n\nsecond paragraph\n\nthird paragraph',
+        ),
+      );
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(tester.takeException(), isNull);
@@ -1388,59 +1483,57 @@ Widget _chatArea({
   bool isLoadingDisplayWindow = false,
   double bottomContentInset = 0,
   ValueChanged<bool>? onAutoScrollToBottomChanged,
+  Widget Function(Widget)? bodyBuilder,
 }) {
   final bridge = _ScriptedGeneratedChatBridge();
   final clients = GeneratedCoreProxyClients(bridge);
   addTearDown(bridge.dispose);
+  final chatArea = ChatArea(
+    messages:
+        messages ??
+        (message == null ? const <ChatUiMessage>[] : <ChatUiMessage>[message]),
+    isLoading: isLoading,
+    errorMessage: null,
+    scrollController: scrollController,
+    currentChatId: 'chat',
+    currentCharacterCardAvatarUri: null,
+    clients: clients,
+    packageManager: clients.application.packageManager(),
+    autoScrollToBottomListenable: autoScrollToBottom,
+    hasOlderDisplayHistory: false,
+    hasNewerDisplayHistory: hasNewerDisplayHistory,
+    isLoadingDisplayWindow: isLoadingDisplayWindow,
+    loadLocatorEntries: (chatId, query) async => const [],
+    onRevealMessageForLocator: (timestamp) async => false,
+    onAutoScrollToBottomChanged: onAutoScrollToBottomChanged ?? (_) {},
+    onLoadOlderDisplayWindow: () async {},
+    onLoadNewerDisplayWindow: () async {},
+    onShowLatestDisplayWindow: () async {},
+    onToggleFavoriteMessage: (timestamp, isFavorite) async {},
+    onDeleteMessage: (timestamp) async {},
+    onDeleteMessagesFrom: (timestamp) async => true,
+    onDeleteMessageVariant: (timestamp, variantIndex) async {},
+    onSelectMessageVariant: (timestamp, selectedVariantIndex) async {},
+    onRollbackToMessage: (_) {},
+    onSelectMessageToEdit: (message) {},
+    onRegenerateMessage: (timestamp) async {},
+    onInsertSummary: (_) {},
+    onCreateBranch: (timestamp) async {},
+    onReplyToMessage: (_) {},
+    onPlayVoice: (message) async {},
+    onToggleMultiSelectMode: (_) {},
+    onToggleMessageSelection: (_) {},
+    onRefreshRequested: () async {},
+    bottomContentInset: bottomContentInset,
+    splitMarkdownContent: _splitMarkdownContent,
+  );
   return OperitTheme(
     initialThemePreferenceSnapshot:
         UserPreferencesManager.defaultThemePreferenceSnapshot,
     initialThemeIsReady: false,
     unconfiguredChildEnabled: true,
     hostInteractionHostsEnabled: false,
-    child: Scaffold(
-      body: ChatArea(
-        messages:
-            messages ??
-            (message == null
-                ? const <ChatUiMessage>[]
-                : <ChatUiMessage>[message]),
-        isLoading: isLoading,
-        errorMessage: null,
-        scrollController: scrollController,
-        currentChatId: 'chat',
-        currentCharacterCardAvatarUri: null,
-        clients: clients,
-        packageManager: clients.application.packageManager(),
-        autoScrollToBottomListenable: autoScrollToBottom,
-        hasOlderDisplayHistory: false,
-        hasNewerDisplayHistory: hasNewerDisplayHistory,
-        isLoadingDisplayWindow: isLoadingDisplayWindow,
-        loadLocatorEntries: (chatId, query) async => const [],
-        onRevealMessageForLocator: (timestamp) async => false,
-        onAutoScrollToBottomChanged: onAutoScrollToBottomChanged ?? (_) {},
-        onLoadOlderDisplayWindow: () async {},
-        onLoadNewerDisplayWindow: () async {},
-        onShowLatestDisplayWindow: () async {},
-        onToggleFavoriteMessage: (timestamp, isFavorite) async {},
-        onDeleteMessage: (timestamp) async {},
-        onDeleteMessagesFrom: (timestamp) async => true,
-        onDeleteMessageVariant: (timestamp, variantIndex) async {},
-        onSelectMessageVariant: (timestamp, selectedVariantIndex) async {},
-        onRollbackToMessage: (_) {},
-        onSelectMessageToEdit: (message) {},
-        onRegenerateMessage: (timestamp) async {},
-        onInsertSummary: (_) {},
-        onCreateBranch: (timestamp) async {},
-        onReplyToMessage: (_) {},
-        onPlayVoice: (message) async {},
-        onToggleMultiSelectMode: (_) {},
-        onToggleMessageSelection: (_) {},
-        onRefreshRequested: () async {},
-        bottomContentInset: bottomContentInset,
-        splitMarkdownContent: _splitMarkdownContent,
-      ),
-    ),
+    child: Scaffold(body: bodyBuilder?.call(chatArea) ?? chatArea),
   );
 }
 

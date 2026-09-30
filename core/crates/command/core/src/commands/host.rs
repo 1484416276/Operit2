@@ -37,12 +37,13 @@ pub fn run_host_command(
 }
 
 /// Prints host command usage.
+///
+/// `capabilities` and `paths` are intentionally absent: both subcommands are
+/// hard errors on the core side because host capabilities/paths are not
+/// exposed through core commands (see `run_host_command` and
+/// `core/CRATE_BOUNDARIES.md`).
 fn print_host_usage(output: &mut CoreCommandOutput) {
-    let lines = vec![
-        "operit2 host show",
-        "operit2 host capabilities",
-        "operit2 host paths",
-    ];
+    let lines = vec!["operit2 host show"];
     for line in &lines {
         output.push_stdout_line(line);
     }

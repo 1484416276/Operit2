@@ -79,7 +79,7 @@ fn print_core_usage(output: &mut CoreCommandOutput) {
         "operit2 skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>",
         "operit2 mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|install-github|install-zip|meta|meta-set|describe>",
         "operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
-        "operit2 host <show|capabilities|paths>",
+        "operit2 host <show>",
         "operit2 log <show|package|path|clear>",
         "operit2 local-models <paths|catalog|show|installed|installed-show|install|verify|delete|engine-delete>",
         "operit2 stt <provider-list|provider-model-list|config|transcribe|transcribe-config>",

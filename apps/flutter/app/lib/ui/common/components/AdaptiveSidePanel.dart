@@ -49,9 +49,11 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   double? _dragStartWidth;
   bool _resizing = false;
 
-  /// Builds the responsive side-panel layout from the available constraints.
+  /// Changes only geometry when the available width crosses the breakpoint.
   @override
   Widget build(BuildContext context) {
+    // Retain the content widget across LayoutBuilder's constraint-only frames.
+    final content = widget.child;
     return LayoutBuilder(
       builder: (context, constraints) {
         final useWideLayout = constraints.maxWidth >= widget.breakpoint;
@@ -66,14 +68,13 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
           minimumPanelWidth,
           maximumPanelWidth,
         );
-        if (useWideLayout) {
-          return _buildWideLayout(
-            panelWidth,
-            minimumPanelWidth,
-            maximumPanelWidth,
-          );
-        }
-        return _buildPhoneLayout(panelWidth);
+        return _buildLayout(
+          content: content,
+          useWideLayout: useWideLayout,
+          width: panelWidth,
+          minimum: minimumPanelWidth,
+          maximum: maximumPanelWidth,
+        );
       },
     );
   }
@@ -88,22 +89,40 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
     return rawWidth.clamp(minimum, maximum).toDouble();
   }
 
-  /// Builds the side-by-side layout used at and above the configured breakpoint.
-  Widget _buildWideLayout(double width, double minimum, double maximum) {
+  /// Uses the same ancestry for wide and overlay layouts so neither the chat
+  /// nor the panel is unmounted by a navigation sidebar width animation.
+  Widget _buildLayout({
+    required Widget content,
+    required bool useWideLayout,
+    required double width,
+    required double minimum,
+    required double maximum,
+  }) {
     return Stack(
       clipBehavior: Clip.none,
       children: <Widget>[
         Row(
           children: <Widget>[
-            Expanded(child: widget.child),
+            Expanded(child: content),
             AnimatedContainer(
               duration: _animationDuration,
               curve: Curves.easeOutCubic,
-              width: widget.open ? width : 0,
+              width: useWideLayout && widget.open ? width : 0,
             ),
           ],
         ),
+        if (!useWideLayout && widget.open)
+          Positioned.fill(
+            key: const ValueKey<String>('sidePanelDismissBarrier'),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => widget.onOpenChanged(false),
+              child: const ColoredBox(color: Colors.transparent),
+            ),
+          ),
         AnimatedPositionedDirectional(
+          // The dismiss barrier must not shift the retained panel's Stack slot.
+          key: const ValueKey<String>('sidePanelLayer'),
           duration: _animationDuration,
           curve: Curves.easeOutCubic,
           top: 0,
@@ -114,7 +133,7 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
             clipBehavior: Clip.none,
             children: <Widget>[
               Positioned.fill(child: widget.panel),
-              if (widget.open)
+              if (useWideLayout && widget.open)
                 PositionedDirectional(
                   top: 0,
                   bottom: 0,
@@ -136,7 +155,9 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
                     onDragEnd: _endResize,
                   ),
                 ),
-              if (!widget.open && widget.closedDropTarget != null)
+              if (useWideLayout &&
+                  !widget.open &&
+                  widget.closedDropTarget != null)
                 PositionedDirectional(
                   top: 0,
                   bottom: 0,
@@ -146,33 +167,6 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
                 ),
             ],
           ),
-        ),
-      ],
-    );
-  }
-
-  /// Builds the overlay layout used below the configured breakpoint.
-  Widget _buildPhoneLayout(double width) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: <Widget>[
-        Positioned.fill(child: widget.child),
-        if (widget.open)
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => widget.onOpenChanged(false),
-              child: const ColoredBox(color: Colors.transparent),
-            ),
-          ),
-        AnimatedPositionedDirectional(
-          duration: _animationDuration,
-          curve: Curves.easeOutCubic,
-          top: 0,
-          bottom: 0,
-          end: widget.open ? 0 : -width,
-          width: width,
-          child: widget.panel,
         ),
       ],
     );

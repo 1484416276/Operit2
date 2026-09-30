@@ -371,7 +371,6 @@
 		};
 		3D2A10212D000001003D2A10 /* Build iSH Runtime */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -379,6 +378,12 @@
 			);
 			inputPaths = (
 				"$(PROJECT_DIR)/Runner/ish-root.tar.gz",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/build_ish_ios.sh",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/fetch_sources.py",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0001-operit-managed-runtime-mount.patch",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0002-arm64-context-registers.patch",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0003-fakefs-rebuild-heap-hashtable.patch",
+				"$(PROJECT_DIR)/../../../../tools/ios-runtime/ish/patches/0004-emulator-tlb-task-migration.patch",
 			);
 			name = "Build iSH Runtime";
 			outputFileListPaths = (
@@ -392,10 +397,11 @@
 				"$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libarchive.a",
 				"$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libiSHFakefs.a",
 				"$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/libiSHFchdir.a",
+				"$(PROJECT_DIR)/../apple/ish-build/$(CONFIGURATION)-$(PLATFORM_NAME)/.operit-ish-build-complete",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "OPERIT_REPO_ROOT=\"$PROJECT_DIR/../../../..\"\n/bin/bash \"$OPERIT_REPO_ROOT/tools/ios-runtime/ish/build_ish_ios.sh\" \"$CONFIGURATION\" \"$SDK_NAME\" \"$PLATFORM_NAME\" \"$ARCHS\"\n";
+			shellScript = "OPERIT_REPO_ROOT=\"$PROJECT_DIR/../../../..\"\n/bin/bash \"$OPERIT_REPO_ROOT/tools/ios-runtime/ish/build_ish_ios.sh\" \"$CONFIGURATION\" \"$SDK_NAME\" \"$PLATFORM_NAME\" \"${NATIVE_ARCH_ACTUAL:-$ARCHS}\"\n";
 		};
 		878BE72E0401C0C02F1B9DE5 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;

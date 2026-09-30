@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../common/layout/ResponsiveLayout.dart';
+
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -11,7 +13,6 @@ import '../../common/OperitLogoMark.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../layout/SidebarDockController.dart';
-import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import 'NavigationDrawerAppearance.dart';
 
@@ -692,8 +693,7 @@ class PluginNavigationDrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dockController =
-        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+    final dockController = ResponsiveLayout.usesWideLayoutOf(context)
         ? SidebarDockScope.maybeOf(context)
         : null;
     final shape = BorderRadius.circular(12);
@@ -766,8 +766,7 @@ class _PrimarySidebarDragSource extends StatelessWidget {
   /// Builds a primary sidebar drag source and reorder drop target.
   @override
   Widget build(BuildContext context) {
-    final controller =
-        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+    final controller = ResponsiveLayout.usesWideLayoutOf(context)
         ? SidebarDockScope.maybeOf(context)
         : null;
     if (controller == null) {

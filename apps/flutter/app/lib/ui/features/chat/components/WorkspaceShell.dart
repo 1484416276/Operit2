@@ -4,10 +4,11 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../../common/layout/ResponsiveLayout.dart';
+
 import '../../../common/components/AdaptiveSidePanel.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../main/layout/SidebarDockController.dart';
-import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../viewmodel/WorkspaceFileModels.dart';
 import 'workspace/WorkspaceLayoutMetrics.dart';
 import 'workspace/WorkspacePanel.dart';
@@ -54,14 +55,13 @@ class WorkspaceShell extends StatelessWidget {
   /// Builds the workspace panel with plugins rendered as peer tabs.
   @override
   Widget build(BuildContext context) {
-    final dockController =
-        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+    final dockController = ResponsiveLayout.usesWideLayoutOf(context)
         ? SidebarDockScope.maybeOf(context)
         : null;
     return AdaptiveSidePanel(
       open: workspaceOpen,
       onOpenChanged: onWorkspaceOpenChanged,
-      breakpoint: workspaceTabletBreakpoint,
+      breakpoint: ResponsiveLayout.wideLayoutBreakpoint,
       defaultWidth: workspaceDefaultTabletWidth,
       minWidth: workspaceMinWidth,
       minContentWidth: workspaceMinTabletChatWidth,

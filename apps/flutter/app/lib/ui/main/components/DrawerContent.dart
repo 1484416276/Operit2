@@ -5,6 +5,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../common/layout/ResponsiveLayout.dart';
+
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/logging/ClientLogger.dart';
@@ -17,7 +19,6 @@ import '../../features/chat/components/NewChatIntro.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../layout/SidebarDockController.dart';
-import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
 import '../../window/DetachedChatWindowLauncher.dart';
@@ -1213,9 +1214,7 @@ class _DrawerContentState extends State<DrawerContent> {
                     ),
                     SliverToBoxAdapter(
                       child: SidebarDockEndDropTarget(
-                        controller:
-                            MediaQuery.sizeOf(context).width >=
-                                navigationTabletBreakpoint
+                        controller: ResponsiveLayout.usesWideLayoutOf(context)
                             ? SidebarDockScope.maybeOf(context)
                             : null,
                         location: SidebarDockLocation.primary,

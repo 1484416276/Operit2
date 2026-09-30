@@ -1,10 +1,8 @@
 // ignore_for_file: file_names
 
-import 'dart:math' as math;
-
 import 'package:flutter/widgets.dart';
 
-const double navigationTabletBreakpoint = 600;
+import '../../common/layout/ResponsiveLayout.dart';
 
 /// Reference logical viewport dimensions used as the design baseline for
 /// desktop/multi-column layouts.
@@ -14,20 +12,6 @@ const double navigationDesktopReferenceHeight = 720.0;
 /// Computes the default sidebar width for wide/tablet layouts.
 double resolveTabletSidebarWidth(double viewportWidth) {
   return (viewportWidth * 0.22).clamp(216.0, 272.0).toDouble();
-}
-
-bool useTabletLayoutForWidth(double width) {
-  return width >= navigationTabletBreakpoint;
-}
-
-bool useTabletLayoutForContext(BuildContext context) {
-  return useTabletLayoutForWidth(MediaQuery.sizeOf(context).width);
-}
-
-/// Identifies narrow portrait mobile viewports that use single-column touch layouts.
-bool isPortraitPhoneViewport(Size size) {
-  return size.width < navigationTabletBreakpoint &&
-      size.height >= size.width * 1.15;
 }
 
 /// Resolves the adaptive viewport scale factor across DPI scales and window sizes.
@@ -40,23 +24,31 @@ double resolveViewportScale(Size size) {
   if (size.isEmpty) {
     return 1.0;
   }
-  if (isPortraitPhoneViewport(size)) {
+  if (ResponsiveLayout.isPortraitCompactViewport(size)) {
     if (size.width < 360.0) {
       return (size.width / 360.0).clamp(0.75, 1.0);
     }
     return 1.0;
   }
-  final widthRatio = (size.width / navigationDesktopReferenceWidth).clamp(0.60, 1.0);
-  final heightRatio = (size.height / navigationDesktopReferenceHeight).clamp(0.60, 1.0);
+  final widthRatio = (size.width / navigationDesktopReferenceWidth).clamp(
+    0.60,
+    1.0,
+  );
+  final heightRatio = (size.height / navigationDesktopReferenceHeight).clamp(
+    0.60,
+    1.0,
+  );
   return ((widthRatio + heightRatio) * 0.5).clamp(0.68, 1.0);
 }
 
 /// Wraps the application root to provide responsive desktop viewport scaling.
 class ResponsiveViewportBox extends StatelessWidget {
+  /// Creates the application-wide viewport scaling wrapper.
   const ResponsiveViewportBox({super.key, required this.child});
 
   final Widget child;
 
+  /// Applies the existing scale policy to the application viewport.
   @override
   Widget build(BuildContext context) {
     final rawSize = MediaQuery.sizeOf(context);

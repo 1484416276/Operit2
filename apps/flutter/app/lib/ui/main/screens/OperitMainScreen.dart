@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:desktop_widgets/desktop_widgets.dart';
 
+import '../../common/layout/ResponsiveLayout.dart';
+
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/notifications/NotificationActivationService.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -922,7 +924,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
             currentScreen.title ??
             '';
         final screenSize = MediaQuery.sizeOf(context);
-        final useTabletLayout = useTabletLayoutForWidth(screenSize.width);
+        final useTabletLayout = ResponsiveLayout.usesWideLayout(
+          screenSize.width,
+        );
         final content = Stack(
           children: <Widget>[
             AppContent(
@@ -969,7 +973,9 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                           selectedRouteId: currentRouteEntry.routeId,
                           drawerConversationState: _drawerConversationState,
                           isTabletSidebarExpanded: _isTabletSidebarExpanded,
-                          tabletSidebarWidth: resolveTabletSidebarWidth(screenSize.width),
+                          tabletSidebarWidth: resolveTabletSidebarWidth(
+                            screenSize.width,
+                          ),
                           collapsedTabletSidebarWidth: 56,
                           onNavigationEntrySelected: _navigateToNavigationEntry,
                           onConversationActivated: _activateConversationRoute,

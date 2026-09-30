@@ -3,11 +3,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../../common/layout/ResponsiveLayout.dart';
+
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../../../theme/OperitTheme.dart';
 import '../../../../main/layout/SidebarDockController.dart';
-import 'WorkspaceLayoutMetrics.dart';
 import 'WorkspaceTabModels.dart';
 
 class WorkspaceTabStrip extends StatelessWidget {
@@ -30,7 +31,7 @@ class WorkspaceTabStrip extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final useTermuxTabs =
         defaultTargetPlatform == TargetPlatform.android &&
-        MediaQuery.sizeOf(context).width < workspaceTabletBreakpoint;
+        !ResponsiveLayout.usesWideLayoutOf(context);
     if (useTermuxTabs) {
       return _TermuxWorkspaceTabStrip(
         tabs: tabs,

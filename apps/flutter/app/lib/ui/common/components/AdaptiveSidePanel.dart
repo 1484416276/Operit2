@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../layout/ResponsiveLayout.dart';
+
 /// Hosts a resizable trailing panel on wide layouts and an overlay panel on phones.
 class AdaptiveSidePanel extends StatefulWidget {
   /// Creates a responsive trailing panel around the primary content.
@@ -13,7 +15,7 @@ class AdaptiveSidePanel extends StatefulWidget {
     required this.onOpenChanged,
     required this.panel,
     required this.child,
-    this.breakpoint = 600,
+    this.breakpoint = ResponsiveLayout.wideLayoutBreakpoint,
     this.defaultWidth = 360,
     this.minWidth = 280,
     this.minContentWidth = 320,
@@ -52,11 +54,12 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final minRequiredWidth = math.min(
-          widget.breakpoint,
-          widget.minWidth + widget.minContentWidth,
+        final useWideLayout = ResponsiveLayout.usesSideBySideLayout(
+          constraints.maxWidth,
+          breakpoint: widget.breakpoint,
+          minPanelWidth: widget.minWidth,
+          minContentWidth: widget.minContentWidth,
         );
-        final useWideLayout = constraints.maxWidth >= minRequiredWidth;
         final maximumPanelWidth = useWideLayout
             ? math.max(0.0, constraints.maxWidth - widget.minContentWidth)
             : constraints.maxWidth;

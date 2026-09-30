@@ -8,6 +8,8 @@ import 'package:file_selector/file_selector.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:mime/mime.dart';
 
+import '../../../common/layout/ResponsiveLayout.dart';
+
 import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -26,7 +28,6 @@ import '../components/WorkspaceShell.dart';
 import '../components/style/input/common/MentionSuggestionPanel.dart';
 import '../components/style/input/common/MentionTokenUtils.dart';
 import '../components/style/input/common/PendingQueueMessageItem.dart';
-import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
 import '../speech/LocalSpeechRecorder.dart';
 import '../viewmodel/ChatSelectionTransition.dart';
@@ -2133,8 +2134,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
     }
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
-    final useMainLayoutWorkspace =
-        MediaQuery.sizeOf(context).width >= workspaceTabletBreakpoint;
+    final useMainLayoutWorkspace = ResponsiveLayout.usesWideLayoutOf(context);
     _syncWorkspaceMainLayoutAttachment(
       useMainLayoutWorkspace && _isCurrentMainScreen,
     );

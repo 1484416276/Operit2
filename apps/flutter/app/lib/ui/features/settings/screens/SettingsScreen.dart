@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../common/layout/ResponsiveLayout.dart';
+
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/MainLayoutController.dart';
 import '../../../main/TopBarController.dart';
@@ -12,7 +14,6 @@ import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 import '../components/SettingsCategoryList.dart';
 import '../components/SettingsDetailView.dart';
-import '../components/SettingsLayoutMetrics.dart';
 import '../models/SettingsModels.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -60,7 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final useWideLayout = settingsUseWideLayout(context);
+    final useWideLayout = ResponsiveLayout.usesWideLayoutOf(context);
     if (useWideLayout) {
       return _buildWideSettingsLayout(context);
     }
@@ -101,55 +102,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: <Widget>[
             SizedBox(
               width: categorySidebarWidth,
-          child: OperitGlassSurface(
-            color: sidebarColor,
-            layer: OperitGlassSurfaceLayer.panel,
-            transparentAlpha: 0.035,
-            borderRadius: BorderRadius.zero,
-            border: Border(
-              right: BorderSide(
-                color: colorScheme.outlineVariant.withValues(
-                  alpha: transparentSurface ? 0.18 : 0.45,
+              child: OperitGlassSurface(
+                color: sidebarColor,
+                layer: OperitGlassSurfaceLayer.panel,
+                transparentAlpha: 0.035,
+                borderRadius: BorderRadius.zero,
+                border: Border(
+                  right: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(
+                      alpha: transparentSurface ? 0.18 : 0.45,
+                    ),
+                  ),
+                ),
+                child: SettingsCategoryList(
+                  selectedCategory: _wideSelectedCategory,
+                  onCategorySelected: _selectWideCategory,
                 ),
               ),
             ),
-            child: SettingsCategoryList(
-              selectedCategory: _wideSelectedCategory,
-              onCategorySelected: _selectWideCategory,
-            ),
-          ),
-        ),
-        Expanded(
-          child: AnimatedSwitcher(
-            duration: _detailSwitchDuration,
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            layoutBuilder: (currentChild, previousChildren) {
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[...previousChildren, ?currentChild],
-              );
-            },
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(_detailSwitchOffset, 0),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: _detailSwitchDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                layoutBuilder: (currentChild, previousChildren) {
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[...previousChildren, ?currentChild],
+                  );
+                },
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(_detailSwitchOffset, 0),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: SettingsDetailView(
+                  key: ValueKey<SettingsCategory>(_wideSelectedCategory),
+                  category: _wideSelectedCategory,
+                  onOpenProfile: () =>
+                      _selectWideCategory(SettingsCategory.profile),
                 ),
-              );
-            },
-            child: SettingsDetailView(
-              key: ValueKey<SettingsCategory>(_wideSelectedCategory),
-              category: _wideSelectedCategory,
-              onOpenProfile: () =>
-                  _selectWideCategory(SettingsCategory.profile),
+              ),
             ),
-          ),
-        ),
           ],
         );
       },
@@ -186,7 +187,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       controller.clearTitleContent(owner: this);
       return;
     }
-    final category = settingsUseWideLayout(context)
+    final category = ResponsiveLayout.usesWideLayoutOf(context)
         ? _wideSelectedCategory
         : _phoneSelectedCategory;
     if (category == null) {

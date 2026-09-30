@@ -2,8 +2,9 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../common/layout/ResponsiveLayout.dart';
+
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import 'ArtifactMarketSupport.dart';
 
@@ -128,7 +129,7 @@ class _UnifiedMarketDetailScreenState extends State<UnifiedMarketDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final useWideLayout = useTabletLayoutForContext(context);
+    final useWideLayout = ResponsiveLayout.usesWideLayoutOf(context);
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(

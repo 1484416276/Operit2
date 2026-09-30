@@ -116,7 +116,7 @@ pub fn retry_message(error_text: &str, retry_number: i32) -> String {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AIService: Send + Sync {
-    /// Returns the accumulated uncached input token count.
+    /// Returns the accumulated total input token count, including cached input.
     fn input_token_count(&self) -> i64 {
         0
     }

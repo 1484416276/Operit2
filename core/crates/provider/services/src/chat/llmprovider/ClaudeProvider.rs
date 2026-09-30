@@ -30,6 +30,7 @@ pub struct ClaudeProvider {
     pub model_name: String,
     pub provider_type: String,
     pub enable_tool_call: bool,
+    pub enable_claude_1h_prompt_cache: bool,
     pub custom_headers: Vec<(String, String)>,
     state: Arc<Mutex<ClaudeProviderState>>,
 }
@@ -37,12 +38,15 @@ pub struct ClaudeProvider {
 #[derive(Debug, Default)]
 struct ClaudeProviderState {
     inputTokenCount: i64,
+    uncachedInputTokenCount: i64,
+    cacheCreationInputTokenCount: i64,
     cachedInputTokenCount: i64,
     outputTokenCount: i64,
     cancelled: bool,
 }
 
 impl ClaudeProvider {
+    /// Creates a Claude provider with the default ephemeral prompt-cache lifetime.
     pub fn new(
         api_endpoint: String,
         api_key: String,
@@ -50,6 +54,7 @@ impl ClaudeProvider {
         provider_type: String,
         custom_headers: Vec<(String, String)>,
         enable_tool_call: bool,
+        enable_claude_1h_prompt_cache: bool,
     ) -> Self {
         Self {
             api_endpoint,
@@ -57,6 +62,7 @@ impl ClaudeProvider {
             model_name,
             provider_type,
             enable_tool_call,
+            enable_claude_1h_prompt_cache,
             custom_headers,
             state: Arc::new(Mutex::new(ClaudeProviderState::default())),
         }
@@ -145,6 +151,7 @@ impl ClaudeProvider {
         }
     }
 
+    /// Serializes a Claude request and marks stable prompt-cache boundaries.
     pub fn create_request_body(
         &self,
         request: &SendMessageRequest,
@@ -185,6 +192,7 @@ impl ClaudeProvider {
         Ok(request_object)
     }
 
+    /// Converts prompt turns into Claude system and message blocks.
     pub fn build_messages_and_count_tokens(
         &self,
         chat_history: &[PromptTurn],
@@ -233,20 +241,50 @@ impl ClaudeProvider {
             Value::Array(
                 system_parts
                     .into_iter()
-                    .map(|text| {
-                        json!({
-                            "type": "text",
-                            "text": text,
-                            "cache_control": {"type": "ephemeral"}
-                        })
-                    })
+                    .map(|text| json!({"type": "text", "text": text}))
                     .collect(),
             )
         };
         Ok((system, messages))
     }
 
-    pub fn apply_stable_cache_breakpoints(&self, _request_object: &mut Map<String, Value>) {}
+    /// Marks the final tool, system block, and message block as cache breakpoints.
+    pub fn apply_stable_cache_breakpoints(&self, request_object: &mut Map<String, Value>) {
+        let mut cache_control = json!({"type": "ephemeral"});
+        if self.enable_claude_1h_prompt_cache {
+            cache_control["ttl"] = json!("1h");
+        }
+
+        for key in ["tools", "system"] {
+            if let Some(block) = request_object
+                .get_mut(key)
+                .and_then(Value::as_array_mut)
+                .and_then(|blocks| blocks.last_mut())
+                .and_then(Value::as_object_mut)
+            {
+                block.entry("cache_control".to_string())
+                    .or_insert_with(|| cache_control.clone());
+            }
+        }
+
+        if let Some(block) = request_object
+            .get_mut("messages")
+            .and_then(Value::as_array_mut)
+            .and_then(|messages| {
+                messages.iter_mut().rev().find_map(|message| {
+                    message
+                        .get_mut("content")
+                        .and_then(Value::as_array_mut)
+                        .and_then(|content| {
+                            content.iter_mut().rev().find_map(Value::as_object_mut)
+                        })
+                })
+            })
+        {
+            block.entry("cache_control".to_string())
+                .or_insert(cache_control);
+        }
+    }
 
     fn build_tool_definitions_for_claude(
         &self,
@@ -472,39 +510,42 @@ impl ClaudeProvider {
         Ok(headers)
     }
 
+    /// Sums cache creation tokens from Anthropic lifetime breakdown objects.
+    fn cache_creation_tokens(value: &Value) -> i64 {
+        match value {
+            Value::Number(number) => number.as_i64().unwrap_or(0).max(0),
+            Value::Object(fields) => fields.values().map(Self::cache_creation_tokens).sum(),
+            _ => 0,
+        }
+    }
+
+    /// Merges reported usage components and preserves fields omitted by streaming deltas.
     fn apply_usage(&mut self, usage: Option<&Value>) -> TokenCounts {
-        let cached_input = usage
-            .and_then(|value| {
-                value
-                    .get("cache_read_input_tokens")
-                    .or_else(|| value.pointer("/input_tokens_details/cached_tokens"))
-                    .or_else(|| value.get("cached_tokens"))
-            })
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as i64;
-        let cache_creation = usage
-            .and_then(|value| value.get("cache_creation_input_tokens"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as i64;
-        let input_base = usage
-            .and_then(|value| value.get("input_tokens"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as i64;
-        let input = input_base + cache_creation;
-        let output = usage
-            .and_then(|value| value.get("output_tokens"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0) as i64;
-        let token_counts = TokenCounts {
-            input,
-            cached_input,
-            output,
-        };
-        self.set_token_counts(token_counts.clone());
-        token_counts
+        let mut state = self.state.lock().expect("ClaudeProvider state mutex poisoned");
+        if let Some(usage) = usage {
+            if let Some(input) = usage.get("input_tokens").and_then(Value::as_i64) {
+                state.uncachedInputTokenCount = input.max(0);
+            }
+            if let Some(written) = usage.get("cache_creation_input_tokens") {
+                state.cacheCreationInputTokenCount = Self::cache_creation_tokens(written);
+            } else if let Some(written) = usage.get("cache_creation") {
+                state.cacheCreationInputTokenCount = Self::cache_creation_tokens(written);
+            }
+            if let Some(cached) = usage.get("cache_read_input_tokens").and_then(Value::as_i64) {
+                state.cachedInputTokenCount = cached.max(0);
+            }
+            if let Some(output) = usage.get("output_tokens").and_then(Value::as_i64) {
+                state.outputTokenCount = output.max(0);
+            }
+        }
+        state.inputTokenCount = state.uncachedInputTokenCount
+            + state.cacheCreationInputTokenCount
+            + state.cachedInputTokenCount;
+        TokenCounts {
+            input: state.inputTokenCount,
+            cached_input: state.cachedInputTokenCount,
+            output: state.outputTokenCount,
+        }
     }
 }
 
@@ -532,12 +573,14 @@ impl AIService for ClaudeProvider {
     fn provider_model(&self) -> String {
         format!("{}:{}", self.provider_type, self.model_name)
     }
+    /// Clears all usage components without changing cancellation state.
     fn reset_token_counts(&mut self) {
-        self.set_token_counts(TokenCounts {
-            input: 0,
-            cached_input: 0,
-            output: 0,
-        });
+        let mut state = self.state.lock().expect("ClaudeProvider state mutex poisoned");
+        state.inputTokenCount = 0;
+        state.uncachedInputTokenCount = 0;
+        state.cacheCreationInputTokenCount = 0;
+        state.cachedInputTokenCount = 0;
+        state.outputTokenCount = 0;
     }
     fn cancel_streaming(&mut self) {
         self.set_cancelled(true);
@@ -839,7 +882,9 @@ impl ClaudeProvider {
                 if !text.is_empty() {
                     chunks.push(text);
                 }
-                token_counts = self.apply_usage(json_response.get("usage"));
+                if let Some(usage) = json_response.get("usage") {
+                    token_counts = self.apply_usage(Some(usage));
+                }
             }
         }
         if is_in_tool_call {
@@ -1291,6 +1336,8 @@ fn xml_unescape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::ClaudeProvider;
+    use crate::chat::llmprovider::AIService::AIService;
+    use serde_json::json;
     use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
     use operit_util::ImagePoolManager::ImagePoolManager;
 
@@ -1303,7 +1350,79 @@ mod tests {
             "CLAUDE".to_string(),
             Vec::new(),
             true,
+            false,
         )
+    }
+
+    /// Verifies cache markers occupy only the three stable prefix boundaries.
+    #[test]
+    fn cache_markers_use_last_tool_system_and_message_blocks() {
+        let provider = test_provider();
+        let mut body = json!({
+            "tools": [{"name": "first"}, {"name": "last"}],
+            "system": [{"type": "text", "text": "first"}, {"type": "text", "text": "last"}],
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "result"},
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "done"}
+                ]}
+            ]
+        });
+        provider.apply_stable_cache_breakpoints(body.as_object_mut().expect("request object"));
+        for path in ["/tools/1", "/system/1", "/messages/1/content/1"] {
+            assert_eq!(
+                body.pointer(path).expect("block")["cache_control"],
+                json!({"type": "ephemeral"})
+            );
+        }
+        for path in [
+            "/tools/0",
+            "/system/0",
+            "/messages/0/content/0",
+            "/messages/1/content/0",
+        ] {
+            assert!(body.pointer(path).expect("block").get("cache_control").is_none());
+        }
+        let marked = body.clone();
+        provider.apply_stable_cache_breakpoints(body.as_object_mut().expect("request object"));
+        assert_eq!(body, marked);
+    }
+
+    /// Verifies one-hour markers preserve explicitly supplied cache controls.
+    #[test]
+    fn one_hour_cache_preserves_existing_markers() {
+        let mut provider = test_provider();
+        provider.enable_claude_1h_prompt_cache = true;
+        let mut body = json!({
+            "system": [{"type": "text", "text": "system", "cache_control": {"type": "ephemeral", "ttl": "5m"}}],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+        });
+        provider.apply_stable_cache_breakpoints(body.as_object_mut().expect("request object"));
+        assert_eq!(body["system"][0]["cache_control"]["ttl"], "5m");
+        assert_eq!(body["messages"][0]["content"][0]["cache_control"]["ttl"], "1h");
+        let mut empty = json!({"messages": [], "tools": [], "system": []});
+        provider.apply_stable_cache_breakpoints(empty.as_object_mut().expect("request object"));
+        assert_eq!(empty, json!({"messages": [], "tools": [], "system": []}));
+    }
+
+    /// Verifies streaming usage updates retain cache counts without adding repeated writes.
+    #[test]
+    fn partial_usage_preserves_cache_components() {
+        let mut provider = test_provider();
+        let usage = json!({"input_tokens": 20, "cache_creation_input_tokens": 30,
+            "cache_read_input_tokens": 100, "output_tokens": 1});
+        assert_eq!(provider.apply_usage(Some(&usage)).input, 150);
+        let counts = provider.apply_usage(Some(&json!({"output_tokens": 12})));
+        assert_eq!((counts.input, counts.cached_input, counts.output), (150, 100, 12));
+        assert_eq!(provider.apply_usage(Some(&usage)).input, 150);
+        let counts = provider.apply_usage(Some(&json!({
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0
+        })));
+        assert_eq!((counts.input, counts.cached_input), (20, 0));
+        provider.reset_token_counts();
+        assert_eq!(provider.apply_usage(None).input, 0);
     }
 
     /// Verifies image media links become Claude base64 image blocks.

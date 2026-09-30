@@ -716,6 +716,7 @@ impl ModelConfigManager {
             customHeaders: provider.customHeaders.clone(),
             requestLimitPerMinute: provider.requestLimitPerMinute,
             maxConcurrentRequests: provider.maxConcurrentRequests,
+            enableClaude1hPromptCache: provider.enableClaude1hPromptCache,
             pricing,
             context,
             capabilities,

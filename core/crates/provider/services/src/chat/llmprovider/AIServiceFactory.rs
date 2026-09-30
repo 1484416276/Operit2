@@ -91,6 +91,7 @@ pub enum ProviderCreateParams {
         custom_headers: BTreeMap<String, String>,
         provider_type: ApiProviderType,
         enable_tool_call: bool,
+        enable_claude_1h_prompt_cache: bool,
     },
     GeminiProvider {
         api_endpoint: String,
@@ -340,6 +341,7 @@ impl AIServiceFactory {
                     custom_headers,
                     provider_type,
                     enable_tool_call,
+                    config.enableClaude1hPromptCache,
                 )
             }
             ApiProviderType::GOOGLE | ApiProviderType::GEMINI_GENERIC => Self::gemini_provider(
@@ -731,6 +733,7 @@ impl AIServiceFactory {
         custom_headers: BTreeMap<String, String>,
         provider_type: ApiProviderType,
         enable_tool_call: bool,
+        enable_claude_1h_prompt_cache: bool,
     ) -> Result<ProviderServiceSpec, AiServiceError> {
         Ok(ProviderServiceSpec {
             kind: ProviderServiceKind::ClaudeProvider,
@@ -741,6 +744,7 @@ impl AIServiceFactory {
                 custom_headers,
                 provider_type,
                 enable_tool_call,
+                enable_claude_1h_prompt_cache,
             },
         })
     }

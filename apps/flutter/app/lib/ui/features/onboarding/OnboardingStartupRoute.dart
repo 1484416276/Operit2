@@ -874,6 +874,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
           customHeaders: provider.customHeaders,
           requestLimitPerMinute: provider.requestLimitPerMinute,
           maxConcurrentRequests: provider.maxConcurrentRequests,
+          enableClaude1HPromptCache: provider.enableClaude1HPromptCache,
           thinkingConfigurations: provider.thinkingConfigurations,
           thinkingOptionId: provider.thinkingOptionId,
           models: provider.models,

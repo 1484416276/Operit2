@@ -1693,6 +1693,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelRequestLimit => '每分钟请求数';
 
   @override
+  String get settingsModelClaude1hPromptCache => 'Claude 1 小时提示缓存';
+
+  @override
+  String get settingsModelClaude1hPromptCacheDescription =>
+      '将工具定义、系统提示和对话前缀的缓存有效期设为 1 小时。更长的缓存有效期可能增加缓存写入费用。';
+
+  @override
   String get settingsModelMaxConcurrent => '最大并发请求';
 
   @override

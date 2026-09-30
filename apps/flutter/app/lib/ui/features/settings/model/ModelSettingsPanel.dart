@@ -189,6 +189,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           customHeaders: result.customHeaders,
           requestLimitPerMinute: result.requestLimitPerMinute,
           maxConcurrentRequests: result.maxConcurrentRequests,
+          enableClaude1HPromptCache: result.enableClaude1hPromptCache,
           thinkingConfigurations:
               result.thinkingConfigurations ?? provider.thinkingConfigurations,
           thinkingOptionId: provider.thinkingOptionId,
@@ -248,6 +249,7 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           customHeaders: saveResult.customHeaders,
           requestLimitPerMinute: saveResult.requestLimitPerMinute,
           maxConcurrentRequests: saveResult.maxConcurrentRequests,
+          enableClaude1HPromptCache: saveResult.enableClaude1hPromptCache,
           thinkingConfigurations:
               saveResult.thinkingConfigurations ??
               provider.thinkingConfigurations,
@@ -746,6 +748,7 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
     required this.customHeaders,
     required this.requestLimitPerMinute,
     required this.maxConcurrentRequests,
+    required this.enableClaude1hPromptCache,
     required this.thinkingConfigurations,
   });
 
@@ -756,6 +759,7 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
   final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
+  final bool enableClaude1hPromptCache;
   final String? thinkingConfigurations;
 }
 
@@ -809,6 +813,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   late List<_ThinkingRuleEditor> _thinkingRules;
   String? _thinkingConfigError;
   bool _thinkingRulesChanged = false;
+  bool _enableClaude1hPromptCache = false;
   String? _selectedProviderTypeId;
   core_proxy.CodexSessionStatus? _codexStatus;
 
@@ -829,6 +834,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
       text: (provider?.maxConcurrentRequests ?? 1).toString(),
     );
     if (provider != null) {
+      _enableClaude1hPromptCache = provider.enableClaude1HPromptCache;
       _selectedProviderTypeId = provider.providerTypeId;
       if (provider.providerTypeId == 'OPENAI_CODEX') {
         _endpointController.text =
@@ -1049,6 +1055,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
         customHeaders: _customHeadersController.text,
         requestLimitPerMinute: int.parse(_requestLimitController.text),
         maxConcurrentRequests: int.parse(_maxConcurrentController.text),
+        enableClaude1hPromptCache: _enableClaude1hPromptCache,
         thinkingConfigurations: thinkingConfigurations,
       ),
     );
@@ -1126,12 +1133,12 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                   suffixIcon: _isCodexProvider
                       ? const Icon(Icons.lock_outline, size: 20)
                       : (endpointOptions.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: l10n.settingsModelApiEndpoint,
-                              icon: const Icon(Icons.arrow_drop_down_rounded),
-                              onPressed: _showEndpointOptionsDialog,
-                            )),
+                            ? null
+                            : IconButton(
+                                tooltip: l10n.settingsModelApiEndpoint,
+                                icon: const Icon(Icons.arrow_drop_down_rounded),
+                                onPressed: _showEndpointOptionsDialog,
+                              )),
                 ),
                 if (_isCodexProvider)
                   _CodexLoginField(
@@ -1188,6 +1195,19 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                           ),
                         ],
                       ),
+                      if (_selectedProviderTypeId == 'ANTHROPIC' ||
+                          _selectedProviderTypeId == 'ANTHROPIC_GENERIC')
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(l10n.settingsModelClaude1hPromptCache),
+                          subtitle: Text(
+                            l10n.settingsModelClaude1hPromptCacheDescription,
+                          ),
+                          value: _enableClaude1hPromptCache,
+                          onChanged: (value) => setState(() {
+                            _enableClaude1hPromptCache = value;
+                          }),
+                        ),
                       if (editing) ...<Widget>[
                         const SizedBox(height: 8),
                         _ThinkingRulesEditor(
@@ -5396,9 +5416,7 @@ class _CheckableCapabilityChip extends StatelessWidget {
         ? activeBorder
         : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.35 : 0.5);
 
-    final textColor = checked
-        ? activeText
-        : colorScheme.onSurfaceVariant;
+    final textColor = checked ? activeText : colorScheme.onSurfaceVariant;
 
     return Tooltip(
       message: tooltip,

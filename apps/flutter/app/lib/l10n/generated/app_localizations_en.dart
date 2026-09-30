@@ -1754,6 +1754,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelRequestLimit => 'Requests per minute';
 
   @override
+  String get settingsModelClaude1hPromptCache => 'Claude 1-hour prompt cache';
+
+  @override
+  String get settingsModelClaude1hPromptCacheDescription =>
+      'Use a 1-hour cache lifetime for tool definitions, system prompts, and conversation prefixes. Longer-lived cache writes may cost more.';
+
+  @override
   String get settingsModelMaxConcurrent => 'Max concurrent requests';
 
   @override

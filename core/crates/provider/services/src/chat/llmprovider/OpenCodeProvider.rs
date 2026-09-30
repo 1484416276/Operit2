@@ -251,6 +251,7 @@ impl OpenCodeProvider {
                     "OPENCODE".to_string(),
                     headers.clone(),
                     enable_tool_call,
+                    false,
                 ),
             }),
             ApiProviderType::GEMINI_GENERIC => OpenCodeDelegate::Gemini(

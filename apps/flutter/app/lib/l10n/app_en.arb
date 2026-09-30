@@ -838,6 +838,8 @@
   "settingsModelRepetitionPenalty": "Repetition penalty",
   "settingsModelRepetitionPenaltyDescription": "Further reduces repeated output. 1.0 means no penalty.",
   "settingsModelRequestLimit": "Requests per minute",
+  "settingsModelClaude1hPromptCache": "Claude 1-hour prompt cache",
+  "settingsModelClaude1hPromptCacheDescription": "Use a 1-hour cache lifetime for tool definitions, system prompts, and conversation prefixes. Longer-lived cache writes may cost more.",
   "settingsModelMaxConcurrent": "Max concurrent requests",
   "settingsModelContextLength": "Context length",
   "settingsModelMaxContextLength": "Max context length",

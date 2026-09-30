@@ -549,6 +549,9 @@ pub struct ProviderProfile {
     pub customHeaders: String,
     pub requestLimitPerMinute: i32,
     pub maxConcurrentRequests: i32,
+    /// Requests a one-hour lifetime for Claude prompt-cache breakpoints.
+    #[serde(default)]
+    pub enableClaude1hPromptCache: bool,
     pub thinkingConfigurations: String,
     pub thinkingOptionId: String,
     pub models: Vec<ModelProfile>,
@@ -572,6 +575,7 @@ impl ProviderProfile {
             customHeaders: "{}".to_string(),
             requestLimitPerMinute: 0,
             maxConcurrentRequests: 0,
+            enableClaude1hPromptCache: false,
             thinkingConfigurations: defaultThinkingConfigurations(&providerTypeName),
             thinkingOptionId: String::new(),
             models: Vec::new(),
@@ -596,6 +600,7 @@ pub struct ResolvedModelConfig {
     pub customHeaders: String,
     pub requestLimitPerMinute: i32,
     pub maxConcurrentRequests: i32,
+    pub enableClaude1hPromptCache: bool,
     pub pricing: Option<ModelPricing>,
     pub context: ModelContextSpec,
     pub capabilities: ModelCapabilities,

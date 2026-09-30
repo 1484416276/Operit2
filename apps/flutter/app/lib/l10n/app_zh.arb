@@ -831,6 +831,8 @@
   "settingsModelRepetitionPenalty": "Repetition penalty",
   "settingsModelRepetitionPenaltyDescription": "进一步降低重复，1.0 表示不惩罚。",
   "settingsModelRequestLimit": "每分钟请求数",
+  "settingsModelClaude1hPromptCache": "Claude 1 小时提示缓存",
+  "settingsModelClaude1hPromptCacheDescription": "将工具定义、系统提示和对话前缀的缓存有效期设为 1 小时。更长的缓存有效期可能增加缓存写入费用。",
   "settingsModelMaxConcurrent": "最大并发请求",
   "settingsModelContextLength": "上下文长度",
   "settingsModelMaxContextLength": "最大上下文长度",

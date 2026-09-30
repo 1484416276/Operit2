@@ -3224,6 +3224,18 @@ abstract class AppLocalizations {
   /// **'Requests per minute'**
   String get settingsModelRequestLimit;
 
+  /// No description provided for @settingsModelClaude1hPromptCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Claude 1-hour prompt cache'**
+  String get settingsModelClaude1hPromptCache;
+
+  /// No description provided for @settingsModelClaude1hPromptCacheDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a 1-hour cache lifetime for tool definitions, system prompts, and conversation prefixes. Longer-lived cache writes may cost more.'**
+  String get settingsModelClaude1hPromptCacheDescription;
+
   /// No description provided for @settingsModelMaxConcurrent.
   ///
   /// In en, this message translates to:

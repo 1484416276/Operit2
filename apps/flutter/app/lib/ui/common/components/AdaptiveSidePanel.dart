@@ -100,6 +100,9 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
       clipBehavior: Clip.none,
       children: <Widget>[
         Row(
+          // Positioned chat bodies must fill the viewport, not shrink to
+          // their non-positioned overlays and then be vertically centered.
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Expanded(child: content),
             AnimatedContainer(

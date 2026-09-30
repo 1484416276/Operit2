@@ -35,6 +35,9 @@ MSVC x64 and ARM64 components
 LLVM clang at C:\Program Files\LLVM\bin\clang.exe
 ```
 
+The GNU toolchain is not a supported alternative; see
+"Windows GNU Toolchain Troubleshooting" below if you must use it.
+
 Linux desktop App builds:
 
 ```text
@@ -64,6 +67,63 @@ Required keys:
 GITHUB_TOKEN
 GITHUB_API_URL
 ```
+
+## Windows GNU Toolchain Troubleshooting
+
+The Windows requirements above ask for the MSVC toolchain. Building with the
+GNU toolchain (`x86_64-pc-windows-gnu`) instead hits a chain of failures whose
+error messages do not point at the fix. The symptoms and fixes below were
+recorded from an actual build session (rustup `stable-x86_64-pc-windows-gnu`;
+this section only covers x86_64).
+
+### Missing `as.exe` in the rustup self-contained directory
+
+The rustup GNU toolchain ships a minimal
+`lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained\` directory without a
+working assembler (`ld.exe` and `dlltool.exe` are present), so link steps that
+go through `dlltool`-generated import libraries fail.
+
+Fix: copy `as.exe` and `ar.exe` from the MSYS2 `mingw-w64-x86_64-binutils`
+package into the self-contained directory. The directory is managed by rustup,
+so re-apply this after every `rustup update`.
+
+### The bundled `gcc.exe` cannot compile C sources
+
+The self-contained directory ships both `gcc.exe` and
+`x86_64-w64-mingw32-gcc.exe`; they are the same linker driver, and its bundled
+notice states it cannot compile C:
+
+```text
+gcc.exe contained in this folder cannot be used for compiling C files - it is
+only used as a linker. In order to be able to compile projects containing C
+code use the GCC provided by MinGW or Cygwin.
+```
+
+Crates that compile C code through `cc` therefore fail even though a GCC
+binary exists under both names.
+
+Fix: point `cc` at a real MinGW or Cygwin GCC (for example, prefix the MSYS2
+`mingw64\bin` directory to `PATH` or set `CC`), or switch to the MSVC
+toolchain as the requirements section specifies.
+
+### Missing DLLs: `libintl-8.dll`, `libiconv-2.dll`, `zlib1.dll`, `libzstd.dll`
+
+If `as.exe` was copied into the self-contained directory (instead of using an
+MSYS2 `mingw64\bin` on `PATH`, which carries all of its runtime DLLs), it may
+still fail to start because it depends on `libintl-8.dll`, which depends on
+`libiconv-2.dll`; similar gaps appear for `zlib1.dll` and `libzstd.dll`.
+
+Fix: copy the runtime DLLs shipped by the matching MSYS2 packages
+(`mingw-w64-x86_64-gettext-runtime`, `mingw-w64-x86_64-libiconv`,
+`mingw-w64-x86_64-zlib`, `mingw-w64-x86_64-zstd`) into the self-contained
+directory, including transitive dependencies such as `libcharset-1.dll` and
+`libasprintf-0.dll`. To enumerate a binary's DLL imports and chase missing
+ones, run `llvm-objdump --private-headers <file>`; the rustup toolchain ships
+`llvm-objdump.exe` one directory above self-contained. Re-apply after
+`rustup update`.
+
+The MSVC toolchain (see Requirements) avoids this entire class of problems
+and remains the supported configuration for Windows builds.
 
 ## Pinned Build Inputs and Source of Truth
 

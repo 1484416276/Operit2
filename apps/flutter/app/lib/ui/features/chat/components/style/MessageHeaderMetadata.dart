@@ -70,7 +70,7 @@ String formatMessageStatsText(
   return parts.join(' · ');
 }
 
-/// Formats input, cached input (with hit rate), output tokens, and token generation speed.
+/// Formats input, output tokens, cached input (with hit rate), and token generation speed.
 String formatCompactTokenStats(
   ChatUiMessage message, {
   AppLocalizations? l10n,
@@ -91,9 +91,9 @@ String formatCompactTokenStats(
   final outputText = formatCompactTokenCount(message.outputTokens);
   final speedText = formatTokenSpeed(message);
   if (speedText.isEmpty) {
-    return '↑$inputText ($cachedLabel) ↓$outputText';
+    return '↑$inputText ↓$outputText ($cachedLabel)';
   }
-  return '↑$inputText ($cachedLabel) ↓$outputText $speedText';
+  return '↑$inputText ↓$outputText ($cachedLabel) $speedText';
 }
 
 /// Formats the cache hit rate percentage (e.g., "70%", "0%").
@@ -135,7 +135,7 @@ String formatCompactTimingStats(ChatUiMessage message) {
   }
   final waitText = formatDurationSeconds(message.waitDurationMs);
   final outputText = formatDurationSeconds(message.outputDurationMs);
-  return '⏱ $waitText+$outputText';
+  return '◷ $waitText+$outputText';
 }
 
 /// Formats token output speed in tokens per second (e.g., "25.4 t/s", "120 t/s").

@@ -143,13 +143,108 @@ class _DrawerContentState extends State<DrawerContent> {
   @override
   void didUpdateWidget(covariant DrawerContent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final previousList = _pendingOrderedHistories ?? oldWidget.histories;
+    if (previousList.isNotEmpty &&
+        widget.histories.length == previousList.length + 1) {
+      final previousIds = previousList.map((item) => item.id).toSet();
+      core_proxy.ChatHistoryListItem? added;
+      for (final item in widget.histories) {
+        if (!previousIds.contains(item.id)) {
+          added = item;
+          break;
+        }
+      }
+      if (added != null) {
+        final addedSectionKey = _characterSectionKey(added);
+        final addedGroupKey = _groupSectionKey(addedSectionKey, added);
+        final anchorIndex = previousList.indexWhere((item) {
+          final sectionKey = _characterSectionKey(item);
+          return sectionKey == addedSectionKey &&
+              _groupSectionKey(sectionKey, item) == addedGroupKey;
+        });
+        if (anchorIndex != -1) {
+          final groupItems = previousList.where((item) {
+            final sectionKey = _characterSectionKey(item);
+            return sectionKey == addedSectionKey &&
+                _groupSectionKey(sectionKey, item) == addedGroupKey;
+          }).toList(growable: false);
+          final groupPinned =
+              groupItems.isNotEmpty && groupItems.every((item) => item.pinned);
+          final latestById = <String, core_proxy.ChatHistoryListItem>{
+            for (final item in widget.histories) item.id: item,
+          };
+          final reordered = <core_proxy.ChatHistoryListItem>[];
+          for (var i = 0; i < previousList.length; i += 1) {
+            if (i == anchorIndex) {
+              reordered.add(added);
+            }
+            final latest = latestById[previousList[i].id];
+            if (latest != null) {
+              reordered.add(latest);
+            }
+          }
+          unawaited(
+            _preserveGroupPositionForNewChat(reordered, added, groupPinned),
+          );
+          return;
+        }
+      }
+    }
     final pending = _pendingOrderedHistories;
-    if (pending != null && _sameHistoryOrder(pending, widget.histories)) {
+    if (pending != null &&
+        (pending.length != widget.histories.length ||
+            _sameHistoryOrder(pending, widget.histories))) {
       _pendingOrderedHistories = null;
     }
     if (oldWidget.errorMessage != widget.errorMessage &&
         _errorMessage != null) {
       _errorMessage = null;
+    }
+  }
+
+  Future<void> _preserveGroupPositionForNewChat(
+    List<core_proxy.ChatHistoryListItem> reordered,
+    core_proxy.ChatHistoryListItem added,
+    bool groupPinned,
+  ) async {
+    final updatedHistories = <core_proxy.ChatHistoryListItem>[];
+    for (var index = 0; index < reordered.length; index += 1) {
+      final history = reordered[index];
+      final isAdded = history.id == added.id;
+      updatedHistories.add(
+        core_proxy.ChatHistoryListItem(
+          id: history.id,
+          title: history.title,
+          updatedAt: history.updatedAt,
+          group: history.group,
+          displayOrder: index,
+          workspaceId: history.workspaceId,
+          workspaceName: history.workspaceName,
+          characterCardName: history.characterCardName,
+          characterGroupId: history.characterGroupId,
+          locked: history.locked,
+          pinned: isAdded && groupPinned ? true : history.pinned,
+        ),
+      );
+    }
+    _pendingOrderedHistories = updatedHistories;
+    final updatedAdded = updatedHistories.firstWhere(
+      (item) => item.id == added.id,
+    );
+    try {
+      await _chatCoreProxy.updateChatOrderAndGroup(
+        reorderedHistories: updatedHistories,
+        movedItem: updatedAdded,
+        targetGroup: added.group,
+      );
+      if (groupPinned && !added.pinned) {
+        await _chatCoreProxy.updateChatPinned(
+          chatId: added.id,
+          pinned: true,
+        );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to preserve group order for new chat: $error\n$stackTrace');
     }
   }
 
@@ -173,7 +268,8 @@ class _DrawerContentState extends State<DrawerContent> {
       final rightItem = right[index];
       if (leftItem.id != rightItem.id ||
           leftItem.group != rightItem.group ||
-          leftItem.displayOrder != rightItem.displayOrder) {
+          leftItem.displayOrder != rightItem.displayOrder ||
+          leftItem.pinned != rightItem.pinned) {
         return false;
       }
     }
@@ -411,6 +507,223 @@ class _DrawerContentState extends State<DrawerContent> {
       return;
     }
     await _deleteConversation(history);
+  }
+
+  Future<void> _createConversationInGroup(_HistoryGroupSection group) async {
+    if (group.histories.isEmpty) {
+      return;
+    }
+    final template = group.histories.first;
+    final rawGroup = template.group?.trim();
+    final targetGroup = (rawGroup == null || rawGroup.isEmpty) ? null : rawGroup;
+    setState(() {
+      _errorMessage = null;
+      if (_collapsedGroupSections.remove(group.key)) {
+        _rememberExpansionState();
+      }
+    });
+    newChatIntroArmed.value = true;
+    try {
+      await _chatCoreProxy.createNewChat(
+        characterCardName: template.characterCardName,
+        group: targetGroup,
+        inheritGroupFromCurrent: false,
+        setAsCurrentChat: true,
+        characterGroupId: template.characterGroupId,
+      );
+      widget.onConversationActivated();
+    } catch (error, stackTrace) {
+      newChatIntroArmed.value = false;
+      debugPrint('Failed to create chat in group: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> _showRenameGroupDialog(_HistoryGroupSection group) async {
+    final newName = await showDialog<String>(
+      context: context,
+      useRootNavigator: true,
+      builder: (context) => RenameGroupDialog(initialName: group.label),
+    );
+    final normalized = newName?.trim();
+    if (!mounted || normalized == null || normalized.isEmpty || normalized == group.label) {
+      return;
+    }
+    await _renameGroup(group, normalized);
+  }
+
+  Future<void> _renameGroup(
+    _HistoryGroupSection group,
+    String newGroupName,
+  ) async {
+    if (group.histories.isEmpty) {
+      return;
+    }
+    final groupIds = group.histories.map((item) => item.id).toSet();
+    setState(() {
+      _errorMessage = null;
+      final first = group.histories.first;
+      final sectionKey = _characterSectionKey(first);
+      final newGroupKey = 'group::$sectionKey::$newGroupName';
+      if (_collapsedGroupSections.remove(group.key)) {
+        _collapsedGroupSections.add(newGroupKey);
+        _rememberExpansionState();
+      }
+    });
+    try {
+      var currentList = List<core_proxy.ChatHistoryListItem>.of(_histories);
+      for (final target in group.histories) {
+        final updated = <core_proxy.ChatHistoryListItem>[];
+        for (var i = 0; i < currentList.length; i += 1) {
+          final item = currentList[i];
+          updated.add(
+            core_proxy.ChatHistoryListItem(
+              id: item.id,
+              title: item.title,
+              updatedAt: item.updatedAt,
+              group: groupIds.contains(item.id) ? newGroupName : item.group,
+              displayOrder: i,
+              workspaceId: item.workspaceId,
+              workspaceName: item.workspaceName,
+              characterCardName: item.characterCardName,
+              characterGroupId: item.characterGroupId,
+              locked: item.locked,
+              pinned: item.pinned,
+            ),
+          );
+        }
+        currentList = updated;
+        final moved = updated.firstWhere((item) => item.id == target.id);
+        if (mounted) {
+          setState(() {
+            _pendingOrderedHistories = updated;
+          });
+        }
+        await _chatCoreProxy.updateChatOrderAndGroup(
+          reorderedHistories: updated,
+          movedItem: moved,
+          targetGroup: newGroupName,
+        );
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to rename group: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> _toggleGroupPinned(_HistoryGroupSection group) async {
+    if (group.histories.isEmpty) {
+      return;
+    }
+    final nextPinned = !group.isPinned;
+    final groupIds = group.histories.map((item) => item.id).toSet();
+    final sectionKey = _characterSectionKey(group.histories.first);
+    setState(() {
+      _errorMessage = null;
+    });
+    try {
+      if (nextPinned) {
+        final reordered = <core_proxy.ChatHistoryListItem>[];
+        var inserted = false;
+        for (final item in _histories) {
+          if (!inserted && _characterSectionKey(item) == sectionKey) {
+            for (final groupItem in _histories) {
+              if (groupIds.contains(groupItem.id)) {
+                reordered.add(groupItem);
+              }
+            }
+            inserted = true;
+          }
+          if (!groupIds.contains(item.id)) {
+            reordered.add(item);
+          }
+        }
+        final firstMoved = group.histories.first;
+        await _updateConversationOrder(
+          reordered,
+          firstMoved,
+          firstMoved.group,
+          optimistic: true,
+        );
+      }
+      for (final item in group.histories) {
+        if (item.pinned != nextPinned) {
+          await _chatCoreProxy.updateChatPinned(
+            chatId: item.id,
+            pinned: nextPinned,
+          );
+        }
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to update group pinned state: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> _showDeleteGroupDialog(_HistoryGroupSection group) async {
+    if (group.histories.isEmpty) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (context) => DeleteGroupDialog(
+        groupName: group.label,
+        count: group.historyCount,
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+    await _deleteGroup(group);
+  }
+
+  Future<void> _deleteGroup(_HistoryGroupSection group) async {
+    setState(() {
+      _errorMessage = null;
+    });
+    try {
+      var hasLocked = false;
+      for (final item in group.histories) {
+        if (item.locked) {
+          hasLocked = true;
+          continue;
+        }
+        final deleted = await _chatCoreProxy.deleteChatHistory(chatId: item.id);
+        if (!deleted) {
+          hasLocked = true;
+        }
+      }
+      if (hasLocked && mounted) {
+        final l10n = AppLocalizations.of(context)!;
+        setState(() {
+          _errorMessage = l10n.chatLockedCannotDelete;
+        });
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Failed to delete group: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
   }
 
   /// Shows conversation actions enabled within the current character section.
@@ -968,7 +1281,7 @@ class _DrawerContentState extends State<DrawerContent> {
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(
                       0,
-                      30,
+                      26,
                       _contentEndPadding,
                       0,
                     ),
@@ -976,90 +1289,43 @@ class _DrawerContentState extends State<DrawerContent> {
                       child: SidebarInfoCard(
                         brandName: 'Operit',
                         appearance: widget.appearance,
+                        trailing: _SegmentedModeSwitch(
+                          groupingMode: _groupingMode,
+                          appearance: widget.appearance,
+                          onToggle: _toggleGroupingMode,
+                        ),
                       ),
                     ),
                   ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 18)),
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsetsDirectional.only(
-                        start: 28,
+                        start: 14,
                         end: _contentEndPadding,
-                        bottom: 2,
+                        bottom: 8,
                       ),
                       child: Row(
                         children: <Widget>[
                           Expanded(
-                            child: Text(
-                              '会话',
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(
-                                    color: widget.appearance.titleColor
-                                        .withValues(alpha: 0.82),
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                            child: _UnifiedCreateBar(
+                              appearance: widget.appearance,
+                              onCreateConversation: _createConversation,
+                              onCreateGroup: _showCreateGroupDialog,
                             ),
                           ),
-                          IconButton(
-                            onPressed: _toggleGroupingMode,
-                            visualDensity: VisualDensity.compact,
-                            tooltip:
-                                _groupingMode == _HistoryGroupingMode.workspace
-                                ? '按角色卡分组'
-                                : '按工作区分组',
-                            icon: Icon(
-                              _groupingMode == _HistoryGroupingMode.workspace
-                                  ? Icons.badge_outlined
-                                  : Icons.work_outline,
-                              size: 20,
-                              color: widget.appearance.itemColor,
-                            ),
-                          ),
-                          Builder(
-                            builder: (buttonContext) {
-                              return IconButton(
-                                onPressed: () =>
-                                    themeController.toggle(buttonContext),
-                                visualDensity: VisualDensity.compact,
-                                tooltip: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
-                                icon: Icon(
-                                  darkThemeActive
-                                      ? Icons.light_mode_outlined
-                                      : Icons.dark_mode_outlined,
-                                  size: 20,
-                                  color: widget.appearance.itemColor,
-                                ),
-                              );
-                            },
-                          ),
-                          IconButton(
-                            onPressed: _toggleSearchExpanded,
-                            visualDensity: VisualDensity.compact,
+                          const SizedBox(width: 8),
+                          _ToolbarIconButton(
+                            icon: _searchExpanded
+                                ? Icons.search_off_rounded
+                                : Icons.search_rounded,
                             tooltip: _searchExpanded ? '收起搜索' : '搜索对话',
-                            icon: Icon(
-                              _searchExpanded ? Icons.search_off : Icons.search,
-                              size: 20,
-                              color: _searchController.text.trim().isNotEmpty
-                                  ? widget.appearance.statusAvailableColor
-                                  : widget.appearance.itemColor,
-                            ),
+                            appearance: widget.appearance,
+                            active: _searchExpanded ||
+                                _searchController.text.trim().isNotEmpty,
+                            onClick: _toggleSearchExpanded,
                           ),
                         ],
-                      ),
-                    ),
-                  ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 6)),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsetsDirectional.only(
-                        start: 12,
-                        end: _contentEndPadding,
-                        bottom: 8,
-                      ),
-                      child: NewConversationButton(
-                        appearance: widget.appearance,
-                        onClick: _createConversation,
-                        onCreateGroup: _showCreateGroupDialog,
                       ),
                     ),
                   ),
@@ -1108,7 +1374,7 @@ class _DrawerContentState extends State<DrawerContent> {
                           ),
                         _GroupHeaderEntry(:final group) => _GroupSectionHeader(
                           label: group.label,
-                          count: group.historyCount,
+                          pinned: group.isPinned,
                           workspaceStyle:
                               _groupingMode == _HistoryGroupingMode.workspace,
                           expanded: !_collapsedGroupSections.contains(
@@ -1117,6 +1383,24 @@ class _DrawerContentState extends State<DrawerContent> {
                           appearance: widget.appearance,
                           onToggleExpanded: () =>
                               _toggleGroupSection(group.key),
+                          onCreateChat: () => _createConversationInGroup(group),
+                          onRename: () => _showRenameGroupDialog(group),
+                          onTogglePinned: () => _toggleGroupPinned(group),
+                          onDelete: () => _showDeleteGroupDialog(group),
+                          canAcceptDrop: (moved) =>
+                              group.histories.isNotEmpty &&
+                              _isInSameCharacterSection(
+                                moved,
+                                group.histories.first,
+                              ),
+                          onMoveToGroup: (moved) {
+                            if (group.histories.isNotEmpty) {
+                              _moveConversationTo(
+                                moved,
+                                group.histories.first,
+                              );
+                            }
+                          },
                         ),
                         _HistoryRowEntry(:final history) =>
                           ConversationDrawerItem(
@@ -1135,6 +1419,12 @@ class _DrawerContentState extends State<DrawerContent> {
                             onClick: () => _switchConversation(history),
                             onRename: () {
                               _showRenameConversationDialog(history);
+                            },
+                            onTogglePinned: () {
+                              _updateConversationPinned(history);
+                            },
+                            onToggleLocked: () {
+                              _updateConversationLocked(history);
                             },
                             onDelete: () {
                               _showDeleteConversationDialog(history);
@@ -1240,7 +1530,7 @@ class _DrawerContentState extends State<DrawerContent> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
           child: Row(
             children: <Widget>[
               Expanded(
@@ -1252,7 +1542,7 @@ class _DrawerContentState extends State<DrawerContent> {
                   onClick: _openPackageManager,
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: BottomSidebarAction(
                   icon: Icons.settings_outlined,
@@ -1261,6 +1551,16 @@ class _DrawerContentState extends State<DrawerContent> {
                   selected: widget.selectedRouteId == settingsRouteId,
                   onClick: _openSettings,
                 ),
+              ),
+              const SizedBox(width: 8),
+              Builder(
+                builder: (buttonContext) {
+                  return _BottomThemeToggleButton(
+                    appearance: widget.appearance,
+                    darkThemeActive: darkThemeActive,
+                    onToggle: () => themeController.toggle(buttonContext),
+                  );
+                },
               ),
             ],
           ),
@@ -1304,12 +1604,17 @@ class _HistoryGroupSection {
     required this.label,
     required this.histories,
     int? historyCount,
-  }) : historyCount = historyCount ?? histories.length;
+  }) : _historyCount = historyCount;
 
   final String key;
   final String label;
   final List<core_proxy.ChatHistoryListItem> histories;
-  final int historyCount;
+  final int? _historyCount;
+
+  int get historyCount => _historyCount ?? histories.length;
+
+  bool get isPinned =>
+      histories.isNotEmpty && histories.every((item) => item.pinned);
 }
 
 class _VisibleHistoryPlan {
@@ -1533,86 +1838,243 @@ class _CharacterSectionHeader extends StatelessWidget {
   }
 }
 
-class _GroupSectionHeader extends StatelessWidget {
+enum _GroupQuickAction { createChat, rename, togglePinned, delete }
+
+class _GroupSectionHeader extends StatefulWidget {
   /// Creates a collapsible group header for history entries.
   const _GroupSectionHeader({
     required this.label,
-    required this.count,
+    required this.pinned,
     required this.workspaceStyle,
     required this.expanded,
     required this.appearance,
     required this.onToggleExpanded,
+    required this.onCreateChat,
+    required this.onRename,
+    required this.onTogglePinned,
+    required this.onDelete,
+    required this.canAcceptDrop,
+    required this.onMoveToGroup,
   });
 
   final String label;
-  final int count;
+  final bool pinned;
   final bool workspaceStyle;
   final bool expanded;
   final NavigationDrawerAppearance appearance;
   final VoidCallback onToggleExpanded;
+  final VoidCallback onCreateChat;
+  final VoidCallback onRename;
+  final VoidCallback onTogglePinned;
+  final VoidCallback onDelete;
+  final bool Function(core_proxy.ChatHistoryListItem) canAcceptDrop;
+  final ValueChanged<core_proxy.ChatHistoryListItem> onMoveToGroup;
 
+  @override
+  State<_GroupSectionHeader> createState() => _GroupSectionHeaderState();
+}
+
+class _GroupSectionHeaderState extends State<_GroupSectionHeader> {
   static const double _endPadding = 12;
+
+  bool _hovered = false;
+  bool _menuOpen = false;
 
   /// Builds a history group header in the current drawer style.
   @override
   Widget build(BuildContext context) {
-    if (workspaceStyle) {
-      return Padding(
-        padding: EdgeInsetsDirectional.only(
-          start: 28,
-          end: _endPadding,
-          top: 2,
-          bottom: expanded ? 2 : 0,
-        ),
-        child: Row(
-          children: <Widget>[
-            HistoryRail(
-              height: 25,
-              appearance: appearance,
-              width: 16,
-              thickness: 1,
-            ),
-            Expanded(
-              child: Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-                child: InkWell(
+    final appearance = widget.appearance;
+    final workspaceStyle = widget.workspaceStyle;
+    final expanded = widget.expanded;
+    final platform = Theme.of(context).platform;
+    final touchPlatform =
+        platform == TargetPlatform.android || platform == TargetPlatform.iOS;
+    final showActions = _hovered || _menuOpen || touchPlatform;
+
+    return DragTarget<core_proxy.ChatHistoryListItem>(
+      onWillAcceptWithDetails: (details) => widget.canAcceptDrop(details.data),
+      onAcceptWithDetails: (details) => widget.onMoveToGroup(details.data),
+      builder: (context, candidateData, rejectedData) {
+        final dragHovering = candidateData.isNotEmpty;
+        final border = dragHovering
+            ? Border.all(
+                color: appearance.statusAvailableColor.withValues(alpha: 0.55),
+              )
+            : null;
+
+        if (workspaceStyle) {
+          return MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: Padding(
+              padding: EdgeInsetsDirectional.only(
+                start: 44,
+                end: _endPadding,
+                top: 2,
+                bottom: expanded ? 2 : 0,
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  onTap: onToggleExpanded,
+                  border: border,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: widget.onToggleExpanded,
+                    child: Padding(
+                      padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 6, 4),
+                      child: Row(
+                        children: <Widget>[
+                          Icon(
+                            Icons.folder_outlined,
+                            size: 14,
+                            color: appearance.itemColor.withValues(alpha: 0.76),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              widget.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: appearance.titleColor.withValues(
+                                      alpha: 0.86,
+                                    ),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ),
+                          if (widget.pinned) ...<Widget>[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.push_pin_rounded,
+                              size: 12,
+                              color: appearance.itemColor.withValues(
+                                alpha: 0.65,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 2),
+                          AnimatedOpacity(
+                            duration: const Duration(milliseconds: 140),
+                            opacity: showActions ? 1.0 : 0.0,
+                            child: IgnorePointer(
+                              ignoring: !showActions,
+                              child: _GroupMoreMenuButton(
+                                pinned: widget.pinned,
+                                appearance: appearance,
+                                compact: true,
+                                onCreateChat: widget.onCreateChat,
+                              onRename: widget.onRename,
+                                onTogglePinned: widget.onTogglePinned,
+                                onDelete: widget.onDelete,
+                                onMenuOpenChanged: (open) {
+                                  if (mounted) {
+                                    setState(() => _menuOpen = open);
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            expanded ? Icons.expand_less : Icons.expand_more,
+                            size: 17,
+                            color: appearance.itemColor.withValues(alpha: 0.62),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
+        return MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: Padding(
+            padding: EdgeInsetsDirectional.only(
+              start: 46,
+              end: _endPadding,
+              top: 4,
+              bottom: expanded ? 2 : 0,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: border,
+              ),
+              child: Material(
+                color: appearance.buttonContainerColor,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: widget.onToggleExpanded,
                   child: Padding(
-                    padding: const EdgeInsetsDirectional.fromSTEB(8, 5, 6, 5),
+                    padding: const EdgeInsetsDirectional.fromSTEB(12, 6, 8, 6),
                     child: Row(
                       children: <Widget>[
                         Icon(
                           Icons.folder_outlined,
-                          size: 14,
-                          color: appearance.itemColor.withValues(alpha: 0.76),
+                          size: 16,
+                          color: appearance.itemColor,
                         ),
-                        const SizedBox(width: 7),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            label,
+                            widget.label,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
+                            style: Theme.of(context).textTheme.labelLarge
                                 ?.copyWith(
-                                  color: appearance.titleColor.withValues(
-                                    alpha: 0.86,
-                                  ),
-                                  fontWeight: FontWeight.w600,
+                                  color: appearance.titleColor,
+                                  fontWeight: FontWeight.w700,
                                 ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        _HistoryCountBadge(
-                          count: count,
-                          appearance: appearance,
+                        if (widget.pinned) ...<Widget>[
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.push_pin_rounded,
+                            size: 12,
+                            color: appearance.itemColor.withValues(alpha: 0.68),
+                          ),
+                        ],
+                        const SizedBox(width: 2),
+                        AnimatedOpacity(
+                          duration: const Duration(milliseconds: 140),
+                          opacity: showActions ? 1.0 : 0.0,
+                          child: IgnorePointer(
+                            ignoring: !showActions,
+                            child: _GroupMoreMenuButton(
+                              pinned: widget.pinned,
+                              appearance: appearance,
+                              onCreateChat: widget.onCreateChat,
+                              onRename: widget.onRename,
+                              onTogglePinned: widget.onTogglePinned,
+                              onDelete: widget.onDelete,
+                              onMenuOpenChanged: (open) {
+                                if (mounted) {
+                                  setState(() => _menuOpen = open);
+                                }
+                              },
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 3),
+                        const SizedBox(width: 2),
                         Icon(
-                          expanded ? Icons.expand_less : Icons.expand_more,
-                          size: 17,
-                          color: appearance.itemColor.withValues(alpha: 0.62),
+                          expanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 20,
+                          color: appearance.itemColor.withValues(alpha: 0.68),
                         ),
                       ],
                     ),
@@ -1620,78 +2082,150 @@ class _GroupSectionHeader extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-        ),
-      );
-    }
+          ),
+        );
+      },
+    );
+  }
+}
 
-    return Padding(
-      padding: EdgeInsetsDirectional.only(
-        start: 22,
-        end: _endPadding,
-        top: 4,
-        bottom: expanded ? 3 : 0,
-      ),
+class _GroupMoreMenuButton extends StatelessWidget {
+  const _GroupMoreMenuButton({
+    required this.pinned,
+    required this.appearance,
+    required this.onCreateChat,
+    required this.onRename,
+    required this.onTogglePinned,
+    required this.onDelete,
+    this.onMenuOpenChanged,
+    this.compact = false,
+  });
+
+  final bool pinned;
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onCreateChat;
+  final VoidCallback onRename;
+  final VoidCallback onTogglePinned;
+  final VoidCallback onDelete;
+  final ValueChanged<bool>? onMenuOpenChanged;
+  final bool compact;
+
+  PopupMenuItem<_GroupQuickAction> _menuItem({
+    required _GroupQuickAction value,
+    required IconData icon,
+    required String label,
+    required Color iconColor,
+    required Color textColor,
+  }) {
+    return PopupMenuItem<_GroupQuickAction>(
+      value: value,
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          HistoryRail(height: 30, appearance: appearance),
-          Expanded(
-            child: Material(
-              color: appearance.buttonContainerColor,
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: onToggleExpanded,
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 7, 10, 7),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.folder_outlined,
-                        size: 16,
-                        color: appearance.itemColor,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelLarge
-                              ?.copyWith(
-                                color: appearance.titleColor,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        count.toString(),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: appearance.itemColor.withValues(alpha: 0.72),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        expanded
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down,
-                        size: 20,
-                        color: appearance.itemColor.withValues(alpha: 0.68),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+          Icon(icon, size: 14.5, color: iconColor),
+          const SizedBox(width: 9),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w500,
+              color: textColor,
+              letterSpacing: -0.1,
             ),
           ),
         ],
       ),
     );
   }
-}
 
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = appearance.itemColor.withValues(alpha: 0.78);
+    final side = compact ? 20.0 : 22.0;
+    final iconSize = compact ? 14.0 : 16.0;
+    final itemIconColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.85);
+    final itemTextColor = colorScheme.onSurface.withValues(alpha: 0.92);
+    final dangerColor = colorScheme.error.withValues(alpha: 0.90);
+
+    return SizedBox(
+      width: side,
+      height: side,
+      child: PopupMenuButton<_GroupQuickAction>(
+        tooltip: '分组操作',
+        padding: EdgeInsets.zero,
+        borderRadius: BorderRadius.circular(6),
+        color: Color.alphaBlend(
+          colorScheme.surfaceContainerHighest.withValues(alpha: 0.75),
+          colorScheme.surface,
+        ),
+        elevation: 6,
+        shadowColor: Colors.black.withValues(alpha: 0.45),
+        offset: const Offset(0, 4),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+            width: 1,
+          ),
+        ),
+        constraints: const BoxConstraints(minWidth: 118, maxWidth: 138),
+        menuPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        onOpened: () => onMenuOpenChanged?.call(true),
+        onCanceled: () => onMenuOpenChanged?.call(false),
+        child: Center(
+          child: Icon(Icons.more_horiz_rounded, size: iconSize, color: color),
+        ),
+        onSelected: (action) {
+          onMenuOpenChanged?.call(false);
+          switch (action) {
+            case _GroupQuickAction.createChat:
+              onCreateChat();
+            case _GroupQuickAction.rename:
+              onRename();
+            case _GroupQuickAction.togglePinned:
+              onTogglePinned();
+            case _GroupQuickAction.delete:
+              onDelete();
+          }
+        },
+        itemBuilder: (context) => <PopupMenuEntry<_GroupQuickAction>>[
+          _menuItem(
+            value: _GroupQuickAction.createChat,
+            icon: Icons.add_comment_outlined,
+            label: '新建对话',
+            iconColor: itemIconColor,
+            textColor: itemTextColor,
+          ),
+          _menuItem(
+            value: _GroupQuickAction.rename,
+            icon: Icons.edit_outlined,
+            label: '编辑名称',
+            iconColor: itemIconColor,
+            textColor: itemTextColor,
+          ),
+          _menuItem(
+            value: _GroupQuickAction.togglePinned,
+            icon: pinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+            label: pinned ? '取消置顶' : '置顶',
+            iconColor: itemIconColor,
+            textColor: itemTextColor,
+          ),
+          const PopupMenuDivider(height: 8),
+          _menuItem(
+            value: _GroupQuickAction.delete,
+            icon: Icons.delete_outline_rounded,
+            label: '删除',
+            iconColor: dangerColor,
+            textColor: dangerColor,
+          ),
+        ],
+      ),
+    );
+  }
+}
 class _HistoryCountBadge extends StatelessWidget {
   /// Creates a compact count badge for history section rows.
   const _HistoryCountBadge({required this.count, required this.appearance});
@@ -1717,6 +2251,301 @@ class _HistoryCountBadge extends StatelessWidget {
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           color: appearance.itemColor.withValues(alpha: 0.70),
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _SegmentedModeSwitch extends StatelessWidget {
+  const _SegmentedModeSwitch({
+    required this.groupingMode,
+    required this.appearance,
+    required this.onToggle,
+  });
+
+  final _HistoryGroupingMode groupingMode;
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final isWorkspace = groupingMode == _HistoryGroupingMode.workspace;
+    return Container(
+      width: 98,
+      height: 23,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: appearance.buttonContainerColor.withValues(alpha: 0.60),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: appearance.dividerColor.withValues(alpha: 0.22),
+          width: 1,
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tabWidth = (constraints.maxWidth - 2) / 2;
+          return Stack(
+            children: <Widget>[
+              AnimatedAlign(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                alignment: isWorkspace
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: Container(
+                  width: tabWidth,
+                  height: constraints.maxHeight,
+                  decoration: BoxDecoration(
+                    color: appearance.selectedContainerColor.withValues(
+                      alpha: 0.65,
+                    ),
+                    borderRadius: BorderRadius.circular(4.5),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.16),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(4.5),
+                      onTap: isWorkspace ? onToggle : null,
+                      child: Center(
+                        child: Text(
+                          '角色卡',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            letterSpacing: -0.2,
+                            fontWeight: !isWorkspace
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: !isWorkspace
+                                ? appearance.selectedContentColor
+                                : appearance.itemColor.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(4.5),
+                      onTap: !isWorkspace ? onToggle : null,
+                      child: Center(
+                        child: Text(
+                          '工作区',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            letterSpacing: -0.2,
+                            fontWeight: isWorkspace
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: isWorkspace
+                                ? appearance.selectedContentColor
+                                : appearance.itemColor.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _UnifiedCreateBar extends StatelessWidget {
+  const _UnifiedCreateBar({
+    required this.appearance,
+    required this.onCreateConversation,
+    required this.onCreateGroup,
+  });
+
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onCreateConversation;
+  final VoidCallback onCreateGroup;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = appearance.titleColor.withValues(alpha: 0.90);
+    final iconColor = appearance.itemColor.withValues(alpha: 0.85);
+    return Container(
+      height: 34,
+      decoration: BoxDecoration(
+        color: appearance.buttonContainerColor.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: appearance.dividerColor.withValues(alpha: 0.35),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(7),
+                ),
+                onTap: onCreateConversation,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Icon(Icons.add_rounded, size: 17, color: iconColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        '新建对话',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 16,
+            color: appearance.dividerColor.withValues(alpha: 0.45),
+          ),
+          Tooltip(
+            message: '新建分组',
+            child: SizedBox(
+              width: 38,
+              height: 34,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: const BorderRadius.horizontal(
+                    right: Radius.circular(7),
+                  ),
+                  onTap: onCreateGroup,
+                  child: Center(
+                    child: Icon(
+                      Icons.create_new_folder_outlined,
+                      size: 16,
+                      color: iconColor,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+class _BottomThemeToggleButton extends StatelessWidget {
+  const _BottomThemeToggleButton({
+    required this.appearance,
+    required this.darkThemeActive,
+    required this.onToggle,
+  });
+
+  final NavigationDrawerAppearance appearance;
+  final bool darkThemeActive;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final shape = BorderRadius.circular(8);
+    return Tooltip(
+      message: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
+      child: SizedBox(
+        width: 34,
+        height: 34,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: appearance.buttonContainerColor.withValues(alpha: 0.55),
+            borderRadius: shape,
+            border: Border.all(
+              color: appearance.dividerColor.withValues(alpha: 0.35),
+              width: 1,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: shape,
+            child: InkWell(
+              borderRadius: shape,
+              onTap: onToggle,
+              child: Center(
+                child: Icon(
+                  darkThemeActive
+                      ? Icons.light_mode_outlined
+                      : Icons.dark_mode_outlined,
+                  size: 16,
+                  color: appearance.itemColor.withValues(alpha: 0.85),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolbarIconButton extends StatelessWidget {
+  const _ToolbarIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.appearance,
+    required this.onClick,
+    this.active = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onClick;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        width: 34,
+        height: 34,
+        child: Material(
+          color: active
+              ? appearance.selectedContainerColor.withValues(alpha: 0.35)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: onClick,
+            child: Center(
+              child: Icon(
+                icon,
+                size: 17,
+                color: active
+                    ? appearance.statusAvailableColor
+                    : appearance.itemColor.withValues(alpha: 0.78),
+              ),
+            ),
+          ),
         ),
       ),
     );

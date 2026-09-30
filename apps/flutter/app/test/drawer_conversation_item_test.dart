@@ -42,6 +42,8 @@ void main() {
             ),
             onClick: () {},
             onRename: () {},
+            onTogglePinned: () {},
+            onToggleLocked: () {},
             onDelete: () {},
             onLongPress: () {},
             onMoveTo: (_) {},
@@ -53,12 +55,10 @@ void main() {
       ),
     );
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    final indicatorBox = tester.widget<SizedBox>(
+    expect(
       find.byKey(const ValueKey<String>('conversation-running-indicator')),
+      findsOneWidget,
     );
-    expect(indicatorBox.width, 20);
-    expect(indicatorBox.height, 20);
   });
 
   testWidgets('does not show a running indicator for an idle conversation', (
@@ -97,6 +97,8 @@ void main() {
             ),
             onClick: () {},
             onRename: () {},
+            onTogglePinned: () {},
+            onToggleLocked: () {},
             onDelete: () {},
             onLongPress: () {},
             onMoveTo: (_) {},
@@ -108,6 +110,6 @@ void main() {
       ),
     );
 
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey<String>('conversation-running-indicator')), findsNothing);
   });
 }

@@ -35,6 +35,7 @@ private:
   FlutterDesktopViewRef view_;
   flutter::BinaryMessenger *messenger_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> theme_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> resource_channel_;
 
   bool InitPlatform();
 

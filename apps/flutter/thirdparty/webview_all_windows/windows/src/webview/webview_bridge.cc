@@ -601,6 +601,10 @@ void WebviewBridge::CaptureSurfaceFrame(SurfaceFrameCaptureCallback result) {
   webview_->CaptureSurfaceFrame(std::move(result));
 }
 
+bool WebviewBridge::SetLocalResourceHandler(Webview::LocalResourceCallback callback) {
+  return webview_->SetLocalResourceHandler(std::move(callback));
+}
+
 void WebviewBridge::LoadUrl(const std::string &url) { webview_->LoadUrl(url); }
 
 bool WebviewBridge::LoadRequest(const std::string &url,

@@ -17,6 +17,7 @@ import Foundation
 /// Implementation of `WebKitLibraryPigeonProxyApiRegistrar` that provides any additional resources needed by API implementations.
 open class ProxyAPIRegistrar: WebKitLibraryPigeonProxyApiRegistrar {
   let assetManager: FlutterAssetManager
+  var localResources: WebViewLocalResources!
 
   init(
     binaryMessenger: FlutterBinaryMessenger,
@@ -24,6 +25,7 @@ open class ProxyAPIRegistrar: WebKitLibraryPigeonProxyApiRegistrar {
   ) {
     self.assetManager = assetManager
     super.init(binaryMessenger: binaryMessenger, apiDelegate: ProxyAPIDelegate())
+    localResources = WebViewLocalResources(messenger: binaryMessenger, registrar: self)
   }
 
   /// Creates an error when the `unknown` enum value is passed to a host method.

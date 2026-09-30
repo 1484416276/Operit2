@@ -45,6 +45,7 @@ public:
   bool DispatchKeyEvent(const std::string &event_json);
   void CaptureSurfaceFrame(SurfaceFrameCaptureCallback result);
 
+  bool SetLocalResourceHandler(Webview::LocalResourceCallback callback);
   void LoadUrl(const std::string &url);
   bool LoadRequest(const std::string &url, const std::string &method,
                    const std::string &headers,

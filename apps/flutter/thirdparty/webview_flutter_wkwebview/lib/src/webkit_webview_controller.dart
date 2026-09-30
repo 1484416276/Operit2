@@ -423,6 +423,16 @@ class WebKitWebViewController extends PlatformWebViewController {
   }
 
   @override
+  String get localResourceScheme => 'operit-vfs';
+
+  @override
+  Future<void> setLocalResourceHandler(
+    WebViewLocalResourceHandler? handler,
+  ) async {
+    await WebViewLocalResourceBridge.setHandler(webViewIdentifier, handler);
+  }
+
+  @override
   Future<void> loadFile(String absoluteFilePath) {
     return loadFileWithParams(
       WebKitLoadFileParams(absoluteFilePath: absoluteFilePath),

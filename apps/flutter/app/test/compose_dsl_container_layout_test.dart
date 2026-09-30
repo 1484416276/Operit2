@@ -8,6 +8,7 @@ Widget renderNode(Map<String, Object?> node) => buildComposeDslLayoutForTest(
   node: node,
   onTextInput: (id, text) async => null,
   hostContext: ComposeDslWebViewHostContext(
+    packageName: 'test.package',
     routeInstanceId: 'layout-test',
     executionContextKey: 'layout-test',
     dispatchAction: (id, [payload]) async => null,

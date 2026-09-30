@@ -39,3 +39,9 @@ export 'src/navigation_delegate.dart';
 export 'src/webview_controller.dart';
 export 'src/webview_cookie_manager.dart';
 export 'src/webview_widget.dart';
+
+export 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart'
+    show
+        WebViewLocalResourceRequest,
+        WebViewLocalResourceResponse,
+        WebViewLocalResourceHandler;

@@ -66,6 +66,7 @@ void main() {
                 ],
               },
               hostContext: ComposeDslWebViewHostContext(
+                packageName: 'test.package',
                 routeInstanceId: 'dispatch-test',
                 executionContextKey: 'dispatch-test',
                 dispatchAction: action,

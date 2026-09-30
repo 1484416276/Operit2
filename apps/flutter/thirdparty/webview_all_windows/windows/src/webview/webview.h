@@ -221,6 +221,12 @@ public:
                                               size_t, size_t)> result);
 
 
+  using LocalResourceReply = std::function<void(int, const std::string&,
+      const std::map<std::string, std::string>&, const std::vector<uint8_t>&)>;
+  using LocalResourceCallback = std::function<void(const std::string&,
+      const std::string&, const std::map<std::string, std::string>&, bool, LocalResourceReply)>;
+  bool SetLocalResourceHandler(LocalResourceCallback callback);
+
   bool IsValid() { return is_valid_; }
 
   void SetSurfaceSize(size_t width, size_t height, float scale_factor);
@@ -351,6 +357,10 @@ public:
   }
 
 private:
+  LocalResourceCallback local_resource_callback_;
+  EventRegistrationToken local_resource_token_{};
+  bool local_resources_registered_ = false;
+
   HWND hwnd_;
   bool owns_window_;
   bool is_valid_ = false;

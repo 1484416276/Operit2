@@ -604,6 +604,13 @@ class OhosWebViewController extends PlatformWebViewController {
       ohos_webview.WebView.api.instanceManager.getIdentifier(_webView)!;
 
   @override
+  String get localResourceScheme => 'https';
+
+  @override
+  Future<void> setLocalResourceHandler(WebViewLocalResourceHandler? handler) =>
+      WebViewLocalResourceBridge.setHandler(webViewIdentifier, handler);
+
+  @override
   Future<void> loadFile(String absoluteFilePath) async {
     final String url = absoluteFilePath.startsWith('file://')
         ? absoluteFilePath

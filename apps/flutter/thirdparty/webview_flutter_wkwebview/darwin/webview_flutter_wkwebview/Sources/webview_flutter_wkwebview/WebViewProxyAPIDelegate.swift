@@ -14,6 +14,7 @@ class WebViewImpl: WKWebView {
   ) {
     self.api = api
     self.registrar = registrar
+    configuration.setURLSchemeHandler(registrar.localResources, forURLScheme: "operit-vfs")
     super.init(frame: frame, configuration: configuration)
     WebViewTheme.register(self)
     #if os(iOS)

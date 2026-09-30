@@ -507,10 +507,9 @@ packages:
   webview_flutter_platform_interface:
     dependency: "direct main"
     description:
-      name: webview_flutter_platform_interface
-      sha256: "1221c1b12f5278791042f2ec2841743784cf25c5a644e23d6680e5d718824f04"
-      url: "https://pub.dev"
-    source: hosted
+      path: "../webview_flutter_platform_interface"
+      relative: true
+    source: path
     version: "2.15.1"
   yaml:
     dependency: transitive

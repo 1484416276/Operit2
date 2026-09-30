@@ -55,6 +55,8 @@ public:
                            const std::string &headers,
                            const std::vector<uint8_t> *body);
 
+  wil::com_ptr<ICoreWebView2Environment3> resource_environment() { return webview_env_; }
+
 private:
   wil::com_ptr<ICoreWebView2Environment3> webview_env_;
 

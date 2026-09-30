@@ -119,6 +119,24 @@ impl CharacterCardManager {
         self.getCharacterCardFlow(id).first()
     }
 
+    /// Reads one character card snapshot by id, rejecting ids that are not
+    /// registered in the stored card list. `getCharacterCard` falls back to a
+    /// shell card for unknown ids (field lookups default per key), so command
+    /// surfaces that must distinguish "not found" use this instead.
+    #[allow(non_snake_case)]
+    pub fn getExistingCharacterCard(
+        &self,
+        id: &str,
+    ) -> Result<CharacterCard, PreferencesDataStoreError> {
+        let preferences = self.dataStore.data()?;
+        if !Self::readCardList(&preferences).iter().any(|item| item == id) {
+            return Err(PreferencesDataStoreError::Message(format!(
+                "character card not found: {id}"
+            )));
+        }
+        Ok(self.getCharacterCardFromPreferences(&preferences, id))
+    }
+
     #[allow(non_snake_case)]
     fn getCharacterCardFromPreferences(
         &self,

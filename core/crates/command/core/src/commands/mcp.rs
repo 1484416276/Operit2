@@ -226,7 +226,7 @@ fn start_mcp_server(
         .getMcpStartupTimeoutSeconds()
         .map_err(|error| error.to_string())?;
     let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
-    let starter = MCPStarter::new(context.clone(), application.toolHandler.runtimeSupport());
+    let starter = MCPStarter::new(context.clone());
     let mut statuses = Vec::new();
     let started = starter.startPluginWithTimeout(id, timeoutMs, |status| {
         statuses.push(status);

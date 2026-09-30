@@ -19,6 +19,7 @@ import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
+import 'WorkspaceSession.dart';
 import 'WorkspaceTabStrip.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
@@ -28,6 +29,7 @@ class WorkspacePanel extends StatefulWidget {
   const WorkspacePanel({
     super.key,
     this.sidebarDockController,
+    required this.session,
     required this.currentChatId,
     required this.hasBoundWorkspace,
     required this.workspacePath,
@@ -42,6 +44,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.onBindWorkspace,
   });
 
+  final WorkspaceSession session;
   final String? currentChatId;
   final SidebarDockController? sidebarDockController;
   final bool hasBoundWorkspace;
@@ -77,26 +80,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       const WorkspaceTerminalSessions();
   final Map<String, Completer<WebVisitResponse>> _webVisitCompleters =
       <String, Completer<WebVisitResponse>>{};
-  final List<WorkspaceTab> _tabs = <WorkspaceTab>[
-    const WorkspaceTab(
-      kind: WorkspaceTabKind.home,
-      title: '',
-      icon: Icons.home_outlined,
-      closable: false,
-    ),
-  ];
-  int _selectedIndex = 0;
-  final List<WorkspaceTab> _secondaryTabs = <WorkspaceTab>[];
+
+  /// Returns the workspace state owned by the main chat shell.
+  WorkspaceSession get _session => widget.session;
   final GlobalKey _primaryPaneKey = GlobalKey();
   final GlobalKey _secondaryPaneKey = GlobalKey();
-  int _secondarySelectedIndex = 0;
-  _WorkspaceSplitAxis? _splitAxis;
-  double _splitRatio = 0.5;
-  bool _secondaryPaneFirst = false;
   int? _dropHoverPaneIndex;
   _WorkspaceDropZone? _dropHoverZone;
   int _filesListingRevision = 0;
-  int _workspaceTabIdentitySequence = 0;
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
@@ -220,18 +211,21 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     final dockedById = <String, SidebarDockedPluginView>{
       for (final view in controller.secondaryViews) view.entry.entryId: view,
     };
-    _tabs.removeWhere(
+    _session.tabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
-    _secondaryTabs.removeWhere(
+    _session.secondaryTabs.removeWhere(
       (tab) =>
           tab.kind == WorkspaceTabKind.plugin &&
           !dockedById.containsKey(tab.pluginEntryId),
     );
     final existingIds = <String>{
-      for (final tab in <WorkspaceTab>[..._tabs, ..._secondaryTabs])
+      for (final tab in <WorkspaceTab>[
+        ..._session.tabs,
+        ..._session.secondaryTabs,
+      ])
         if (tab.kind == WorkspaceTabKind.plugin && tab.pluginEntryId != null)
           tab.pluginEntryId!,
     };
@@ -240,7 +234,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       if (existingIds.contains(view.entry.entryId)) {
         continue;
       }
-      _tabs.add(
+      _session.tabs.add(
         WorkspaceTab(
           kind: WorkspaceTabKind.plugin,
           title: view.entry.title,
@@ -253,13 +247,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       );
       addedPluginEntryId = view.entry.entryId;
     }
-    _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
-    _secondarySelectedIndex = _clampSelectedIndex(
-      _secondarySelectedIndex,
-      _secondaryTabs,
+    _session.selectedIndex = _clampSelectedIndex(
+      _session.selectedIndex,
+      _session.tabs,
+    );
+    _session.secondarySelectedIndex = _clampSelectedIndex(
+      _session.secondarySelectedIndex,
+      _session.secondaryTabs,
     );
     if (addedPluginEntryId != null) {
-      _selectedIndex = _tabs.indexWhere(
+      _session.selectedIndex = _session.tabs.indexWhere(
         (tab) => tab.pluginEntryId == addedPluginEntryId,
       );
     }
@@ -292,26 +289,26 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Builds the workspace layout with one or two independently tabbed panes.
   Widget _buildWorkspaceLayout() {
-    if (_splitAxis == null) {
+    if (_session.splitAxis == null) {
       return _buildWorkspacePane(0);
     }
-    final firstPane = _secondaryPaneFirst ? 1 : 0;
-    final secondPane = _secondaryPaneFirst ? 0 : 1;
+    final firstPane = _session.secondaryPaneFirst ? 1 : 0;
+    final secondPane = _session.secondaryPaneFirst ? 0 : 1;
     final first = Expanded(
-      flex: (_splitRatio * 1000).round().clamp(200, 800),
+      flex: (_session.splitRatio * 1000).round().clamp(200, 800),
       child: _buildWorkspacePane(firstPane),
     );
     final second = Expanded(
-      flex: ((1 - _splitRatio) * 1000).round().clamp(200, 800),
+      flex: ((1 - _session.splitRatio) * 1000).round().clamp(200, 800),
       child: _buildWorkspacePane(secondPane),
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final extent = _splitAxis == _WorkspaceSplitAxis.vertical
+        final extent = _session.splitAxis == WorkspaceSplitAxis.vertical
             ? constraints.maxWidth
             : constraints.maxHeight;
         final divider = _WorkspacePaneDivider(
-          axis: _splitAxis!,
+          axis: _session.splitAxis!,
           extent: extent,
           onDelta: (delta, totalExtent) {
             if (totalExtent <= 0) {
@@ -319,11 +316,14 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
             }
             setState(() {
               final change = delta / totalExtent;
-              _splitRatio = (_splitRatio + change).clamp(0.2, 0.8);
+              _session.splitRatio = (_session.splitRatio + change).clamp(
+                0.2,
+                0.8,
+              );
             });
           },
         );
-        return _splitAxis == _WorkspaceSplitAxis.vertical
+        return _session.splitAxis == WorkspaceSplitAxis.vertical
             ? Row(children: <Widget>[first, divider, second])
             : Column(children: <Widget>[first, divider, second]);
       },
@@ -422,20 +422,20 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Returns whether a dragged regular tab is currently present in a pane.
   bool _containsWorkspaceTab(WorkspaceTab tab) {
-    return _tabs.contains(tab) || _secondaryTabs.contains(tab);
+    return _session.tabs.contains(tab) || _session.secondaryTabs.contains(tab);
   }
 
   /// Returns the mutable tab list belonging to a physical pane index.
   List<WorkspaceTab> _tabsForPane(int paneIndex) {
-    return paneIndex == 1 ? _secondaryTabs : _tabs;
+    return paneIndex == 1 ? _session.secondaryTabs : _session.tabs;
   }
 
   /// Returns the selected tab index belonging to a physical pane index.
   int _selectedIndexForPane(int paneIndex) {
     final tabs = _tabsForPane(paneIndex);
-    final value = identical(tabs, _tabs)
-        ? _selectedIndex
-        : _secondarySelectedIndex;
+    final value = identical(tabs, _session.tabs)
+        ? _session.selectedIndex
+        : _session.secondarySelectedIndex;
     return _clampSelectedIndex(value, tabs);
   }
 
@@ -453,7 +453,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     Offset globalOffset,
   ) {
     // Existing splits accept tabs into the hovered group without splitting it.
-    if (_splitAxis != null) {
+    if (_session.splitAxis != null) {
       return _WorkspaceDropZone.center;
     }
     final renderObject = paneContext.findRenderObject()! as RenderBox;
@@ -567,16 +567,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
     setState(() {
       _removePluginFromPanes(payload.entryId);
-      if (_splitAxis == null && zone != _WorkspaceDropZone.center) {
-        _splitAxis =
+      if (_session.splitAxis == null && zone != _WorkspaceDropZone.center) {
+        _session.splitAxis =
             zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.right
-            ? _WorkspaceSplitAxis.vertical
-            : _WorkspaceSplitAxis.horizontal;
-        _secondaryPaneFirst =
+            ? WorkspaceSplitAxis.vertical
+            : WorkspaceSplitAxis.horizontal;
+        _session.secondaryPaneFirst =
             zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.top;
-        _secondaryTabs.add(pluginTab);
-        _secondarySelectedIndex = 0;
-        _splitRatio = 0.5;
+        _session.secondaryTabs.add(pluginTab);
+        _session.secondarySelectedIndex = 0;
+        _session.splitRatio = 0.5;
         return;
       }
       final targetTabs = _tabsForPane(paneIndex);
@@ -596,13 +596,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Removes an empty secondary group after a completed tab mutation.
   void _collapseEmptyPane() {
-    if (_secondaryTabs.isNotEmpty) {
+    if (_session.secondaryTabs.isNotEmpty) {
       return;
     }
-    _splitAxis = null;
-    _secondaryPaneFirst = false;
-    _splitRatio = 0.5;
-    _secondarySelectedIndex = 0;
+    _session.splitAxis = null;
+    _session.secondaryPaneFirst = false;
+    _session.splitRatio = 0.5;
+    _session.secondarySelectedIndex = 0;
     _dropHoverPaneIndex = null;
     _dropHoverZone = null;
   }
@@ -613,29 +613,34 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     required int paneIndex,
     required _WorkspaceDropZone zone,
   }) {
-    final sourceTabs = _tabs.contains(tab)
-        ? _tabs
-        : (_secondaryTabs.contains(tab) ? _secondaryTabs : null);
+    final sourceTabs = _session.tabs.contains(tab)
+        ? _session.tabs
+        : (_session.secondaryTabs.contains(tab)
+              ? _session.secondaryTabs
+              : null);
     if (sourceTabs == null) {
       return;
     }
     setState(() {
-      if (_splitAxis == null && zone != _WorkspaceDropZone.center) {
-        if (identical(sourceTabs, _tabs)) {
-          _tabs.remove(tab);
+      if (_session.splitAxis == null && zone != _WorkspaceDropZone.center) {
+        if (identical(sourceTabs, _session.tabs)) {
+          _session.tabs.remove(tab);
         }
-        _splitAxis =
+        _session.splitAxis =
             zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.right
-            ? _WorkspaceSplitAxis.vertical
-            : _WorkspaceSplitAxis.horizontal;
-        _secondaryPaneFirst =
+            ? WorkspaceSplitAxis.vertical
+            : WorkspaceSplitAxis.horizontal;
+        _session.secondaryPaneFirst =
             zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.top;
-        _secondaryTabs
+        _session.secondaryTabs
           ..clear()
           ..add(tab);
-        _secondarySelectedIndex = 0;
-        _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
-        _splitRatio = 0.5;
+        _session.secondarySelectedIndex = 0;
+        _session.selectedIndex = _clampSelectedIndex(
+          _session.selectedIndex,
+          _session.tabs,
+        );
+        _session.splitRatio = 0.5;
         return;
       }
       sourceTabs.remove(tab);
@@ -643,10 +648,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       targetTabs.remove(tab);
       targetTabs.add(tab);
       _setSelectedIndexForPane(paneIndex, targetTabs.length - 1);
-      _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
-      _secondarySelectedIndex = _clampSelectedIndex(
-        _secondarySelectedIndex,
-        _secondaryTabs,
+      _session.selectedIndex = _clampSelectedIndex(
+        _session.selectedIndex,
+        _session.tabs,
+      );
+      _session.secondarySelectedIndex = _clampSelectedIndex(
+        _session.secondarySelectedIndex,
+        _session.secondaryTabs,
       );
       _collapseEmptyPane();
     });
@@ -654,12 +662,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Removes one plugin tab from both pane lists and keeps their selection valid.
   void _removePluginFromPanes(String entryId) {
-    _tabs.removeWhere((tab) => tab.pluginEntryId == entryId);
-    _secondaryTabs.removeWhere((tab) => tab.pluginEntryId == entryId);
-    _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
-    _secondarySelectedIndex = _clampSelectedIndex(
-      _secondarySelectedIndex,
-      _secondaryTabs,
+    _session.tabs.removeWhere((tab) => tab.pluginEntryId == entryId);
+    _session.secondaryTabs.removeWhere((tab) => tab.pluginEntryId == entryId);
+    _session.selectedIndex = _clampSelectedIndex(
+      _session.selectedIndex,
+      _session.tabs,
+    );
+    _session.secondarySelectedIndex = _clampSelectedIndex(
+      _session.secondarySelectedIndex,
+      _session.secondaryTabs,
     );
   }
 
@@ -667,10 +678,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   void _setSelectedIndexForPane(int paneIndex, int index) {
     final tabs = _tabsForPane(paneIndex);
     final value = _clampSelectedIndex(index, tabs);
-    if (identical(tabs, _tabs)) {
-      _selectedIndex = value;
+    if (identical(tabs, _session.tabs)) {
+      _session.selectedIndex = value;
     } else {
-      _secondarySelectedIndex = value;
+      _session.secondarySelectedIndex = value;
     }
   }
 
@@ -1056,14 +1067,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   void _openSingletonTab(WorkspaceTab tab) {
-    final existingIndex = _tabs.indexWhere((item) => item.kind == tab.kind);
+    final existingIndex = _session.tabs.indexWhere(
+      (item) => item.kind == tab.kind,
+    );
     setState(() {
       if (existingIndex >= 0) {
-        _tabs[existingIndex] = tab;
-        _selectedIndex = existingIndex;
+        _session.tabs[existingIndex] = tab;
+        _session.selectedIndex = existingIndex;
       } else {
-        _tabs.add(tab);
-        _selectedIndex = _tabs.length - 1;
+        _session.tabs.add(tab);
+        _session.selectedIndex = _session.tabs.length - 1;
       }
     });
   }
@@ -1118,22 +1131,22 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (!mounted) {
       return;
     }
-    final existingIndex = _tabs.indexWhere(
+    final existingIndex = _session.tabs.indexWhere(
       (item) => item.kind == WorkspaceTabKind.browser,
     );
     setState(() {
       if (existingIndex >= 0) {
-        _selectedIndex = existingIndex;
+        _session.selectedIndex = existingIndex;
         return;
       }
-      _tabs.add(
+      _session.tabs.add(
         const WorkspaceTab(
           kind: WorkspaceTabKind.browser,
           title: '',
           icon: Icons.public,
         ),
       );
-      _selectedIndex = _tabs.length - 1;
+      _session.selectedIndex = _session.tabs.length - 1;
     });
   }
 
@@ -1147,8 +1160,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       webVisitRequest: request,
     );
     setState(() {
-      _tabs.add(tab);
-      _selectedIndex = _tabs.length - 1;
+      _session.tabs.add(tab);
+      _session.selectedIndex = _session.tabs.length - 1;
     });
     return completer.future;
   }
@@ -1544,25 +1557,29 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Removes closed terminal sessions from both tab groups.
   void _removeTerminalTabsForSession(String sessionId) {
-    final selectedTab = _tabs[_selectedIndex];
+    final selectedTab = _session.tabs[_session.selectedIndex];
     setState(() {
-      _tabs.removeWhere((tab) => tab.terminalSessionId == sessionId);
-      final secondarySelected = _secondaryTabs.isEmpty
+      _session.tabs.removeWhere((tab) => tab.terminalSessionId == sessionId);
+      final secondarySelected = _session.secondaryTabs.isEmpty
           ? null
-          : _secondaryTabs[_secondarySelectedIndex];
-      _secondaryTabs.removeWhere((tab) => tab.terminalSessionId == sessionId);
-      _secondarySelectedIndex = _clampSelectedIndex(
+          : _session.secondaryTabs[_session.secondarySelectedIndex];
+      _session.secondaryTabs.removeWhere(
+        (tab) => tab.terminalSessionId == sessionId,
+      );
+      _session.secondarySelectedIndex = _clampSelectedIndex(
         secondarySelected == null
             ? 0
-            : _secondaryTabs.indexOf(secondarySelected),
-        _secondaryTabs,
+            : _session.secondaryTabs.indexOf(secondarySelected),
+        _session.secondaryTabs,
       );
       _collapseEmptyPane();
-      final preservedIndex = _tabs.indexOf(selectedTab);
+      final preservedIndex = _session.tabs.indexOf(selectedTab);
       if (preservedIndex >= 0) {
-        _selectedIndex = preservedIndex;
+        _session.selectedIndex = preservedIndex;
       } else {
-        _selectedIndex = _selectedIndex.clamp(0, _tabs.length - 1).toInt();
+        _session.selectedIndex = _session.selectedIndex
+            .clamp(0, _session.tabs.length - 1)
+            .toInt();
       }
     });
   }
@@ -1581,7 +1598,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   void _openTerminalSessionTab(WorkspaceTerminalSessionInfo session) {
-    final existingIndex = _tabs.indexWhere(
+    final existingIndex = _session.tabs.indexWhere(
       (tab) => tab.terminalSessionId == session.sessionId,
     );
     final tab = WorkspaceTab(
@@ -1594,11 +1611,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
     setState(() {
       if (existingIndex >= 0) {
-        _tabs[existingIndex] = tab;
-        _selectedIndex = existingIndex;
+        _session.tabs[existingIndex] = tab;
+        _session.selectedIndex = existingIndex;
       } else {
-        _tabs.add(tab);
-        _selectedIndex = _tabs.length - 1;
+        _session.tabs.add(tab);
+        _session.selectedIndex = _session.tabs.length - 1;
       }
     });
   }
@@ -1617,17 +1634,17 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     final relativePath = folder.relativePath.trim();
     final title = folder.name.trim();
     setState(() {
-      _workspaceTabIdentitySequence += 1;
-      _tabs.add(
+      _session.tabIdentitySequence += 1;
+      _session.tabs.add(
         WorkspaceTab(
           kind: WorkspaceTabKind.files,
           title: title,
           icon: Icons.folder_outlined,
           filePath: relativePath,
-          identityToken: 'mounted-folder-$_workspaceTabIdentitySequence',
+          identityToken: 'mounted-folder-$_session.tabIdentitySequence',
         ),
       );
-      _selectedIndex = _tabs.length - 1;
+      _session.selectedIndex = _session.tabs.length - 1;
     });
   }
 
@@ -1675,38 +1692,40 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Replaces the workspace picker tab with the workspace files tab.
   void _replacePickerTabWithFilesTab() {
-    final targetIndex = _tabs.indexWhere(
+    final targetIndex = _session.tabs.indexWhere(
       (tab) => tab.kind == WorkspaceTabKind.workspacePicker,
     );
     if (targetIndex < 0) {
       return;
     }
-    final selectedTab = _tabs[_selectedIndex];
+    final selectedTab = _session.tabs[_session.selectedIndex];
     final selectedWasTarget =
         selectedTab.kind == WorkspaceTabKind.workspacePicker;
     setState(() {
-      _tabs.removeWhere((tab) => tab.kind == WorkspaceTabKind.workspacePicker);
-      var filesIndex = _tabs.indexWhere(
+      _session.tabs.removeWhere(
+        (tab) => tab.kind == WorkspaceTabKind.workspacePicker,
+      );
+      var filesIndex = _session.tabs.indexWhere(
         (tab) => tab.kind == WorkspaceTabKind.files,
       );
       if (filesIndex < 0) {
-        _tabs.add(
+        _session.tabs.add(
           const WorkspaceTab(
             kind: WorkspaceTabKind.files,
             title: '',
             icon: Icons.folder_outlined,
           ),
         );
-        filesIndex = _tabs.length - 1;
+        filesIndex = _session.tabs.length - 1;
       }
       if (selectedWasTarget) {
-        _selectedIndex = filesIndex;
+        _session.selectedIndex = filesIndex;
         return;
       }
-      final preservedIndex = _tabs.indexOf(selectedTab);
-      _selectedIndex = preservedIndex >= 0
+      final preservedIndex = _session.tabs.indexOf(selectedTab);
+      _session.selectedIndex = preservedIndex >= 0
           ? preservedIndex
-          : _selectedIndex.clamp(0, _tabs.length - 1).toInt();
+          : _session.selectedIndex.clamp(0, _session.tabs.length - 1).toInt();
     });
   }
 
@@ -1855,7 +1874,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       return;
     }
 
-    final existingIndex = _tabs.indexWhere(
+    final existingIndex = _session.tabs.indexWhere(
       (item) => item.filePath == entry.path,
     );
     final tab = WorkspaceTab(
@@ -1869,17 +1888,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
     setState(() {
       if (existingIndex >= 0) {
-        _tabs[existingIndex] = tab;
-        _selectedIndex = existingIndex;
+        _session.tabs[existingIndex] = tab;
+        _session.selectedIndex = existingIndex;
       } else {
-        _tabs.add(tab);
-        _selectedIndex = _tabs.length - 1;
+        _session.tabs.add(tab);
+        _session.selectedIndex = _session.tabs.length - 1;
       }
     });
   }
 }
-
-enum _WorkspaceSplitAxis { horizontal, vertical }
 
 enum _WorkspaceDropZone { center, left, right, top, bottom }
 
@@ -1891,14 +1908,14 @@ class _WorkspacePaneDivider extends StatelessWidget {
     required this.onDelta,
   });
 
-  final _WorkspaceSplitAxis axis;
+  final WorkspaceSplitAxis axis;
   final double extent;
   final void Function(double delta, double extent) onDelta;
 
   /// Builds a resize handle with the cursor matching its orientation.
   @override
   Widget build(BuildContext context) {
-    final vertical = axis == _WorkspaceSplitAxis.vertical;
+    final vertical = axis == WorkspaceSplitAxis.vertical;
     final color = Theme.of(context).colorScheme.outlineVariant;
     return MouseRegion(
       cursor: vertical

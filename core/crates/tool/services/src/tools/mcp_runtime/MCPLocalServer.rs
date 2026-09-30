@@ -471,6 +471,16 @@ impl MCPLocalServer {
             .to_string()
     }
 
+    /// Creates the validated working directory through the file-system host before launch.
+    #[allow(non_snake_case)]
+    pub fn preparePluginRuntimeDirectory(&self, pluginId: &str) -> Result<String, String> {
+        let directory = self.pluginDirectoryPath(pluginId)?;
+        self.fileSystemHost
+            .makeDirectory(&directory, true)
+            .map_err(|error| format!("Failed to prepare MCP working directory: {error}"))?;
+        Ok(directory)
+    }
+
     /// Exports one plugin server config as a pretty JSON document.
     #[allow(non_snake_case)]
     pub fn getPluginConfig(&self, pluginId: &str) -> String {

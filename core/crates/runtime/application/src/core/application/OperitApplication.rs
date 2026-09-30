@@ -367,7 +367,6 @@ impl OperitApplication {
     /// Loads ToolPkg packages and starts MCP plugins in the background with overlay progress.
     fn dispatchPluginLoading(&self) {
         let hostManager = self.hostManager.clone();
-        let runtimeSupport = self.toolHandler.runtimeSupport();
         let packageManager = self.toolHandler.getOrCreatePackageManager();
         let taskScheduler = self
             .hostManager
@@ -380,7 +379,7 @@ impl OperitApplication {
                 .lock()
                 .expect("package manager mutex poisoned")
                 .loadAvailablePackages();
-            let starter = MCPStarter::new(hostManager, runtimeSupport);
+            let starter = MCPStarter::new(hostManager);
             let timeoutSeconds = ApiPreferences::getInstance()
                 .getMcpStartupTimeoutSeconds()
                 .expect("api preferences must provide mcp startup timeout seconds");

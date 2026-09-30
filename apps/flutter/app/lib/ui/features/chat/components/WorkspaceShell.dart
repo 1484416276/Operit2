@@ -11,8 +11,11 @@ import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../viewmodel/WorkspaceFileModels.dart';
 import 'workspace/WorkspaceLayoutMetrics.dart';
 import 'workspace/WorkspacePanel.dart';
+import 'workspace/WorkspaceSession.dart';
 
 class WorkspaceShell extends StatelessWidget {
+  static final WorkspaceSession _session = WorkspaceSession();
+
   const WorkspaceShell({
     super.key,
     required this.workspaceOpen,
@@ -73,6 +76,7 @@ class WorkspaceShell extends StatelessWidget {
         onAccepted: () => onWorkspaceOpenChanged(true),
       ),
       panel: WorkspacePanel(
+        session: _session,
         sidebarDockController: dockController,
         currentChatId: currentChatId,
         hasBoundWorkspace: hasBoundWorkspace,

@@ -223,6 +223,7 @@ impl MCPBridgeClient {
             .unwrap_or(false)
     }
 
+    /// Sends one tool call exactly once after establishing a connection.
     #[allow(non_snake_case)]
     pub fn callTool(&self, method: &str, params: Value) -> Value {
         if !self.isConnected() && !self.connect() {
@@ -234,33 +235,8 @@ impl MCPBridgeClient {
                 }
             });
         }
-        let retryParams = params.clone();
-        let response =
-            MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params);
-        if response
-            .get("success")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return response;
-        }
-        let errorMessage = response
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if errorMessage.contains("not active") || errorMessage.contains("timeout") {
-            self.isConnected.store(false, Ordering::SeqCst);
-            if self.connect() {
-                return MCPBridge::getInstance(&self.context).callTool(
-                    &self.serviceName,
-                    method,
-                    retryParams,
-                );
-            }
-        }
-        response
+        // A failed response does not prove that the server did not execute the tool.
+        MCPBridge::getInstance(&self.context).callTool(&self.serviceName, method, params)
     }
 
     #[allow(non_snake_case)]

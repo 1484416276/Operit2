@@ -15,6 +15,34 @@ use operit_host_api::HostManager::HostManager;
 const REQUEST_TIMEOUT_MS: u64 = 180_000;
 const SPAWN_TIMEOUT_MS: u64 = 180_000;
 
+/// Shares one deadline across process launch and every initialization request.
+struct StartupDeadline {
+    expiresAt: u128,
+}
+
+impl StartupDeadline {
+    /// Starts a deadline using the host-compatible clock.
+    fn new(timeoutMs: u64) -> Self {
+        Self {
+            expiresAt: operit_host_api::TimeUtils::currentTimeMillisU128() + u128::from(timeoutMs),
+        }
+    }
+
+    /// Returns the remaining startup budget without renewing it between requests.
+    fn remainingMs(&self) -> Result<u64, String> {
+        self.remainingAt(operit_host_api::TimeUtils::currentTimeMillisU128())
+    }
+
+    /// Computes the remaining budget at an explicit time for deterministic tests.
+    fn remainingAt(&self, now: u128) -> Result<u64, String> {
+        if now >= self.expiresAt {
+            return Err("MCP startup deadline exceeded".to_string());
+        }
+        u64::try_from(self.expiresAt - now)
+            .map_err(|error| format!("Invalid MCP startup budget: {error}"))
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MCPBridge;
 
@@ -247,15 +275,15 @@ impl MCPBridge {
             }
         };
 
+        let deadline = StartupDeadline::new(timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS));
+        if let Err(message) = deadline.remainingMs() {
+            return errorResponse("spawn", -32603, &message);
+        }
         let startResult = if registered.serviceType == "remote" {
             let Some(host) = context.httpHost.as_ref() else {
                 return errorResponse("spawn", -32603, "HTTP host is not configured");
             };
-            startRemoteServiceSession(
-                host.clone(),
-                &registered,
-                timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS),
-            )
+            startRemoteServiceSession(host.clone(), &registered, &deadline)
         } else {
             let Some(host) = context.managedRuntimeHost.as_ref() else {
                 return errorResponse("spawn", -32603, "Managed runtime host is not configured");
@@ -274,9 +302,8 @@ impl MCPBridge {
             }
         };
 
-        let timeout = timeoutMs.unwrap_or(SPAWN_TIMEOUT_MS);
         let initializeResult = if active.process.is_some() {
-            initializeService(&mut active, timeout)
+            initializeService(&mut active, &deadline)
         } else {
             Ok(())
         };
@@ -547,11 +574,12 @@ fn homeDir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Initializes a remote session within the shared startup deadline.
 #[allow(non_snake_case)]
 fn startRemoteServiceSession(
     httpHost: Arc<dyn HttpHost>,
     service: &RegisteredService,
-    timeoutMs: u64,
+    deadline: &StartupDeadline,
 ) -> Result<ActiveService, String> {
     let connectionType = service.connectionType.as_deref().unwrap_or("httpStream");
     let endpoint = service
@@ -585,10 +613,10 @@ fn startRemoteServiceSession(
                 .remote
                 .as_mut()
                 .ok_or_else(|| "Remote MCP session is not attached".to_string())?,
-            timeoutMs,
+            deadline.remainingMs()?,
         )?;
     }
-    initializeRemoteService(&mut active, timeoutMs)?;
+    initializeRemoteService(&mut active, deadline)?;
     Ok(active)
 }
 
@@ -635,8 +663,12 @@ fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<()
     }
 }
 
+/// Initializes a remote server without resetting the startup budget.
 #[allow(non_snake_case)]
-fn initializeRemoteService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), String> {
+fn initializeRemoteService(
+    active: &mut ActiveService,
+    deadline: &StartupDeadline,
+) -> Result<(), String> {
     let initializeId = nextRequestId(active);
     let initializeResponse = sendRemoteJsonRpc(
         active
@@ -654,7 +686,7 @@ fn initializeRemoteService(active: &mut ActiveService, timeoutMs: u64) -> Result
             }
         }),
         Some(initializeId),
-        timeoutMs,
+        deadline.remainingMs()?,
     )?
     .ok_or_else(|| "Remote MCP initialize returned an empty response".to_string())?;
     if initializeResponse.get("error").is_some() {
@@ -672,7 +704,7 @@ fn initializeRemoteService(active: &mut ActiveService, timeoutMs: u64) -> Result
             "params": {}
         }),
         None,
-        timeoutMs,
+        deadline.remainingMs()?,
     )?;
 
     let listId = nextRequestId(active);
@@ -688,7 +720,7 @@ fn initializeRemoteService(active: &mut ActiveService, timeoutMs: u64) -> Result
             "params": {}
         }),
         Some(listId),
-        timeoutMs,
+        deadline.remainingMs()?,
     )?
     .ok_or_else(|| "Remote MCP tools/list returned an empty response".to_string())?;
     if listResponse.get("error").is_some() {
@@ -700,12 +732,15 @@ fn initializeRemoteService(active: &mut ActiveService, timeoutMs: u64) -> Result
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    deadline.remainingMs()?;
     active.ready = true;
     Ok(())
 }
 
+/// Initializes a local server without resetting the startup budget.
 #[allow(non_snake_case)]
-fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), String> {
+fn initializeService(active: &mut ActiveService, deadline: &StartupDeadline) -> Result<(), String> {
+    deadline.remainingMs()?;
     let initializeId = nextRequestId(active);
     let process = active
         .process
@@ -726,10 +761,11 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
             .to_string(),
         )
         .map_err(|error| error.to_string())?;
-    let initializeResponse = readJsonResponse(active, initializeId, timeoutMs)?;
+    let initializeResponse = readJsonResponse(active, initializeId, deadline.remainingMs()?)?;
     if initializeResponse.get("error").is_some() {
         return Err(format!("MCP initialize failed: {initializeResponse}"));
     }
+    deadline.remainingMs()?;
     let listId = nextRequestId(active);
     let postInitializeMessages = vec![
         json!({
@@ -753,7 +789,7 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
     process
         .writeLines(&postInitializeMessages)
         .map_err(|error| error.to_string())?;
-    let listResponse = readJsonResponse(active, listId, timeoutMs)?;
+    let listResponse = readJsonResponse(active, listId, deadline.remainingMs()?)?;
     if listResponse.get("error").is_some() {
         return Err(format!("MCP tools/list failed: {listResponse}"));
     }
@@ -763,6 +799,7 @@ fn initializeService(active: &mut ActiveService, timeoutMs: u64) -> Result<(), S
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    deadline.remainingMs()?;
     active.ready = true;
     Ok(())
 }
@@ -1102,6 +1139,7 @@ fn nextRequestId(active: &mut ActiveService) -> u64 {
     active.requestId
 }
 
+/// Reads a matching response and reports process exit without waiting for the deadline.
 #[allow(non_snake_case)]
 fn readJsonResponse(
     active: &mut ActiveService,
@@ -1131,6 +1169,18 @@ fn readJsonResponse(
             .readStdoutLine(waitMs)
             .map_err(|error| error.to_string())?;
         let Some(line) = line else {
+            let process = active
+                .process
+                .as_ref()
+                .ok_or_else(|| "Local MCP process is not attached".to_string())?;
+            if !process.isRunning().map_err(|error| error.to_string())? {
+                let stderr = process.drainStderr().map_err(|error| error.to_string())?;
+                active.logs.push_str(&stderr);
+                active.ready = false;
+                return Err(format!(
+                    "MCP process exited before response {targetId}. {stderr}"
+                ));
+            }
             continue;
         };
         let parsed = match serde_json::from_str::<Value>(&line) {
@@ -1179,4 +1229,150 @@ fn errorResponse(id: &str, code: i64, message: &str) -> Value {
             "message": message
         }
     })
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
+    use operit_host_api::{HostError, HostResult};
+    use std::collections::VecDeque;
+
+    struct ScriptedProcess {
+        responses: Mutex<VecDeque<Option<String>>>,
+        writes: Arc<Mutex<Vec<String>>>,
+        running: bool,
+    }
+
+    impl ManagedRuntimeProcess for ScriptedProcess {
+        /// Records one outgoing JSON-RPC message without starting a real process.
+        fn writeLine(&self, line: &str) -> HostResult<()> {
+            self.writes.lock().unwrap().push(line.to_string());
+            Ok(())
+        }
+
+        /// Records the initialized notification and tool-discovery request in order.
+        fn writeLines(&self, lines: &[String]) -> HostResult<()> {
+            self.writes.lock().unwrap().extend_from_slice(lines);
+            Ok(())
+        }
+
+        /// Consumes exactly one scripted read and rejects unexpected additional reads.
+        fn readStdoutLine(&self, _timeoutMs: u64) -> HostResult<Option<String>> {
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or_else(|| HostError::new("Unexpected MCP stdout read"))
+        }
+
+        /// Supplies deterministic diagnostics for process-exit tests.
+        fn drainStderr(&self) -> HostResult<String> {
+            Ok("scripted stderr".to_string())
+        }
+
+        /// Reports the process state selected by the test.
+        fn isRunning(&self) -> HostResult<bool> {
+            Ok(self.running)
+        }
+
+        /// Acknowledges cleanup of the in-memory process used by the test.
+        fn kill(&self) -> HostResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Wraps a scripted process with isolated MCP protocol state.
+    fn activeProcess(process: ScriptedProcess) -> ActiveService {
+        ActiveService {
+            process: Some(Box::new(process)),
+            remote: None,
+            requestId: 0,
+            tools: Vec::new(),
+            ready: false,
+            logs: String::new(),
+        }
+    }
+
+    /// Deducts elapsed time from one shared budget across handshake phases.
+    #[test]
+    fn startupBudgetIsNotRenewed() {
+        let deadline = StartupDeadline { expiresAt: 1100 };
+        assert_eq!(deadline.remainingAt(100).unwrap(), 1000);
+        assert_eq!(deadline.remainingAt(800).unwrap(), 300);
+        assert_eq!(deadline.remainingAt(1099).unwrap(), 1);
+        assert!(deadline.remainingAt(1100).is_err());
+        assert!(deadline.remainingAt(1101).is_err());
+    }
+
+    /// Rejects an exhausted launch budget before sending the initialize request.
+    #[test]
+    fn expiredStartupDoesNotSendInitialize() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let mut active = activeProcess(ScriptedProcess {
+            responses: Mutex::new(VecDeque::new()),
+            writes: writes.clone(),
+            running: true,
+        });
+        assert!(initializeService(&mut active, &StartupDeadline { expiresAt: 0 }).is_err());
+        assert!(writes.lock().unwrap().is_empty());
+        assert!(!active.ready);
+    }
+
+    /// Preserves exit diagnostics and fails immediately after stdout closes.
+    #[test]
+    fn exitedProcessFailsOnFirstEmptyRead() {
+        let mut active = activeProcess(ScriptedProcess {
+            responses: Mutex::new(VecDeque::from([None])),
+            writes: Arc::new(Mutex::new(Vec::new())),
+            running: false,
+        });
+        active.ready = true;
+        assert_eq!(
+            readJsonResponse(&mut active, 7, 180_000).unwrap_err(),
+            "MCP process exited before response 7. scripted stderr"
+        );
+        assert!(!active.ready);
+        assert_eq!(active.logs, "scripted stderr");
+    }
+
+    /// Prevents a timeout-shaped server error from executing a side-effecting tool twice.
+    #[test]
+    fn timeoutErrorDoesNotReplayToolCall() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let serverError = json!({ "code": -32000, "message": "timeout after side effect" });
+        let mut active = activeProcess(ScriptedProcess {
+            responses: Mutex::new(VecDeque::from([Some(
+                json!({
+                    "jsonrpc": "2.0", "id": 1, "error": serverError.clone()
+                })
+                .to_string(),
+            )])),
+            writes: writes.clone(),
+            running: true,
+        });
+        active.ready = true;
+        let context = HostManager::default();
+        let bridge = MCPBridge::getInstance(&context);
+        let name = format!("test-no-replay-{}", uuid::Uuid::new_v4());
+        bridge.registerMcpService(
+            name.clone(),
+            "node".to_string(),
+            Vec::new(),
+            Some("test".to_string()),
+            BTreeMap::new(),
+            None,
+        );
+        bridgeState()
+            .lock()
+            .unwrap()
+            .active
+            .insert(name.clone(), active);
+        let client = MCPBridgeClient::new(context, name.clone());
+        let response = client.callTool("write_file", json!({"path": "test.txt"}));
+        bridge.unregisterMcpService(&name);
+        assert_eq!(response["success"], false);
+        assert_eq!(response["error"]["message"], serverError.to_string());
+        assert_eq!(writes.lock().unwrap().len(), 1);
+    }
 }

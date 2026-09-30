@@ -1,20 +1,15 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::runtime_support::ToolRuntimeSupport;
+use crate::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
+use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
+use crate::tools::mcp_runtime::MCPLocalServer::{CachedToolInfo, MCPConfig, MCPLocalServer};
 use crate::tools::PackageLoadingProgress::{
     appendPluginLoadingItemLog, ensurePluginLoadingItem, markPluginLoadingItemFailed,
     markPluginLoadingItemLoading, markPluginLoadingItemSuccess, pluginLoadingSessionActive,
     PLUGIN_LOAD_KIND_MCP,
 };
-use crate::tools::mcp_runtime::plugins::MCPBridge::MCPBridge;
-use crate::tools::mcp_runtime::plugins::MCPBridgeClient::MCPBridgeClient;
-use crate::tools::mcp_runtime::MCPLocalServer::{
-    CachedToolInfo, MCPConfig, MCPLocalServer, PluginMetadata,
-};
-use crate::tools::mcp_runtime::MCPRepository::MCPRepository;
 use operit_host_api::HostManager::HostManager;
 use operit_tools::tools::mcp::MCPManager::MCPManager;
 use operit_tools::tools::mcp::MCPServerConfig::MCPServerConfig;
@@ -49,18 +44,15 @@ pub struct VerificationResult {
 #[derive(Clone)]
 pub struct MCPStarter {
     context: HostManager,
-    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
 }
 
 impl MCPStarter {
-    /// Creates an MCP starter bound to one tool runtime.
-    pub fn new(context: HostManager, runtimeSupport: Arc<dyn ToolRuntimeSupport>) -> Self {
-        Self {
-            context,
-            runtimeSupport,
-        }
+    /// Creates an MCP starter using host capabilities without model dependencies.
+    pub fn new(context: HostManager) -> Self {
+        Self { context }
     }
 
+    /// Starts one enabled MCP server without issuing model requests.
     #[allow(non_snake_case)]
     pub fn startPlugin<F>(&self, pluginId: &str, mut statusCallback: F) -> bool
     where
@@ -73,6 +65,7 @@ impl MCPStarter {
         )
     }
 
+    /// Starts one enabled MCP server with a connection timeout.
     #[allow(non_snake_case)]
     pub fn startPluginWithTimeout<F>(
         &self,
@@ -86,6 +79,7 @@ impl MCPStarter {
         self.startPluginInternal(pluginId, timeoutMs, &mut statusCallback)
     }
 
+    /// Attempts every enabled server and reports aggregate failures.
     #[allow(non_snake_case)]
     pub fn startAllDeployedPlugins(&self) -> (usize, usize, PluginInitStatus) {
         let localServer = MCPLocalServer::getInstance(&self.context);
@@ -94,15 +88,10 @@ impl MCPStarter {
             .into_keys()
             .filter(|pluginId| localServer.isServerEnabled(pluginId))
             .collect::<Vec<_>>();
-        let mut successCount = 0usize;
-        for pluginId in &plugins {
-            if self.startPlugin(pluginId, |_| {}) {
-                successCount += 1;
-            }
-        }
-        (successCount, plugins.len(), PluginInitStatus::SUCCESS)
+        startEveryPlugin(&plugins, |pluginId| self.startPlugin(pluginId, |_| {}))
     }
 
+    /// Applies an independent timeout to each enabled server.
     #[allow(non_snake_case)]
     pub fn startAllDeployedPluginsWithTimeout(
         &self,
@@ -115,13 +104,11 @@ impl MCPStarter {
             .filter(|pluginId| localServer.isServerEnabled(pluginId))
             .collect::<Vec<_>>();
         let timeoutMs = timeoutSeconds.max(1) as u64 * 1000;
-        let mut successCount = 0usize;
         for pluginId in &plugins {
             reportMcpPluginQueued(pluginId, &localServer);
         }
-        for pluginId in &plugins {
+        startEveryPlugin(&plugins, |pluginId| {
             reportMcpPluginStarting(pluginId, &localServer);
-            let startedAtMillis = operit_host_api::TimeUtils::currentTimeMillisU128();
             let mut lastError = String::new();
             let started = self.startPluginWithTimeout(pluginId, timeoutMs, |status| {
                 let message = startStatusMessage(&status);
@@ -136,20 +123,15 @@ impl MCPStarter {
                 }
             });
             if started {
-                successCount += 1;
                 reportMcpPluginSuccess(pluginId);
             } else {
                 reportMcpPluginFailure(pluginId, &lastError);
             }
-            if operit_host_api::TimeUtils::currentTimeMillisU128().saturating_sub(startedAtMillis)
-                >= u128::from(timeoutMs)
-            {
-                break;
-            }
-        }
-        (successCount, plugins.len(), PluginInitStatus::SUCCESS)
+            started
+        })
     }
 
+    /// Connects a server and publishes its discovered tools.
     #[allow(non_snake_case)]
     fn startPluginInternal<F>(&self, pluginId: &str, timeoutMs: u64, statusCallback: &mut F) -> bool
     where
@@ -209,7 +191,13 @@ impl MCPStarter {
                 )));
                 return false;
             };
-            let runtimeDir = localServer.getPluginRuntimeDirectory(pluginId);
+            let runtimeDir = match localServer.preparePluginRuntimeDirectory(pluginId) {
+                Ok(directory) => directory,
+                Err(error) => {
+                    statusCallback(StartStatus::Error(error));
+                    return false;
+                }
+            };
             bridge.registerMcpService(
                 actualServiceName.clone(),
                 serverConfig.command.clone(),
@@ -245,45 +233,34 @@ impl MCPStarter {
         }
 
         let tools = client.getTools();
-        if !tools.is_empty() {
-            let cachedTools = tools
-                .iter()
-                .map(|tool| CachedToolInfo {
-                    name: tool
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    description: tool
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    inputSchema: tool
-                        .get("inputSchema")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({}))
-                        .to_string(),
-                    cachedAt: currentTimeMillis(),
-                })
-                .collect::<Vec<_>>();
-            let _ = localServer.cacheServerTools(pluginId.to_string(), cachedTools.clone());
-            let _ = bridge.cacheTools(actualServiceName.clone(), tools);
+        let cachedTools = tools
+            .iter()
+            .map(|tool| CachedToolInfo {
+                name: tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                inputSchema: tool
+                    .get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}))
+                    .to_string(),
+                cachedAt: currentTimeMillis(),
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = localServer.cacheServerTools(pluginId.to_string(), cachedTools) {
+            statusCallback(StartStatus::Error(format!(
+                "Failed to persist MCP tools: {error}"
+            )));
+            return false;
         }
-
-        let pluginInfo = if pluginInfo.description.trim().is_empty() {
-            match generateMissingDescription(
-                &self.context,
-                self.runtimeSupport.clone(),
-                pluginId,
-                &pluginInfo,
-            ) {
-                Some(updated) => updated,
-                None => pluginInfo,
-            }
-        } else {
-            pluginInfo
-        };
+        let _ = bridge.cacheTools(actualServiceName.clone(), tools);
 
         MCPManager::getInstance(self.context.clone()).registerServer(
             actualServiceName.clone(),
@@ -345,13 +322,7 @@ fn mcpPluginDisplayName(pluginId: &str, localServer: &MCPLocalServer) -> String 
         .getPluginMetadata(pluginId)
         .map(|metadata| metadata.name)
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| {
-            pluginId
-                .split('/')
-                .last()
-                .unwrap_or(pluginId)
-                .to_string()
-        })
+        .unwrap_or_else(|| pluginId.split('/').last().unwrap_or(pluginId).to_string())
 }
 
 fn startStatusMessage(status: &StartStatus) -> String {
@@ -410,28 +381,58 @@ fn reportMcpPluginFailure(pluginId: &str, message: &str) {
     markPluginLoadingItemFailed(pluginId, failure, message);
 }
 
+/// Attempts every queued server exactly once and summarizes the observed results.
 #[allow(non_snake_case)]
-fn generateMissingDescription(
-    context: &HostManager,
-    runtimeSupport: Arc<dyn ToolRuntimeSupport>,
-    pluginId: &str,
-    pluginInfo: &PluginMetadata,
-) -> Option<PluginMetadata> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    let repository = MCPRepository::getInstance(context, runtimeSupport);
-    let generatedDescription = runtime
-        .block_on(repository.generatePluginDescription(pluginId, &pluginInfo.name))
-        .ok()?;
-    if generatedDescription.trim().is_empty() {
-        return None;
+fn startEveryPlugin(
+    plugins: &[String],
+    mut start: impl FnMut(&str) -> bool,
+) -> (usize, usize, PluginInitStatus) {
+    let mut successCount = 0;
+    for plugin in plugins {
+        if start(plugin) {
+            successCount += 1;
+        }
     }
-    let mut updated = pluginInfo.clone();
-    updated.description = generatedDescription;
-    MCPLocalServer::getInstance(context)
-        .addOrUpdatePluginMetadata(pluginId, updated.clone())
-        .ok()?;
-    Some(updated)
+    let status = if successCount == plugins.len() {
+        PluginInitStatus::SUCCESS
+    } else {
+        PluginInitStatus::OTHER_ERROR
+    };
+    (successCount, plugins.len(), status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Keeps later servers eligible after the first server fails or times out.
+    #[test]
+    fn failedServerDoesNotTruncateStartup() {
+        let plugins = vec!["failed".to_string(), "ready".to_string()];
+        let mut attempted = Vec::new();
+        let result = startEveryPlugin(&plugins, |plugin| {
+            attempted.push(plugin.to_string());
+            plugin == "ready"
+        });
+        assert_eq!(attempted, plugins);
+        assert_eq!(result, (1, 2, PluginInitStatus::OTHER_ERROR));
+    }
+
+    /// Reports success only when every queued server starts successfully.
+    #[test]
+    fn successfulBatchReportsExactCounts() {
+        let plugins = vec!["one".to_string(), "two".to_string()];
+        assert_eq!(
+            startEveryPlugin(&plugins, |_| true),
+            (2, 2, PluginInitStatus::SUCCESS)
+        );
+        assert_eq!(
+            startEveryPlugin(&plugins, |_| false),
+            (0, 2, PluginInitStatus::OTHER_ERROR)
+        );
+        assert_eq!(
+            startEveryPlugin(&[], |_| panic!("empty batch")),
+            (0, 0, PluginInitStatus::SUCCESS)
+        );
+    }
 }

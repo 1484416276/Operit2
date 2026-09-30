@@ -519,14 +519,21 @@ fn generate_mcp_description(
     let metadata = mcp_local_server(&context)
         .getPluginMetadata(id)
         .ok_or_else(|| format!("MCP metadata not found: {id}"))?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    let description = runtime.block_on(
-        MCPRepository::getInstance(&context, application.toolHandler.runtimeSupport())
-            .generatePluginDescription(id, &metadata.name),
-    )?;
+    // The command dispatch runs on a tokio worker thread; creating a nested
+    // runtime and calling block_on here panics ("Cannot start a runtime from
+    // within a runtime"). block_in_place switches this worker into blocking
+    // mode, which allows driving the async description generation to
+    // completion via Handle::block_on.
+    let toolSupport = application.toolHandler.runtimeSupport();
+    let contextForDescription = context.clone();
+    let idForDescription = id.to_string();
+    let description = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(
+            MCPRepository::getInstance(&contextForDescription, toolSupport)
+                .generatePluginDescription(&idForDescription, &metadata.name),
+        )
+    })
+    .map_err(|error| error.to_string())?;
     mcp_local_server(&context).addOrUpdatePluginMetadata(
         id,
         PluginMetadata {

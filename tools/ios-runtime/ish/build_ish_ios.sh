@@ -37,10 +37,14 @@ source_signature="$(shasum -a 256 "$script_dir/build_ish_ios.sh" "$script_dir/fe
 sdk_version="$(xcrun --sdk "$sdk_name" --show-sdk-version)"
 build_signature="$configuration:$sdk_version:$platform_name:$architectures:$source_signature"
 
-# Reuses a verified static-library set restored by the CI cache.
+# Reuse a complete cache for Debug simulator launches. This keeps the VS Code
+# Run button from entering the nested iSH Xcode project on every launch. Release
+# builds remain source-signature strict; OPERIT_ISH_FORCE_REBUILD=1 bypasses either
+# cache when the runtime itself was intentionally changed.
 verify_cached_build_products() {
     local library_name
     local architecture
+    local cached_configuration cached_sdk cached_platform cached_architectures cached_source
     local cached_libraries=(
         liblinux.a
         libiSHLinux.a
@@ -52,10 +56,15 @@ verify_cached_build_products() {
         libiSHFchdir.a
     )
 
-    if [[ ! -f "$cache_marker" ]]; then
+    if [[ "${OPERIT_ISH_FORCE_REBUILD:-0}" == 1 || ! -s "$cache_marker" ]]; then
         return 1
     fi
-    if [[ "$(<"$cache_marker")" != "$build_signature" ]]; then
+    IFS=: read -r cached_configuration cached_sdk cached_platform cached_architectures cached_source < "$cache_marker"
+    if [[ "$cached_configuration" != "$configuration" || "$cached_sdk" != "$sdk_version" ||
+          "$cached_platform" != "$platform_name" || -z "$cached_source" ]]; then
+        return 1
+    fi
+    if [[ "$configuration" != Debug && "$cached_source" != "$source_signature" ]]; then
         return 1
     fi
     for library_name in "${cached_libraries[@]}"; do
@@ -72,11 +81,26 @@ verify_cached_build_products() {
         | awk '$NF == "_linux_mount_app_directory" { found = 1 } END { exit !found }'; then
         return 1
     fi
-    printf 'Reusing cached iSH static libraries: %s\n' "$build_products_dir"
+    if [[ "$cached_source" != "$source_signature" ]]; then
+        printf 'Reusing compatible Debug iSH cache: %s (set OPERIT_ISH_FORCE_REBUILD=1 to rebuild)\n' "$build_products_dir"
+    else
+        printf 'Reusing cached iSH static libraries: %s\n' "$build_products_dir"
+    fi
     return 0
 }
 
-# Prepares patched headers required by Runner even when static libraries are cached.
+# Check before extracting sources or applying patches: a warm launch must not
+# mutate the source tree or invoke a nested xcodebuild. Keep the cheap validation
+# on every Xcode launch so missing headers/libraries or a new architecture are
+# detected even when timestamps are unchanged.
+test -f "$rootfs_path"
+if [[ -f "$source_dir/app/LinuxInterop.h" && -f "$source_dir/kernel/errno.h" &&
+      -f "$source_dir/tools/fakefs.h" ]] && verify_cached_build_products; then
+    exit 0
+fi
+
+# A CI cache may contain libraries but no headers. Restore the pinned source
+# tree in that case, then check again before considering native compilation.
 python3 "$script_dir/fetch_sources.py"
 
 test -d "$source_dir"

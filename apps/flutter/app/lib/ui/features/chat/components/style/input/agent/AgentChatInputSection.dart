@@ -13,6 +13,7 @@ import 'package:liquid_glass_widgets/widgets/shared/glass_effect.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../l10n/generated/app_localizations.dart';
+import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
 import '../../../../../packages/utils/PackageDisplayUtils.dart';
 import '../../../../../settings/model/ProviderLogo.dart';
@@ -537,13 +538,13 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     );
   }
 
+  /// Reads the anchor rectangle in the popup Overlay coordinate space.
   Rect _targetRect(GlobalKey targetKey) {
     final renderObject = targetKey.currentContext?.findRenderObject();
     if (renderObject is! RenderBox || !renderObject.hasSize) {
       throw StateError('Popup target is not laid out.');
     }
-    final topLeft = renderObject.localToGlobal(Offset.zero);
-    return topLeft & renderObject.size;
+    return overlayTargetRectOf(context, renderObject);
   }
 
   void _dismissModelSettingsPopup() {

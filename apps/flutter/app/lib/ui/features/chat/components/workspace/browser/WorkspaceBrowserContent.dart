@@ -6,6 +6,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../../common/layout/ApplicationZoom.dart';
+import '../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
 import 'WorkspaceBrowserViewStore.dart';
 import 'bookmarks/WorkspaceBrowserBookmarkSheet.dart';
@@ -142,56 +144,58 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
             final isBookmarked = _sessionStore.stores.bookmarks.contains(
               tab.url,
             );
-            return Focus(
-              focusNode: _browserFocusNode,
-              autofocus: true,
-              child: CallbackShortcuts(
-                bindings: <ShortcutActivator, VoidCallback>{
-                  const SingleActivator(
-                    LogicalKeyboardKey.minus,
-                    control: true,
-                  ): _sessionStore.zoomOut,
-                  const SingleActivator(
-                    LogicalKeyboardKey.numpadSubtract,
-                    control: true,
-                  ): _sessionStore.zoomOut,
-                  const SingleActivator(
-                    LogicalKeyboardKey.equal,
-                    control: true,
-                  ): _sessionStore.zoomIn,
-                  const SingleActivator(
-                    LogicalKeyboardKey.equal,
-                    control: true,
-                    shift: true,
-                  ): _sessionStore.zoomIn,
-                  const SingleActivator(
-                    LogicalKeyboardKey.numpadAdd,
-                    control: true,
-                  ): _sessionStore.zoomIn,
-                  const SingleActivator(
-                    LogicalKeyboardKey.digit0,
-                    control: true,
-                  ): _sessionStore.resetZoom,
-                  const SingleActivator(
-                    LogicalKeyboardKey.numpad0,
-                    control: true,
-                  ): _sessionStore.resetZoom,
-                },
-                child: Column(
-                  children: <Widget>[
-                    WorkspaceBrowserUrlBar(
-                      tab: tab,
-                      isBookmarked: isBookmarked,
-                      onSubmitted: _sessionStore.navigateCurrent,
-                      onToggleBookmark: _sessionStore.toggleBookmark,
-                      onBack: _sessionStore.goBack,
-                      onForward: _sessionStore.goForward,
-                      onRefreshOrStop: _sessionStore.refreshOrStop,
-                      onOpenMenu: _toggleMenuPopup,
-                      menuButtonKey: _menuButtonKey,
-                    ),
-                    Expanded(child: _buildBrowserSurface(tab)),
-                  ],
+            return ApplicationZoomExclusion(
+              child: Focus(
+                focusNode: _browserFocusNode,
+                autofocus: true,
+                child: CallbackShortcuts(
+                  bindings: <ShortcutActivator, VoidCallback>{
+                    const SingleActivator(
+                      LogicalKeyboardKey.minus,
+                      control: true,
+                    ): _sessionStore.zoomOut,
+                    const SingleActivator(
+                      LogicalKeyboardKey.numpadSubtract,
+                      control: true,
+                    ): _sessionStore.zoomOut,
+                    const SingleActivator(
+                      LogicalKeyboardKey.equal,
+                      control: true,
+                    ): _sessionStore.zoomIn,
+                    const SingleActivator(
+                      LogicalKeyboardKey.equal,
+                      control: true,
+                      shift: true,
+                    ): _sessionStore.zoomIn,
+                    const SingleActivator(
+                      LogicalKeyboardKey.numpadAdd,
+                      control: true,
+                    ): _sessionStore.zoomIn,
+                    const SingleActivator(
+                      LogicalKeyboardKey.digit0,
+                      control: true,
+                    ): _sessionStore.resetZoom,
+                    const SingleActivator(
+                      LogicalKeyboardKey.numpad0,
+                      control: true,
+                    ): _sessionStore.resetZoom,
+                  },
+                  child: Column(
+                    children: <Widget>[
+                      WorkspaceBrowserUrlBar(
+                        tab: tab,
+                        isBookmarked: isBookmarked,
+                        onSubmitted: _sessionStore.navigateCurrent,
+                        onToggleBookmark: _sessionStore.toggleBookmark,
+                        onBack: _sessionStore.goBack,
+                        onForward: _sessionStore.goForward,
+                        onRefreshOrStop: _sessionStore.refreshOrStop,
+                        onOpenMenu: _toggleMenuPopup,
+                        menuButtonKey: _menuButtonKey,
+                      ),
+                      Expanded(child: _buildBrowserSurface(tab)),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -250,13 +254,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     final overlay = Overlay.of(context);
     final mediaQuery = MediaQuery.of(context);
     final screenSize = mediaQuery.size;
-    final targetOffset = renderBox.localToGlobal(Offset.zero);
-    final targetRect = Rect.fromLTWH(
-      targetOffset.dx,
-      targetOffset.dy,
-      renderBox.size.width,
-      renderBox.size.height,
-    );
+    final targetRect = overlayTargetRectOf(context, renderBox);
     final horizontalPadding = 12.0 + mediaQuery.padding.left;
     final rightPadding = 12.0 + mediaQuery.padding.right;
     final availableWidth = screenSize.width - horizontalPadding - rightPadding;
@@ -298,9 +296,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                   return AnimatedBuilder(
                     animation: tab,
                     builder: (context, child) => OperitGlassSurface(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainer,
+                      color: Theme.of(context).colorScheme.surfaceContainer,
                       layer: OperitGlassSurfaceLayer.card,
                       transparentAlpha: 1,
                       enableBackdropFilter: false,
@@ -499,6 +495,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     _zoomPopupEntry = null;
   }
 
+  /// Positions a browser panel relative to its menu anchor inside the Overlay.
   void _showPanelPopup(Widget child, {double preferredWidth = 320}) {
     _dismissPanelPopup();
     final overlay = Overlay.of(context);
@@ -508,9 +505,10 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     final rightPadding = 12.0 + mediaQuery.padding.right;
     final renderBox =
         _menuButtonKey.currentContext?.findRenderObject() as RenderBox?;
-    final targetBottom = renderBox == null || !renderBox.attached
-        ? 0.0
-        : renderBox.localToGlobal(Offset.zero).dy + renderBox.size.height;
+    if (renderBox == null || !renderBox.attached || !renderBox.hasSize) {
+      throw StateError('Browser panel anchor is not laid out.');
+    }
+    final targetBottom = overlayTargetRectOf(context, renderBox).bottom;
     final top = math.max(12.0 + mediaQuery.padding.top, targetBottom + 24);
     final availableWidth = screenSize.width - horizontalPadding - rightPadding;
     final popupWidth = availableWidth < preferredWidth

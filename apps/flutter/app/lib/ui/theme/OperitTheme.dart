@@ -17,6 +17,8 @@ import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../common/AppToastHost.dart';
 import '../common/RuntimeBootstrapScreen.dart';
+import '../common/layout/ApplicationZoom.dart';
+import '../common/layout/ApplicationZoomPreferences.dart';
 import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../features/startup/PluginLoadingOverlay.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
@@ -59,6 +61,10 @@ class OperitTheme extends StatefulWidget {
 class _OperitThemeState extends State<OperitTheme> {
   final RuntimeBootstrapManager _runtimeManager =
       RuntimeBootstrapManager.instance;
+  final ApplicationZoomPreferences _zoomPreferences =
+      const ApplicationZoomPreferences();
+  double _zoom = 1.0;
+  Future<void> _zoomSave = Future<void>.value();
   late final OperitThemeController _controller = OperitThemeController(
     onChanged: () {
       if (mounted) {
@@ -135,12 +141,14 @@ class _OperitThemeState extends State<OperitTheme> {
     _runtimeStartFuture = startFuture;
     try {
       await startFuture;
+      final zoom = await _zoomPreferences.load();
       if (!mounted ||
           generation != _runtimeGeneration ||
           !_runtimeManager.runtimeConfigured) {
         return;
       }
       setState(() {
+        _zoom = zoom;
         _runtimeUiReady = true;
         _runtimeStartCompleted = true;
         _runtimeStartupError = null;
@@ -204,6 +212,18 @@ class _OperitThemeState extends State<OperitTheme> {
     });
   }
 
+  /// Applies a keyboard-selected zoom and persists changes in input order.
+  void _changeZoom(double zoom) {
+    if (_zoom == zoom) {
+      return;
+    }
+    setState(() {
+      _zoom = zoom;
+    });
+    _zoomSave = _zoomSave.then((_) => _zoomPreferences.save(zoom));
+    unawaited(_zoomSave);
+  }
+
   /// Builds the bootstrap or fully initialized application theme.
   @override
   Widget build(BuildContext context) {
@@ -248,6 +268,9 @@ class _OperitThemeState extends State<OperitTheme> {
         themePreferenceSnapshot: themeSnapshot,
         hostInteractionHostsEnabled:
             runtimeReady && widget.hostInteractionHostsEnabled,
+        zoom: _zoom,
+        zoomShortcutsEnabled: runtimeReady && _runtimeStartCompleted,
+        onZoomChanged: _changeZoom,
         child: appChild,
       ),
     );
@@ -259,12 +282,18 @@ class _OperitMaterialApp extends StatelessWidget {
     required this.themeMode,
     required this.themePreferenceSnapshot,
     required this.hostInteractionHostsEnabled,
+    required this.zoom,
+    required this.zoomShortcutsEnabled,
+    required this.onZoomChanged,
     required this.child,
   });
 
   final ThemeMode themeMode;
   final ThemePreferenceSnapshot themePreferenceSnapshot;
   final bool hostInteractionHostsEnabled;
+  final double zoom;
+  final bool zoomShortcutsEnabled;
+  final ValueChanged<double> onZoomChanged;
   final Widget child;
 
   /// Builds the themed application and process-wide host overlays.
@@ -290,7 +319,7 @@ class _OperitMaterialApp extends StatelessWidget {
           ? Duration.zero
           : kThemeAnimationDuration,
       builder: (context, materialChild) {
-        return ThemeCircularRevealHost(
+        final appContent = ThemeCircularRevealHost(
           child: AnnotatedRegion<SystemUiOverlayStyle>(
             value: _systemUiOverlayStyle(Theme.of(context).colorScheme),
             child: _OperitThemeBackground(
@@ -298,6 +327,12 @@ class _OperitMaterialApp extends StatelessWidget {
               child: materialChild!,
             ),
           ),
+        );
+        return ApplicationZoomHost(
+          zoom: zoom,
+          shortcutsEnabled: zoomShortcutsEnabled,
+          onZoomChanged: onZoomChanged,
+          child: appContent,
         );
       },
       home: RuntimeBrowserOwnerHost(

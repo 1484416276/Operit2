@@ -141,7 +141,7 @@ impl RemoteAnnouncementService {
             .executeHttpRequest(HttpRequestData {
                 url: url.to_string(),
                 method: "GET".to_string(),
-                headers: vec![("Cache-Control".to_string(), "no-cache".to_string())],
+                headers: Vec::new(),
                 body: Vec::new(),
                 formFields: Vec::new(),
                 fileParts: Vec::new(),

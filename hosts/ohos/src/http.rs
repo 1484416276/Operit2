@@ -53,6 +53,16 @@ impl HttpHost for OhosHttpHost {
         self.inner.executeHttpRequest(request)
     }
 
+    /// Streams one HTTP response directly into the destination file.
+    #[allow(non_snake_case)]
+    fn downloadToFile(
+        &self,
+        request: HttpRequestData,
+        targetPath: String,
+    ) -> HostResult<operit_host_api::HttpFileDownloadResult> {
+        self.inner.downloadToFile(request, targetPath)
+    }
+
     /// Downloads files through the native bounded worker pool.
     fn downloadFiles(
         &self,

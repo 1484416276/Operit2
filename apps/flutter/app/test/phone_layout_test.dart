@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/common/interactions/DrawerGestureExclusion.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/DrawerConversationState.dart';
 import 'package:operit2/ui/main/layout/PhoneLayout.dart';
@@ -10,6 +10,133 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// Verifies drawer transitions preserve the mounted conversation list and input.
 void main() {
   for (final enableNavigationAnimation in <bool>[true, false]) {
+    testWidgets(
+      'input cursor drag does not open drawer (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final controller = TextEditingController(
+          text: 'Drag the cursor to edit this message',
+        );
+        final focus = FocusNode();
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(controller.dispose);
+        addTearDown(focus.dispose);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: Align(
+            alignment: Alignment.bottomCenter,
+            child: TextField(controller: controller, focusNode: focus),
+          ),
+        );
+        await tester.tap(find.byType(TextField));
+        await tester.pumpAndSettle();
+        final start =
+            tester.getTopLeft(find.byType(EditableText)) + const Offset(24, 12);
+        final gesture = await tester.startGesture(start);
+        await gesture.moveBy(const Offset(24, 0));
+        await gesture.moveBy(const Offset(80, 0));
+        await tester.pump();
+        expect(drawerOpen.value, isFalse);
+        await gesture.up();
+        expect(focus.hasFocus, isTrue);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+    testWidgets(
+      'long press selection drag remains usable (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final controller = TextEditingController(
+          text: 'Select these words without opening the sidebar',
+        );
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(controller.dispose);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: Align(
+            alignment: Alignment.bottomCenter,
+            child: DrawerGestureExclusion(
+              child: TextField(controller: controller, maxLines: 3),
+            ),
+          ),
+        );
+        final start =
+            tester.getTopLeft(find.byType(EditableText)) + const Offset(24, 12);
+        final gesture = await tester.startGesture(start);
+        await tester.pump(const Duration(milliseconds: 600));
+        final initialSelection = controller.selection;
+        expect(initialSelection.isCollapsed, isFalse);
+        await gesture.moveBy(const Offset(24, 0));
+        await gesture.moveBy(const Offset(100, 0));
+        await tester.pump();
+        expect(drawerOpen.value, isFalse);
+        expect(
+          controller.selection.extentOffset,
+          greaterThan(initialSelection.extentOffset),
+        );
+        await gesture.up();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+    testWidgets(
+      'composer padding and cancelled drags do not steal child gestures (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        var childDragUpdates = 0;
+        var taps = 0;
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: Column(
+            children: <Widget>[
+              const Expanded(child: SizedBox.expand()),
+              DrawerGestureExclusion(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanUpdate: (_) => childDragUpdates++,
+                    onTap: () => taps++,
+                    child: const SizedBox(height: 80, width: double.infinity),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+        // The empty padding is protected, and the exclusion follows the
+        // pointer even after it moves outside the original input bounds.
+        final paddingDrag = await tester.startGesture(const Offset(10, 700));
+        await paddingDrag.moveBy(const Offset(24, 0));
+        await paddingDrag.moveBy(const Offset(100, -120));
+        expect(drawerOpen.value, isFalse);
+        await paddingDrag.cancel();
+        await tester.dragFrom(const Offset(100, 720), const Offset(100, 0));
+        expect(childDragUpdates, greaterThan(0));
+        expect(drawerOpen.value, isFalse);
+        await tester.tapAt(const Offset(100, 720));
+        expect(taps, 1);
+        // Cancellation must not suppress the next ordinary drawer gesture.
+        await tester.dragFrom(const Offset(20, 400), const Offset(100, 0));
+        expect(drawerOpen.value, isTrue);
+        await tester.pumpAndSettle();
+        await tester.dragFrom(const Offset(200, 400), const Offset(-100, 0));
+        expect(drawerOpen.value, isFalse);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
     testWidgets(
       'retains content build layout and paint during drawer frames (effects: $enableNavigationAnimation)',
       (tester) async {
@@ -139,6 +266,48 @@ void main() {
       },
     );
   }
+}
+
+Future<void> _pumpSwipeTestLayout(
+  WidgetTester tester, {
+  required ValueNotifier<bool> drawerOpen,
+  required bool enableNavigationAnimation,
+  required Widget content,
+}) async {
+  tester.view.physicalSize = const Size(400, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  final conversations = ValueNotifier<DrawerConversationState>(
+    const DrawerConversationState(loading: false),
+  );
+  addTearDown(conversations.dispose);
+  await tester.pumpWidget(
+    OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
+      unconfiguredChildEnabled: true,
+      hostInteractionHostsEnabled: false,
+      child: Scaffold(
+        body: PhoneLayout(
+          content: content,
+          navigationEntries: const [],
+          pluginSidebarEntries: const [],
+          selectedRouteId: 'ai_chat',
+          drawerConversationState: conversations,
+          drawerWidth: 300,
+          drawerOpenState: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          onOpenDrawer: () => drawerOpen.value = true,
+          onCloseDrawer: () => drawerOpen.value = false,
+          onNavigationEntrySelected: (_) {},
+          onConversationActivated: () {},
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 class _ContentCounts {

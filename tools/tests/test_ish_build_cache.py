@@ -114,16 +114,27 @@ exit 73
         self.make_cache("Release")
         self.assert_cache_hit("Release", "arm64 x86_64")
 
-    def test_debug_allows_compatible_source_signature_change(self):
+    def test_debug_rejects_source_signature_change(self):
         self.make_cache(signature="previous-source-signature")
-        result, calls = self.run_build()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("OPERIT_ISH_FORCE_REBUILD=1", result.stdout)
-        self.assertEqual(calls, "")
+        self.assert_cache_miss()
 
     def test_release_rejects_source_signature_change(self):
         self.make_cache("Release", signature="previous-source-signature")
         self.assert_cache_miss("Release")
+
+    def test_crash_fix_patch_changes_invalidate_all_configurations(self):
+        for name in ("0001-operit-managed-runtime-mount.patch",
+                     "0004-emulator-tlb-task-migration.patch"):
+            path = self.script_dir / "patches" / name
+            original = path.read_text(encoding="utf-8")
+            for configuration in ("Debug", "Release"):
+                with self.subTest(patch=name, configuration=configuration):
+                    self.make_cache(configuration)
+                    path.write_text(original + "\n", encoding="utf-8")
+                    try:
+                        self.assert_cache_miss(configuration)
+                    finally:
+                        path.write_text(original, encoding="utf-8")
 
     def test_force_rebuild_bypasses_cache(self):
         self.assert_cache_miss(OPERIT_ISH_FORCE_REBUILD="1")

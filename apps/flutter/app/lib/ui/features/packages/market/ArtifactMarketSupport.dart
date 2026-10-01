@@ -1,7 +1,5 @@
 // ignore_for_file: file_names
 
-import 'dart:typed_data';
-
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../main/navigation/ToolPkgCatalogChangeBus.dart';
@@ -71,16 +69,11 @@ Future<String> runCoreMarketInstall({
   if (fileName == null || fileName.isEmpty) {
     throw StateError('Marketplace asset has no file name');
   }
-  final bytes = await clients.providersMarketStatsApiService.downloadAsset(
+  final result = await clients.application.installMarketArtifact(
     assetId: asset.id,
+    fileName: fileName,
+    expectedSha256: asset.sha256,
   );
-  final result = await clients.application
-      .packageManager()
-      .addMarketArtifactBytes(
-        bytes: Uint8List.fromList(bytes),
-        fileName: fileName,
-        expectedSha256: asset.sha256,
-      );
   if (!result.toLowerCase().startsWith('successfully imported')) {
     throw StateError(result);
   }

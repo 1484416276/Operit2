@@ -37,10 +37,10 @@ source_signature="$(shasum -a 256 "$script_dir/build_ish_ios.sh" "$script_dir/fe
 sdk_version="$(xcrun --sdk "$sdk_name" --show-sdk-version)"
 build_signature="$configuration:$sdk_version:$platform_name:$architectures:$source_signature"
 
-# Reuse a complete cache for Debug simulator launches. This keeps the VS Code
-# Run button from entering the nested iSH Xcode project on every launch. Release
-# builds remain source-signature strict; OPERIT_ISH_FORCE_REBUILD=1 bypasses either
-# cache when the runtime itself was intentionally changed.
+# Reuse complete, source-matched builds to keep warm launches fast. Debug must
+# also match the source signature: reusing an older runtime after a patch change
+# can silently leave native crash fixes out of the running app.
+# OPERIT_ISH_FORCE_REBUILD=1 bypasses the cache even when its signature matches.
 verify_cached_build_products() {
     local library_name
     local architecture
@@ -64,7 +64,7 @@ verify_cached_build_products() {
           "$cached_platform" != "$platform_name" || -z "$cached_source" ]]; then
         return 1
     fi
-    if [[ "$configuration" != Debug && "$cached_source" != "$source_signature" ]]; then
+    if [[ "$cached_source" != "$source_signature" ]]; then
         return 1
     fi
     for library_name in "${cached_libraries[@]}"; do
@@ -81,11 +81,7 @@ verify_cached_build_products() {
         | awk '$NF == "_linux_mount_app_directory" { found = 1 } END { exit !found }'; then
         return 1
     fi
-    if [[ "$cached_source" != "$source_signature" ]]; then
-        printf 'Reusing compatible Debug iSH cache: %s (set OPERIT_ISH_FORCE_REBUILD=1 to rebuild)\n' "$build_products_dir"
-    else
-        printf 'Reusing cached iSH static libraries: %s\n' "$build_products_dir"
-    fi
+    printf 'Reusing cached iSH static libraries: %s\n' "$build_products_dir"
     return 0
 }
 

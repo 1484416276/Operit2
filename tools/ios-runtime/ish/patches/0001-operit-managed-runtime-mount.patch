@@ -1,7 +1,7 @@
 diff --git a/app/LinuxInterop.h b/app/LinuxInterop.h
 --- a/app/LinuxInterop.h
 +++ b/app/LinuxInterop.h
-@@ -66,5 +66,7 @@ void linux_sethostname(const char *hostname);
+@@ -67,5 +67,7 @@
  ssize_t linux_read_file(const char *path, char *buf, size_t size);
  ssize_t linux_write_file(const char *path, const char *buf, size_t size);
  int linux_remove_directory(const char *path);
@@ -12,7 +12,7 @@ diff --git a/app/LinuxInterop.h b/app/LinuxInterop.h
 diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
 --- a/app/LinuxInterop.c
 +++ b/app/LinuxInterop.c
-@@ -8,6 +8,13 @@
+@@ -8,6 +8,14 @@
  #include "LinuxInterop.h"
  #include <Block.h>
  #include <linux/start_kernel.h>
@@ -21,12 +21,13 @@ diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
 +#include <linux/init.h>
 +#include <linux/init_syscalls.h>
 +#include <linux/list.h>
++#include <linux/mm.h>
 +#include <linux/mutex.h>
 +#include <uapi/linux/mount.h>
  #include <linux/slab.h>
  #include <linux/kernel.h>
  #include <linux/notifier.h>
-@@ -185,3 +190,61 @@ ssize_t linux_write_file(const char *path, const char *buf, size_t size) {
+@@ -185,3 +193,74 @@
  int linux_remove_directory(const char *path) {
      return init_rmdir(path);
  }
@@ -49,6 +50,10 @@ diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
 +int linux_mount_app_directory(const char *directory, const char *mount_point) {
 +    if (directory == NULL || mount_point == NULL || directory[0] != '/' || mount_point[0] != '/')
 +        return -EINVAL;
++
++    size_t directory_length = strnlen(directory, PAGE_SIZE);
++    if (directory_length == PAGE_SIZE)
++        return -ENAMETOOLONG;
 +
 +    int result = 0;
 +    mutex_lock(&operit_runtime_mounts_lock);
@@ -75,7 +80,16 @@ diff --git a/app/LinuxInterop.c b/app/LinuxInterop.c
 +        goto out_unlock;
 +    }
 +
-+    result = do_mount(directory, mount_point, "hostfs", MS_SILENT, (void *) directory);
++    /* path_mount() writes data_page[PAGE_SIZE - 1] before parsing hostfs data.
++     * A host path string is neither a full page nor necessarily writable. */
++    char *mount_data = kzalloc(PAGE_SIZE, GFP_KERNEL);
++    if (mount_data == NULL) {
++        result = -ENOMEM;
++    } else {
++        memcpy(mount_data, directory, directory_length + 1);
++        result = do_mount(directory, mount_point, "hostfs", MS_SILENT, mount_data);
++        kfree(mount_data);
++    }
 +    if (result != 0) {
 +        kfree(mount->host_directory);
 +        kfree(mount->mount_point);

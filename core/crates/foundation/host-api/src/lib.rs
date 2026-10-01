@@ -1242,6 +1242,14 @@ pub struct HttpResponseData {
     pub body: Vec<u8>,
 }
 
+/// Describes one HTTP response streamed into a destination file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpFileDownloadResult {
+    pub finalUrl: String,
+    pub targetPath: String,
+    pub downloadedBytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpDownloadFileRequest {
     pub fileId: String,
@@ -1387,6 +1395,17 @@ pub trait HttpHost: HttpStreamHost + Send + Sync {
 
     /// Executes one buffered HTTP request.
     fn executeHttpRequest(&self, request: HttpRequestData) -> HostResult<HttpResponseData>;
+
+    /// Streams one successful HTTP response to a file without a declared byte count.
+    /// Implementations must not publish an incomplete response as the destination file.
+    #[allow(non_snake_case)]
+    fn downloadToFile(
+        &self,
+        _request: HttpRequestData,
+        _targetPath: String,
+    ) -> HostResult<HttpFileDownloadResult> {
+        Err(HostError::new("HTTP download to file is not supported by this host"))
+    }
 
     /// Downloads files with bounded worker concurrency and progress reporting.
     fn downloadFiles(

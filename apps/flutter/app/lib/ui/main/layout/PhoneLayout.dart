@@ -3,14 +3,17 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/rendering.dart';
 
 import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../../theme/OperitGlassSurface.dart';
+import '../../common/interactions/DrawerGestureExclusion.dart';
 
 class PhoneLayout extends StatefulWidget {
   const PhoneLayout({
@@ -161,14 +164,23 @@ class _PhoneLayoutState extends State<PhoneLayout>
       ),
     );
 
-    return GestureDetector(
+    return RawGestureDetector(
       behavior: HitTestBehavior.translucent,
-      onHorizontalDragStart: _handleHorizontalDragStart,
-      onHorizontalDragUpdate: _handleHorizontalDragUpdate,
-      onHorizontalDragEnd: _handleHorizontalDragEnd,
-      onHorizontalDragCancel: () {
-        _currentDrag = 0;
-        _verticalDrag = 0;
+      gestures: <Type, GestureRecognizerFactory>{
+        _DrawerHorizontalDragGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<
+              _DrawerHorizontalDragGestureRecognizer
+            >(_DrawerHorizontalDragGestureRecognizer.new, (recognizer) {
+              recognizer
+                ..gestureSettings = MediaQuery.maybeGestureSettingsOf(context)
+                ..onStart = _handleHorizontalDragStart
+                ..onUpdate = _handleHorizontalDragUpdate
+                ..onEnd = _handleHorizontalDragEnd
+                ..onCancel = () {
+                  _currentDrag = 0;
+                  _verticalDrag = 0;
+                };
+            }),
       },
       child: AnimatedBuilder(
         animation: _drawerProgressController,
@@ -308,6 +320,40 @@ class _PhoneLayoutState extends State<PhoneLayout>
           );
         },
       ),
+    );
+  }
+}
+
+class _DrawerHorizontalDragGestureRecognizer
+    extends HorizontalDragGestureRecognizer {
+  @override
+  bool isPointerAllowed(PointerEvent event) {
+    if (!super.isPointerAllowed(event)) {
+      return false;
+    }
+    return !_startsInExcludedRegion(event);
+  }
+
+  @override
+  bool isPointerPanZoomAllowed(PointerPanZoomStartEvent event) {
+    return super.isPointerPanZoomAllowed(event) &&
+        !_startsInExcludedRegion(event);
+  }
+
+  bool _startsInExcludedRegion(PointerEvent event) {
+    // Reject before entering the arena, not in onUpdate: winning the arena
+    // would already cancel the text field's cursor/selection recognizers.
+    // Use the actual hit-test path so zoom and animated transforms are honored.
+    final result = HitTestResult();
+    RendererBinding.instance.hitTestInView(
+      result,
+      event.position,
+      event.viewId,
+    );
+    return result.path.any(
+      (entry) =>
+          entry.target is RenderEditable ||
+          DrawerGestureExclusion.containsTarget(entry.target),
     );
   }
 }

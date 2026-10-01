@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
+use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -10,7 +11,7 @@ use operit_host_api::{
     httpDownloadPartialTargetPath, HostError, HostResult, HttpDownloadControl,
     HttpDownloadFileRequest, HttpDownloadFileResult, HttpDownloadProgress,
     HttpDownloadProgressCallback, HttpDownloadProgressState, HttpDownloadRequest,
-    HttpDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
+    HttpDownloadResult, HttpFileDownloadResult, HttpHost, HttpRequestData, HttpResponseData, HttpStreamChunkCallback,
     HttpStreamClosedCallback, HttpStreamHost, HttpStreamOpenedCallback, WebSocketClosedCallback,
     WebSocketHost, WebSocketMessageCallback, WebSocketOpenedCallback, WebSocketRequestData,
 };
@@ -303,7 +304,7 @@ fn executeHttpByteStream(
                 let part = reqwest::multipart::Part::bytes(file.content)
                     .file_name(file.fileName)
                     .mime_str(&file.contentType)
-                    .map_err(|error| HostError::new(error.to_string()))?;
+                    .map_err(httpError)?;
                 form = form.part(file.fieldName, part);
             }
             httpRequest = httpRequest.multipart(form);
@@ -316,7 +317,7 @@ fn executeHttpByteStream(
                 return Ok(());
             }
             response = httpRequest.send() => {
-                response.map_err(|error| HostError::new(error.to_string()))?
+                response.map_err(httpError)?
             }
         };
         if !response.status().is_success() {
@@ -324,7 +325,7 @@ fn executeHttpByteStream(
             let body = response
                 .text()
                 .await
-                .map_err(|error| HostError::new(error.to_string()))?;
+                .map_err(httpError)?;
             return Err(HostError::new(format!("HTTP {status}: {body}")));
         }
         onOpened();
@@ -335,7 +336,7 @@ fn executeHttpByteStream(
                     return Ok(());
                 }
                 chunk = response.chunk() => {
-                    match chunk.map_err(|error| HostError::new(error.to_string()))? {
+                    match chunk.map_err(httpError)? {
                         Some(bytes) => onChunk(bytes.to_vec()),
                         None => return Ok(()),
                     }
@@ -359,6 +360,24 @@ impl HttpHost for NativeHttpHost {
             .map_err(|_| HostError::new("native HTTP request thread panicked"))?
     }
 
+    /// Streams one response to disk on a blocking network thread.
+    #[allow(non_snake_case)]
+    fn downloadToFile(
+        &self,
+        request: HttpRequestData,
+        targetPath: String,
+    ) -> HostResult<HttpFileDownloadResult> {
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| HostError::new(error.to_string()))?;
+            runtime.block_on(downloadToFileAsync(request, targetPath))
+        })
+        .join()
+        .map_err(|_| HostError::new("native HTTP file download thread panicked"))?
+    }
+
     /// Downloads files on a dedicated manager thread with bounded worker concurrency.
     fn downloadFiles(
         &self,
@@ -372,11 +391,121 @@ impl HttpHost for NativeHttpHost {
     }
 }
 
+/// Streams one successful response directly to a temporary file and publishes
+/// it only after the complete response has been written.
+async fn downloadToFileAsync(
+    request: HttpRequestData,
+    targetPath: String,
+) -> HostResult<HttpFileDownloadResult> {
+    if targetPath.trim().is_empty() {
+        return Err(HostError::new("HTTP download target path is empty"));
+    }
+    let client = buildHttpStreamClient(
+        request.connectTimeoutSeconds,
+        request.readTimeoutSeconds,
+        request.followRedirects,
+        request.ignoreSsl,
+        &request.proxyHost,
+        request.proxyPort,
+    )?;
+    let method = Method::from_bytes(request.method.as_bytes())
+        .map_err(|error| HostError::new(error.to_string()))?;
+    let mut httpRequest = client.request(method, request.url);
+    httpRequest = httpRequest.headers(headersToReqwest(&request.headers)?);
+    if !request.fileParts.is_empty() || !request.formFields.is_empty() {
+        let mut form = reqwest::multipart::Form::new();
+        for (name, value) in request.formFields {
+            form = form.text(name, value);
+        }
+        for file in request.fileParts {
+            let part = reqwest::multipart::Part::bytes(file.content)
+                .file_name(file.fileName)
+                .mime_str(&file.contentType)
+                .map_err(httpError)?;
+            form = form.part(file.fieldName, part);
+        }
+        httpRequest = httpRequest.multipart(form);
+    } else if !request.body.is_empty() {
+        httpRequest = httpRequest.body(request.body);
+    }
+    let mut response = httpRequest.send().await.map_err(httpError)?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.map_err(httpError)?;
+        return Err(HostError::new(format!("HTTP {status}: {body}")));
+    }
+    let finalUrl = response.url().to_string();
+    let target = Path::new(&targetPath);
+    if let Some(parent) = target.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(httpIoError)?;
+    }
+    let partialPath = httpDownloadPartialTargetPath(&targetPath);
+    let result = async {
+        let mut output = fs::File::create(&partialPath).map_err(httpIoError)?;
+        let mut downloadedBytes = 0u64;
+        while let Some(chunk) = response.chunk().await.map_err(httpError)? {
+            output.write_all(&chunk).map_err(httpIoError)?;
+            downloadedBytes = downloadedBytes
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| HostError::new("HTTP download byte count overflowed"))?;
+        }
+        output.flush().map_err(httpIoError)?;
+        drop(output);
+        fs::rename(&partialPath, target).map_err(httpIoError)?;
+        Ok(HttpFileDownloadResult {
+            finalUrl,
+            targetPath: targetPath.clone(),
+            downloadedBytes,
+        })
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&partialPath);
+    }
+    result
+}
+
 /// Executes one buffered request outside every caller-owned async runtime context.
 fn executeHttpRequestOnBlockingThread(
     request: HttpRequestData,
     clients: Arc<Mutex<BTreeMap<HttpClientPolicy, BlockingClient>>>,
 ) -> HostResult<HttpResponseData> {
+    let response = sendHttpRequestOnBlockingThread(request, clients)?;
+    let finalUrl = response.url().to_string();
+    let status = response.status();
+    let statusCode = status.as_u16() as i32;
+    let statusMessage = match status.canonical_reason() {
+        Some(reason) => reason.to_string(),
+        None => String::new(),
+    };
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|text| (name.to_string(), text.to_string()))
+                .map_err(|error| HostError::new(error.to_string()))
+        })
+        .collect::<HostResult<Vec<_>>>()?;
+    let body = response
+        .bytes()
+        .map_err(httpError)?
+        .to_vec();
+    Ok(HttpResponseData {
+        finalUrl,
+        statusCode,
+        statusMessage,
+        headers,
+        body,
+    })
+}
+
+/// Sends buffered and file requests with the same headers, body, proxy and redirect policy.
+fn sendHttpRequestOnBlockingThread(
+    request: HttpRequestData,
+    clients: Arc<Mutex<BTreeMap<HttpClientPolicy, BlockingClient>>>,
+) -> HostResult<reqwest::blocking::Response> {
     let policy = HttpClientPolicy {
         connectTimeoutSeconds: request.connectTimeoutSeconds,
         readTimeoutSeconds: request.readTimeoutSeconds,
@@ -417,44 +546,46 @@ fn executeHttpRequestOnBlockingThread(
             let part = multipart::Part::bytes(file.content)
                 .file_name(file.fileName)
                 .mime_str(&file.contentType)
-                .map_err(|error| HostError::new(error.to_string()))?;
+                .map_err(httpError)?;
             form = form.part(file.fieldName, part);
         }
         httpRequest = httpRequest.multipart(form);
     } else if !request.body.is_empty() {
         httpRequest = httpRequest.body(request.body);
     }
-    let response = httpRequest
-        .send()
-        .map_err(|error| HostError::new(error.to_string()))?;
-    let finalUrl = response.url().to_string();
-    let status = response.status();
-    let statusCode = status.as_u16() as i32;
-    let statusMessage = match status.canonical_reason() {
-        Some(reason) => reason.to_string(),
-        None => String::new(),
-    };
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(name, value)| {
-            value
-                .to_str()
-                .map(|text| (name.to_string(), text.to_string()))
-                .map_err(|error| HostError::new(error.to_string()))
-        })
-        .collect::<HostResult<Vec<_>>>()?;
-    let body = response
-        .bytes()
-        .map_err(|error| HostError::new(error.to_string()))?
-        .to_vec();
-    Ok(HttpResponseData {
-        finalUrl,
-        statusCode,
-        statusMessage,
-        headers,
-        body,
-    })
+    httpRequest.send().map_err(httpError)
+
+}
+
+/// Preserves the network cause and timeout classification across the Host boundary.
+fn httpError(error: reqwest::Error) -> HostError {
+    let message = errorChain(&error);
+    if error.is_timeout() { HostError::timeout(message) } else { HostError::new(message) }
+}
+
+/// Includes nested HTTP failures when streaming a response through std::io.
+fn httpIoError(error: std::io::Error) -> HostError {
+    let mut source: Option<&(dyn Error + 'static)> = Some(&error);
+    let mut timedOut = error.kind() == std::io::ErrorKind::TimedOut;
+    while let Some(cause) = source {
+        if let Some(networkError) = cause.downcast_ref::<reqwest::Error>() {
+            timedOut |= networkError.is_timeout();
+        }
+        source = cause.source();
+    }
+    let message = errorChain(&error);
+    if timedOut { HostError::timeout(message) } else { HostError::new(message) }
+}
+
+fn errorChain(error: &(dyn Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 /// Executes one validated batch through a bounded native worker pool.
@@ -631,7 +762,7 @@ fn validateDownloadRequest(request: &HttpDownloadRequest) -> HostResult<()> {
     Ok(())
 }
 
-/// Builds one reqwest client from an explicit Host request policy.
+/// Builds one blocking client from an explicit Host request policy.
 fn buildHttpClient(
     connectTimeoutSeconds: u64,
     readTimeoutSeconds: u64,
@@ -641,23 +772,30 @@ fn buildHttpClient(
     proxyPort: u16,
 ) -> HostResult<BlockingClient> {
     let mut builder = BlockingClient::builder()
-        .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
-        .timeout(Duration::from_secs(readTimeoutSeconds))
         .danger_accept_invalid_certs(ignoreSsl);
+    if connectTimeoutSeconds > 0 {
+        builder = builder.connect_timeout(Duration::from_secs(connectTimeoutSeconds));
+    }
+    // reqwest's blocking client has no idle-read timeout. Do not map the
+    // host read timeout to its total timeout: large responses may legitimately
+    // take longer while continuing to make progress.
+    let _ = readTimeoutSeconds;
     if !followRedirects {
         builder = builder.redirect(reqwest::redirect::Policy::none());
     }
-    if !proxyHost.trim().is_empty() && proxyPort > 0 {
-        let proxyUrl = format!("http://{}:{}", proxyHost.trim(), proxyPort);
-        builder = builder
-            .proxy(Proxy::http(&proxyUrl).map_err(|error| HostError::new(error.to_string()))?);
+    if !proxyHost.trim().is_empty() {
+        if proxyPort == 0 {
+            return Err(HostError::new("HTTP proxy port must be positive"));
+        }
+        builder = builder.proxy(
+            Proxy::all(format!("http://{}:{}", proxyHost.trim(), proxyPort))
+                .map_err(httpError)?,
+        );
     }
-    builder
-        .build()
-        .map_err(|error| HostError::new(error.to_string()))
+    builder.build().map_err(httpError)
 }
 
-/// Builds one asynchronous client for a Host-owned streaming HTTP response.
+/// Builds an asynchronous client for Host-owned streaming HTTP responses.
 #[allow(non_snake_case)]
 fn buildHttpStreamClient(
     connectTimeoutSeconds: u64,
@@ -668,26 +806,28 @@ fn buildHttpStreamClient(
     proxyPort: u16,
 ) -> HostResult<AsyncClient> {
     let mut builder = AsyncClient::builder()
-        .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
         .danger_accept_invalid_certs(ignoreSsl);
+    if connectTimeoutSeconds > 0 {
+        builder = builder.connect_timeout(Duration::from_secs(connectTimeoutSeconds));
+    }
     if readTimeoutSeconds > 0 {
-        builder = builder.timeout(Duration::from_secs(readTimeoutSeconds));
+        builder = builder.read_timeout(Duration::from_secs(readTimeoutSeconds));
     }
     if !followRedirects {
         builder = builder.redirect(reqwest::redirect::Policy::none());
     }
     if !proxyHost.trim().is_empty() {
+        if proxyPort == 0 {
+            return Err(HostError::new("HTTP proxy port must be positive"));
+        }
         builder = builder.proxy(
             Proxy::all(format!("http://{}:{}", proxyHost.trim(), proxyPort))
-                .map_err(|error| HostError::new(error.to_string()))?,
+                .map_err(httpError)?,
         );
     }
-    builder
-        .build()
-        .map_err(|error| HostError::new(error.to_string()))
+    builder.build().map_err(httpError)
 }
 
-/// Builds one asynchronous client so an active request can observe cancellation immediately.
 fn buildDownloadHttpClient(
     connectTimeoutSeconds: u64,
     readTimeoutSeconds: u64,
@@ -696,21 +836,14 @@ fn buildDownloadHttpClient(
     proxyHost: &str,
     proxyPort: u16,
 ) -> HostResult<AsyncClient> {
-    let mut builder = AsyncClient::builder()
-        .connect_timeout(Duration::from_secs(connectTimeoutSeconds))
-        .timeout(Duration::from_secs(readTimeoutSeconds))
-        .danger_accept_invalid_certs(ignoreSsl);
-    if !followRedirects {
-        builder = builder.redirect(reqwest::redirect::Policy::none());
-    }
-    if !proxyHost.trim().is_empty() && proxyPort > 0 {
-        let proxyUrl = format!("http://{}:{}", proxyHost.trim(), proxyPort);
-        builder = builder
-            .proxy(Proxy::http(&proxyUrl).map_err(|error| HostError::new(error.to_string()))?);
-    }
-    builder
-        .build()
-        .map_err(|error| HostError::new(error.to_string()))
+    buildHttpStreamClient(
+        connectTimeoutSeconds,
+        readTimeoutSeconds,
+        followRedirects,
+        ignoreSsl,
+        proxyHost,
+        proxyPort,
+    )
 }
 
 /// Removes and returns the next queued file.
@@ -1147,6 +1280,47 @@ mod tests {
             assert_eq!(response.body, b"ok");
         }
         server.join().unwrap();
+    }
+
+    /// Verifies a direct file download publishes only the completed destination.
+    #[test]
+    fn downloadsResponseDirectlyToFile() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = readHttpRequest(&mut stream);
+            assert!(request.starts_with("GET /file "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world")
+                .unwrap();
+        });
+        let directory = uniqueTempDir("direct-file");
+        let target = directory.join("artifact.bin");
+        let response = NativeHttpHost::new()
+            .downloadToFile(
+                HttpRequestData {
+                    url: format!("http://{address}/file"),
+                    method: "GET".to_string(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    formFields: Vec::new(),
+                    fileParts: Vec::new(),
+                    connectTimeoutSeconds: 2,
+                    readTimeoutSeconds: 2,
+                    followRedirects: true,
+                    ignoreSsl: false,
+                    proxyHost: String::new(),
+                    proxyPort: 0,
+                },
+                target.to_string_lossy().to_string(),
+            )
+            .unwrap();
+        assert_eq!(response.downloadedBytes, 11);
+        assert_eq!(fs::read(&target).unwrap(), b"hello world");
+        assert!(!target.with_extension("bin.partial").exists());
+        server.join().unwrap();
+        let _ = fs::remove_dir_all(directory);
     }
 
     /// Verifies the native WebSocket carrier keeps polling until a delayed server message arrives.

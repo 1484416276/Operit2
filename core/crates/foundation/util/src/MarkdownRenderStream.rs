@@ -7,6 +7,7 @@ use crate::streamnative::NativeMarkdownSplitter::{
     MarkdownProcessorType, MarkdownSession, NativeMarkdownSplitter, Segment,
 };
 use crate::streamnative::NativeXmlSplitter::{NativeXmlSplitter, XmlNode, XmlOpeningTag};
+use crate::ChatMarkupRegex::ChatMarkupRegex;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MarkdownStreamEvent {
@@ -53,7 +54,6 @@ struct ActiveBlock {
     id: u64,
     inline: Option<MarkdownGroupSession>,
     xml: Option<XmlBlockMetadata>,
-    xmlContent: Option<MarkdownGroupSession>,
     xmlMarkdown: Option<Box<MarkdownRenderEventStream>>,
     nextInlineId: u64,
     activeInline: Option<ActiveInline>,
@@ -63,6 +63,7 @@ struct XmlBlockMetadata {
     raw: String,
     opening: Option<XmlOpeningTag>,
     isClosed: bool,
+    emittedBodyEnd: usize,
 }
 
 impl XmlBlockMetadata {
@@ -72,6 +73,7 @@ impl XmlBlockMetadata {
             raw: String::new(),
             opening: None,
             isClosed: false,
+            emittedBodyEnd: 0,
         }
     }
 
@@ -83,6 +85,27 @@ impl XmlBlockMetadata {
         }
     }
 
+    /// Emits only the outer node's body, preserving every nested tag verbatim.
+    /// A possible outer closing-tag suffix stays buffered until it is resolved.
+    fn takeBodyChunk(&mut self) -> String {
+        let Some(opening) = self.opening.as_ref() else {
+            return String::new();
+        };
+        let closing = format!("</{}>", opening.tag_name);
+        let body = &self.raw[opening.end..];
+        let withheld = (1..=closing.len())
+            .rev()
+            .find(|&length| body.as_bytes().ends_with(&closing.as_bytes()[..length]))
+            .unwrap_or(0);
+        let end = self.raw.len() - withheld;
+        let start = self.emittedBodyEnd.max(opening.end);
+        if end <= start {
+            return String::new();
+        }
+        self.emittedBodyEnd = end;
+        self.raw[start..end].to_string()
+    }
+
     /// Marks the XML block closed at the boundary emitted by StreamXmlPlugin.
     fn close(&mut self) {
         self.isClosed = true;
@@ -91,15 +114,18 @@ impl XmlBlockMetadata {
     /// Converts the accumulated XML metadata into a transport event.
     fn event(&self) -> MarkdownXmlStreamEvent {
         if self.isClosed {
-            let node = NativeXmlSplitter::parse_complete_node(&self.raw)
-                .expect("StreamXmlPlugin closed an invalid XML block");
-            return xmlEventFromNode(node);
+            if let Some(node) = NativeXmlSplitter::parse_complete_node(&self.raw) {
+                return xmlEventFromNode(node);
+            }
+            // A stream boundary is not proof of well-formed XML. Keep the
+            // existing XML node in its incomplete state instead of panicking.
         }
         MarkdownXmlStreamEvent {
             tagName: self
                 .opening
                 .as_ref()
-                .map(|opening| opening.tag_name.clone()),
+                .map(|opening| opening.tag_name.clone())
+                .or_else(|| ChatMarkupRegex::extract_opening_tag_name(&self.raw)),
             attributes: self
                 .opening
                 .as_ref()
@@ -312,11 +338,6 @@ impl MarkdownRenderEventStream {
                     } else {
                         None
                     },
-                    xmlContent: if nodeType == Some(MarkdownProcessorType::XmlBlock) {
-                        Some(MarkdownGroupSession::xmlContent())
-                    } else {
-                        None
-                    },
                     xmlMarkdown: None,
                     nextInlineId: 0,
                     activeInline: None,
@@ -357,34 +378,12 @@ impl MarkdownRenderEventStream {
                                 block.id,
                             )));
                         }
-                        let bodySegments = block
-                            .xmlContent
-                            .as_mut()
-                            .expect("XML content stream")
-                            .push(&nodeContent);
+                        let bodyChunk = xml.takeBodyChunk();
                         if let Some(child) = block.xmlMarkdown.as_mut() {
-                            for segment in bodySegments {
-                                if segment.r#type < 0 {
-                                    continue;
-                                }
-                                let xmlContent =
-                                    block.xmlContent.as_ref().expect("XML content stream");
-                                let bodyChunk = markdownSegmentContent(
-                                    &xmlContent.content,
-                                    &segment,
-                                    markdownTypeFromSegment(&segment),
-                                );
-                                if !bodyChunk.is_empty() {
-                                    events.extend(child.pushChunk(&bodyChunk));
-                                }
+                            if !bodyChunk.is_empty() {
+                                events.extend(child.pushChunk(&bodyChunk));
                             }
                         }
-                    } else {
-                        let _ = block
-                            .xmlContent
-                            .as_mut()
-                            .expect("XML content stream")
-                            .push(&nodeContent);
                     }
                     Some(metadata)
                 } else {
@@ -503,15 +502,6 @@ impl MarkdownGroupSession {
         }
     }
 
-    /// Creates a group session backed by the XML plugin's inner-content output.
-    fn xmlContent() -> Self {
-        Self {
-            session: NativeMarkdownSplitter::create_xml_content_session(),
-            content: String::new(),
-            activeType: None,
-        }
-    }
-
     fn push(&mut self, chunk: &str) -> Vec<Segment> {
         self.content.push_str(chunk);
         self.session.push(chunk)
@@ -609,6 +599,170 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Malformed XML retains its original block and unfinished metadata.
+    #[test]
+    fn malformed_xml_remains_an_incomplete_xml_block() {
+        for content in [
+            r#"<tool name="read_file>图片</tool>"#,
+            r#"<tool name="unterminated>图片</tool>"#,
+        ] {
+            let events = MarkdownRenderEventStream::fromContent(content.to_string());
+            assert_eq!(events.last().unwrap().eventType, "completed");
+            let end = events
+                .iter()
+                .find(|event| event.eventType == "markdownBlockEnd")
+                .unwrap();
+            assert_eq!(end.nodeType.as_deref(), Some("XmlBlock"));
+            let xml = end.xml.as_ref().unwrap();
+            assert_eq!(xml.tagName.as_deref(), Some("tool"));
+            assert_eq!(xml.isClosed, Some(false));
+            let raw = events
+                .iter()
+                .filter(|event| {
+                    event.eventType == "markdownBlockChunk" && event.parentBlockId.is_none()
+                })
+                .filter_map(|event| event.value.as_deref())
+                .collect::<String>();
+            assert_eq!(raw, content);
+        }
+    }
+
+    #[test]
+    fn unfinished_thinking_keeps_its_panel_and_child_content() {
+        let events = MarkdownRenderEventStream::fromContent("<think>未完成的思考".to_string());
+        let xml = events
+            .iter()
+            .filter_map(|event| event.xml.as_ref())
+            .last()
+            .unwrap();
+        assert_eq!(xml.tagName.as_deref(), Some("think"));
+        assert_eq!(xml.isClosed, Some(false));
+        assert!(events.iter().any(|event| {
+            event.parentBlockId.is_some()
+                && event.eventType == "markdownInlineChunk"
+                && event.value.as_deref() == Some("未完成的思考")
+        }));
+    }
+
+    #[test]
+    fn tool_inside_unfinished_thinking_keeps_its_nested_xml_block() {
+        let content = r#"<think>排查中：<tool name="read_file">图片</tool>"#;
+        let events = MarkdownRenderEventStream::fromContent(content.to_string());
+        let outer = events
+            .iter()
+            .filter(|event| event.parentBlockId.is_none())
+            .filter_map(|event| event.xml.as_ref())
+            .last()
+            .unwrap();
+        assert_eq!(outer.tagName.as_deref(), Some("think"));
+        assert_eq!(outer.isClosed, Some(false));
+        let tool = events
+            .iter()
+            .find(|event| {
+                event.parentBlockId.is_some()
+                    && event.eventType == "markdownBlockEnd"
+                    && event.xml.as_ref().is_some_and(|xml| {
+                        xml.tagName.as_deref() == Some("tool")
+                    })
+            })
+            .unwrap();
+        assert_eq!(tool.xml.as_ref().unwrap().isClosed, Some(true));
+        assert_eq!(tool.xml.as_ref().unwrap().bodyChunk.as_deref(), Some("图片"));
+    }
+
+    /// Thinking body extraction must not lose partial nested or closing tags.
+    #[test]
+    fn thinking_preserves_nested_xml_at_every_stream_split() {
+        let body = r#"排查中：<tool name="read_file">图片 😀</tool>继续"#;
+        let content = format!("<think>{body}</think>");
+        let boundaries = content
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(content.len()));
+        for boundary in boundaries {
+            let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+            let mut events = stream.pushChunk(&content[..boundary]);
+            events.extend(stream.pushChunk(&content[boundary..]));
+            assert_nested_tool_body(&events, body);
+        }
+
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+        let mut events = Vec::new();
+        for ch in content.chars() {
+            events.extend(stream.pushChunk(&ch.to_string()));
+        }
+        assert_nested_tool_body(&events, body);
+    }
+
+    fn assert_nested_tool_body(events: &[MarkdownStreamEvent], body: &str) {
+        let child_content = events
+            .iter()
+            .filter(|event| event.parentBlockId.is_some() && event.eventType == "chunk")
+            .filter_map(|event| event.value.as_deref())
+            .collect::<String>();
+        assert_eq!(child_content, body);
+        assert!(events.iter().any(|event| {
+            event.parentBlockId.is_some()
+                && event.eventType == "markdownBlockEnd"
+                && event.xml.as_ref().is_some_and(|xml| {
+                    xml.tagName.as_deref() == Some("tool") && xml.isClosed == Some(true)
+                })
+        }));
+    }
+
+    #[test]
+    fn unfinished_nested_tool_retains_both_xml_nodes() {
+        let events = MarkdownRenderEventStream::fromContent(
+            r#"<think>排查中：<tool name="read_file">未完成参数"#.to_string(),
+        );
+        for (parent, tag) in [(false, "think"), (true, "tool")] {
+            let xml = events
+                .iter()
+                .filter(|event| event.parentBlockId.is_some() == parent)
+                .filter_map(|event| event.xml.as_ref())
+                .last()
+                .unwrap();
+            assert_eq!(xml.tagName.as_deref(), Some(tag));
+            assert_eq!(xml.isClosed, Some(false));
+        }
+    }
+
+    #[test]
+    fn malformed_tool_inside_thinking_does_not_panic() {
+        let content = r#"<think>排查中：<tool name="read_file>图片</tool></think>"#;
+        let mut stream = MarkdownRenderEventStream::new("chat".to_string());
+        let mut events = Vec::new();
+        for ch in content.chars() {
+            events.extend(stream.pushChunk(&ch.to_string()));
+        }
+        let tool = events
+            .iter()
+            .find(|event| {
+                event.parentBlockId.is_some()
+                    && event.eventType == "markdownBlockEnd"
+                    && event.xml.as_ref().is_some_and(|xml| {
+                        xml.tagName.as_deref() == Some("tool")
+                    })
+            })
+            .unwrap();
+        assert_eq!(tool.xml.as_ref().unwrap().isClosed, Some(false));
+    }
+
+    #[test]
+    fn closed_tool_keeps_following_unicode_text_outside_its_block() {
+        let events = MarkdownRenderEventStream::fromContent("<tool>文本</tool> 中文 😀".to_string());
+        let end = events
+            .iter()
+            .find(|event| event.eventType == "markdownBlockEnd")
+            .unwrap();
+        assert_eq!(end.xml.as_ref().unwrap().bodyChunk.as_deref(), Some("文本"));
+        assert_eq!(end.xml.as_ref().unwrap().isClosed, Some(true));
+        assert!(events.iter().any(|event| {
+            event.eventType == "markdownInlineChunk"
+                && event.value.as_deref().is_some_and(|value| value.contains("中文 😀"))
+        }));
+    }
 
     #[test]
     fn emits_tool_events_immediately_after_think_closes() {

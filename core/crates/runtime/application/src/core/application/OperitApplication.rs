@@ -38,7 +38,6 @@ use operit_store::RuntimeStorageHost::{
     defaultRuntimeStorageHost, setDefaultHostSecretStore, setDefaultRuntimeSqliteHost,
     setDefaultRuntimeStorageHost,
 };
-use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_store::SyncOperationStore::{
     compactSyncOperations, SyncClock, SyncOperation, SyncOperationStore,
 };
@@ -444,6 +443,55 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn packageManager(&self) -> Arc<Mutex<RuntimePackageManager>> {
         self.toolHandler.getOrCreatePackageManager()
+    }
+
+    /// Downloads and imports a market artifact entirely inside Core, not through UI byte buffers.
+    #[allow(non_snake_case)]
+    pub fn installMarketArtifact(
+        &self,
+        assetId: String,
+        fileName: String,
+        expectedSha256: String,
+    ) -> Result<String, String> {
+        let fileName = fileName.trim().to_string();
+        if fileName.is_empty()
+            || fileName.contains(['/', '\\'])
+            || std::path::Path::new(&fileName)
+                .file_name()
+                .and_then(|name| name.to_str())
+                != Some(fileName.as_str())
+        {
+            return Err("Market artifact file name is invalid".to_string());
+        }
+        let normalizedSha256 = expectedSha256.trim().to_ascii_lowercase();
+        if normalizedSha256.len() != 64
+            || !normalizedSha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("Market artifact SHA-256 is invalid".to_string());
+        }
+
+        let packageManager = self.packageManager();
+        let targetPath = packageManager
+            .lock()
+            .map_err(|error| error.to_string())?
+            .prepareMarketArtifactDownload(&fileName)?;
+        let directory = std::path::Path::new(&targetPath)
+            .parent()
+            .map(|path| path.to_string_lossy().to_string());
+        let result = (|| {
+            operit_providers::market::MarketStatsApiService::MarketStatsApiService::new()
+                .download_asset_to_file(&assetId, &targetPath)?;
+            Ok(packageManager
+                .lock()
+                .map_err(|error| error.to_string())?
+                .addMarketArtifactFile(targetPath.clone(), normalizedSha256))
+        })();
+        if let Some(directory) = directory {
+            if let Some(fileSystem) = self.hostManager.fileSystemHost.as_ref() {
+                let _ = fileSystem.deleteFile(&directory, true);
+            }
+        }
+        result
     }
 
     /// Returns package names enabled in this application runtime.

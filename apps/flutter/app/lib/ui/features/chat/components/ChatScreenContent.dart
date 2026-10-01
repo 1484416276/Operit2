@@ -9,6 +9,7 @@ import 'ChatToolPermissionPanel.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
+import '../../../common/interactions/DrawerGestureExclusion.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import '../tts/TtsPlaybackController.dart';
@@ -307,7 +308,9 @@ class ChatScreenContent extends StatelessWidget {
                               ? null
                               : () => _confirmDeleteSelected(context),
                         )
-                      : _buildChatInputSection(inputStyle),
+                      : DrawerGestureExclusion(
+                          child: _buildChatInputSection(inputStyle),
+                        ),
                 ),
               ),
             ],

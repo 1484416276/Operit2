@@ -3599,6 +3599,51 @@ impl RuntimePackageManager {
         }
     }
 
+    /// Creates a package-manager-owned staging path for one market artifact.
+    #[allow(non_snake_case)]
+    pub fn prepareMarketArtifactDownload(&self, fileName: &str) -> Result<String, String> {
+        let fileName = fileName.trim();
+        if fileName.is_empty()
+            || Path::new(fileName).file_name().and_then(|name| name.to_str()) != Some(fileName)
+        {
+            return Err("Market artifact file name is invalid".to_string());
+        }
+        let directory = self.storePaths.toolpkg_cache_dir().join(format!(
+            ".market-download-{}",
+            currentTimeMillis()
+        ));
+        self.fileSystemHost
+            .makeDirectory(&hostPath(&directory), true)
+            .map_err(|error| format!("Error preparing market artifact download: {error}"))?;
+        Ok(directory.join(fileName).to_string_lossy().to_string())
+    }
+
+    /// Imports a downloaded market artifact after checking its declared SHA-256.
+    #[allow(non_snake_case)]
+    pub fn addMarketArtifactFile(&mut self, filePath: String, expectedSha256: String) -> String {
+        let result = (|| {
+            let normalizedSha256 = expectedSha256.trim().to_ascii_lowercase();
+            if !isSha256Hex(&normalizedSha256) {
+                return Err("Market artifact SHA-256 is invalid".to_string());
+            }
+            let bytes = self.fileSystemHost.readFileBytes(&filePath)
+                .map_err(|error| format!("Error reading market artifact: {error}"))?;
+            if sha256Hex(&bytes) != normalizedSha256 {
+                return Err("Market artifact SHA-256 mismatch".to_string());
+            }
+            self.addPackageFileFromExternalStorageResultInternal(&filePath)
+        })();
+        match result {
+            Ok(importResult) => {
+                self.clearManualToolPkgLoadIssues(&filePath, None);
+                formatExternalPackageImportResult(&importResult)
+            }
+            Err(error) => self.recordAndReturnPackageError(
+                &filePath, "market_import_failed", &error, "market_artifact",
+            ),
+        }
+    }
+
     /// Imports one signed marketplace ToolPkg as a locally authenticated package archive.
     #[allow(non_snake_case)]
     pub fn addMarketToolPkgFileFromExternalStorage(

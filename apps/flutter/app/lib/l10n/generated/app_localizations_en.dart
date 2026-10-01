@@ -574,6 +574,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get environmentVariables => 'Environment variables';
 
   @override
+  String get packageConfigureEnvironmentVariables =>
+      'Configure Environment Variables';
+
+  @override
+  String get packageNoEnvironmentVariables =>
+      'The currently enabled tool packages have not declared any environment variables.';
+
+  @override
+  String get packageEnvironmentOptional => 'Optional';
+
+  @override
+  String get packageEnvironmentInputRequired => 'Input value (required)';
+
+  @override
+  String get packageEnvironmentInputOptional => 'Input value (optional)';
+
+  @override
+  String packageEnvironmentDefault(String value) {
+    return 'Default: $value';
+  }
+
+  @override
   String get required => 'Required';
 
   @override

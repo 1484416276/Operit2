@@ -561,6 +561,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get environmentVariables => '环境变量';
 
   @override
+  String get packageConfigureEnvironmentVariables => '配置环境变量';
+
+  @override
+  String get packageNoEnvironmentVariables => '当前已启用的工具包没有声明需要的环境变量。';
+
+  @override
+  String get packageEnvironmentOptional => '可选';
+
+  @override
+  String get packageEnvironmentInputRequired => '输入值（必需）';
+
+  @override
+  String get packageEnvironmentInputOptional => '输入值（可选）';
+
+  @override
+  String packageEnvironmentDefault(String value) {
+    return '默认: $value';
+  }
+
+  @override
   String get required => '必填';
 
   @override

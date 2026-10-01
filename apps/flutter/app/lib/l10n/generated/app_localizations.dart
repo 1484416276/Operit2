@@ -1112,6 +1112,42 @@ abstract class AppLocalizations {
   /// **'Environment variables'**
   String get environmentVariables;
 
+  /// No description provided for @packageConfigureEnvironmentVariables.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure Environment Variables'**
+  String get packageConfigureEnvironmentVariables;
+
+  /// No description provided for @packageNoEnvironmentVariables.
+  ///
+  /// In en, this message translates to:
+  /// **'The currently enabled tool packages have not declared any environment variables.'**
+  String get packageNoEnvironmentVariables;
+
+  /// No description provided for @packageEnvironmentOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional'**
+  String get packageEnvironmentOptional;
+
+  /// No description provided for @packageEnvironmentInputRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Input value (required)'**
+  String get packageEnvironmentInputRequired;
+
+  /// No description provided for @packageEnvironmentInputOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Input value (optional)'**
+  String get packageEnvironmentInputOptional;
+
+  /// No description provided for @packageEnvironmentDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default: {value}'**
+  String packageEnvironmentDefault(String value);
+
   /// No description provided for @required.
   ///
   /// In en, this message translates to:

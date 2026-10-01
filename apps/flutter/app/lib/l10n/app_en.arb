@@ -311,6 +311,19 @@
   "disable": "Disable",
   "enable": "Enable",
   "environmentVariables": "Environment variables",
+  "packageConfigureEnvironmentVariables": "Configure Environment Variables",
+  "packageNoEnvironmentVariables": "The currently enabled tool packages have not declared any environment variables.",
+  "packageEnvironmentOptional": "Optional",
+  "packageEnvironmentInputRequired": "Input value (required)",
+  "packageEnvironmentInputOptional": "Input value (optional)",
+  "packageEnvironmentDefault": "Default: {value}",
+  "@packageEnvironmentDefault": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "required": "Required",
   "states": "States",
   "stateToolSummary": "{condition} · {toolCount} tools · excludes {excludeCount}",

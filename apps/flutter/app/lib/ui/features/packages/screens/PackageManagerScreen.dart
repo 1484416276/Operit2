@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
@@ -19,6 +20,7 @@ import '../../chat/PendingChatDraftHandler.dart';
 import '../components/PackageTab.dart';
 import '../dialogs/MCPImportDialog.dart';
 import '../dialogs/PackageDetailsDialog.dart';
+import '../dialogs/PackageEnvironmentVariablesDialog.dart';
 import '../dialogs/PackageToolRunDialog.dart';
 import '../dialogs/QuickPluginCreatorDialog.dart';
 import '../dialogs/SkillImportDialog.dart';
@@ -521,7 +523,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     );
   }
 
+  /// Builds package management actions, including the shared environment editor.
   Widget _buildFloatingActions(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final marketTab = switch (_selectedTab) {
       PackageTab.plugins => MarketHomeTab.all,
       PackageTab.packages => MarketHomeTab.all,
@@ -537,6 +541,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
+        FloatingActionButton.small(
+          heroTag: null,
+          tooltip: l10n.packageConfigureEnvironmentVariables,
+          backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+          foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+          onPressed: () => PackageEnvironmentVariablesDialog.show(
+            context: context,
+            clients: widget.clients,
+          ),
+          child: const Icon(Icons.settings_outlined),
+        ),
+        const SizedBox(height: 12),
         FloatingActionButton(
           heroTag: null,
           onPressed: () => _openMarket(marketTab),

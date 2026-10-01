@@ -10,6 +10,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/ui/features/packages/screens/PackageManagerScreen.dart';
+import 'package:operit2/ui/features/packages/dialogs/PackageEnvironmentVariablesDialog.dart';
 import 'package:operit2/ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 
 /// Verifies installation notifications update an already mounted package list.
@@ -46,6 +47,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('package manager action opens the runtime environment editor', (
+    tester,
+  ) async {
+    final bridge = _CatalogBridge();
+    await tester.pumpWidget(
+      OperitTheme(
+        initialThemePreferenceSnapshot:
+            UserPreferencesManager.defaultThemePreferenceSnapshot,
+        initialThemeIsReady: false,
+        unconfiguredChildEnabled: true,
+        hostInteractionHostsEnabled: false,
+        child: PackageManagerScreen(clients: GeneratedCoreProxyClients(bridge)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final action = find.ancestor(
+      of: find.byIcon(Icons.settings_outlined),
+      matching: find.byType(FloatingActionButton),
+    );
+    expect(action, findsOneWidget);
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(find.byType(PackageEnvironmentVariablesDialog), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PackageEnvironmentVariablesDialog),
+        matching: find.byType(TextField),
+      ),
+      findsNothing,
+    );
+    expect(bridge.environmentCatalogReads, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  });
 }
 
 class _CatalogBridge extends OperitRuntimeBridge {
@@ -66,6 +103,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
 
   bool installed = false;
   int scans = 0;
+  int environmentCatalogReads = 0;
 
   /// Encodes catalog responses with the native bridge envelope.
   @override
@@ -79,6 +117,9 @@ class _CatalogBridge extends OperitRuntimeBridge {
       case 'loadAvailablePackages':
         scans++;
         return null;
+      case 'getAvailablePackages':
+        environmentCatalogReads++;
+        return <String, Object?>{};
       case 'getExecutableAvailablePackages':
         return <String, Object?>{};
       case 'getToolPkgContainerRuntimes':

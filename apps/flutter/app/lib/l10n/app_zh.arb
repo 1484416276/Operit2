@@ -311,6 +311,19 @@
   "disable": "停用",
   "enable": "启用",
   "environmentVariables": "环境变量",
+  "packageConfigureEnvironmentVariables": "配置环境变量",
+  "packageNoEnvironmentVariables": "当前已启用的工具包没有声明需要的环境变量。",
+  "packageEnvironmentOptional": "可选",
+  "packageEnvironmentInputRequired": "输入值（必需）",
+  "packageEnvironmentInputOptional": "输入值（可选）",
+  "packageEnvironmentDefault": "默认: {value}",
+  "@packageEnvironmentDefault": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "required": "必填",
   "states": "状态",
   "stateToolSummary": "{condition} · {toolCount} 工具 · 排除 {excludeCount}",

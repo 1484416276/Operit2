@@ -108,6 +108,11 @@ class _NewChatIntroOverlayState extends State<NewChatIntroOverlay>
     final image = picture.toImageSync(markWidth, markHeight);
     picture.dispose();
     paragraph.dispose();
+    // Keep the dimensions before disposing the image. CanvasKit invalidates
+    // image getters after dispose, which made the Web frontend throw a
+    // null-check error while sampling the intro wordmark.
+    final imageWidth = image.width;
+    final imageHeight = image.height;
     final bytes = await image.toByteData();
     image.dispose();
     if (bytes == null || !mounted) {
@@ -115,9 +120,9 @@ class _NewChatIntroOverlayState extends State<NewChatIntroOverlay>
     }
     final pixels = bytes.buffer.asUint8List();
     final targets = <Offset>[];
-    for (var y = 0; y < image.height; y += sampleStep) {
-      for (var x = 0; x < image.width; x += sampleStep) {
-        if (pixels[(y * image.width + x) * 4 + 3] > 128) {
+    for (var y = 0; y < imageHeight; y += sampleStep) {
+      for (var x = 0; x < imageWidth; x += sampleStep) {
+        if (pixels[(y * imageWidth + x) * 4 + 3] > 128) {
           targets.add(Offset(x.toDouble(), y.toDouble()));
         }
       }
@@ -126,7 +131,7 @@ class _NewChatIntroOverlayState extends State<NewChatIntroOverlay>
       return;
     }
     setState(() {
-      _markSize = Size(image.width.toDouble(), image.height.toDouble());
+      _markSize = Size(imageWidth.toDouble(), imageHeight.toDouble());
       _markTargets
         ..clear()
         ..addAll(targets);

@@ -10,8 +10,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 
-RUNTIME_DIR = Path(__file__).resolve().parents[2] / "apps" / "web_access" / "v86" / "runtime"
-WEB_V86_DIR = Path(__file__).resolve().parents[2] / "apps" / "web_access" / "web" / "v86"
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / "apps" / "flutter" / "app" / "web" / "runtime" / "generated" / "v86"
+WEB_V86_DIR = RUNTIME_DIR
 R2_ACCOUNT_ID = "c667bf70582c5ceceda8d3d183ad8e3b"
 R2_BUCKET = "operit-model-assets"
 R2_PREFIX = "v86-runtime/i686-buildroot-node20-python312-20260720"

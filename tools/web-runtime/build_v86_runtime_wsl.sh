@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "$script_dir/../.." && pwd)"
-asset_dir="$repo_dir/apps/web_access/v86/runtime"
+asset_dir="$repo_dir/apps/flutter/app/web/runtime/generated/v86"
 cache_dir="$HOME/.cache/operit-v86-runtime/buildroot-suite"
 downloads_dir="$cache_dir/downloads"
 builtin_downloads_dir="$downloads_dir/builtin"

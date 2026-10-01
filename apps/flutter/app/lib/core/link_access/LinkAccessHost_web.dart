@@ -20,11 +20,18 @@ class LinkAccessHost extends ChangeNotifier {
 
   WebAccessLaunchInfo? get webAccessLaunchInfo {
     final uri = Uri.base;
+    final accessUrl = uri.queryParameters['accessUrl'];
     final token = uri.queryParameters['token'];
-    if (token == null || token.isEmpty || uri.host.isEmpty) {
+    if (accessUrl == null ||
+        accessUrl.isEmpty ||
+        token == null ||
+        token.isEmpty) {
       return null;
     }
-    final baseUrl = uri.origin;
+    final baseUrl = accessUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (Uri.tryParse(baseUrl)?.hasScheme != true) {
+      return null;
+    }
     return WebAccessLaunchInfo(baseUrl: baseUrl, token: token);
   }
 

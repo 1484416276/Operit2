@@ -6,30 +6,18 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../link/CoreLinkProtocol.dart';
-import '../proxy/generated/CoreProxyClients.g.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
 import 'LinkAccessHostConfig.dart';
 import 'WebAccessLaunchInfo.dart';
-
-const String _webAccessAssetPrefix = 'assets/web_access/';
-const String _webAccessVersionFile = 'web_access_version.json';
-const String _webAccessVersionAsset =
-    '$_webAccessAssetPrefix$_webAccessVersionFile';
 
 class LinkAccessHost extends ChangeNotifier {
   LinkAccessHost._();
 
   static final LinkAccessHost instance = LinkAccessHost._();
   static const MethodChannel _runtimeChannel = MethodChannel('operit/runtime');
-  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
-    ProxyCoreRuntimeBridge(),
-  );
-
   bool _running = false;
   LinkAccessHostConfig? _config;
-  String? _shutdownToken;
   String? _deviceId;
 
   bool get isRunning => _running;
@@ -71,19 +59,15 @@ class LinkAccessHost extends ChangeNotifier {
     if (_running) {
       await stop(updateConfig: false);
     }
-    final webRoot = await _materializeWebAccessBundle();
     final shutdownToken = LinkAccessHostToken.generate();
-    _shutdownToken = shutdownToken;
     late final ({LinkAccessHostConfig config, String deviceId}) started;
     try {
       started = await _startNativeWebAccessServerWithPortMode(
         config,
         shutdownToken,
-        webRoot,
       );
     } catch (_) {
       _config = null;
-      _shutdownToken = null;
       rethrow;
     }
     _config = started.config;
@@ -96,14 +80,9 @@ class LinkAccessHost extends ChangeNotifier {
     if (!_running) {
       return;
     }
-    final config = _config!;
-    if (config.webAccessEnabled) {
-      await _requestNativeWebAccessClose(baseUrl!, _shutdownToken!);
-    }
     await _stopNativeWebAccessServer();
     _running = false;
     _config = null;
-    _shutdownToken = null;
     _deviceId = null;
     if (updateConfig) {
       final config = await LinkAccessHostConfigStore.read();
@@ -116,50 +95,25 @@ class LinkAccessHost extends ChangeNotifier {
     }
   }
 
-  /// Materializes bundled Web Access assets through runtime storage VFS.
-  Future<String> _materializeWebAccessBundle() async {
-    final directory = await _clients.repositoryRuntimeStorageRepository
-        .linkAccessWebAssetsDirPath();
-    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
-    final assetKeys =
-        manifest
-            .listAssets()
-            .where((key) => key.startsWith(_webAccessAssetPrefix))
-            .toList(growable: false)
-          ..sort();
-    if (!assetKeys.contains(_webAccessVersionAsset)) {
-      throw StateError('Web Access version asset is not bundled');
-    }
-    for (final assetKey in assetKeys) {
-      final relativePath = assetKey.substring(_webAccessAssetPrefix.length);
-      final bytes = await rootBundle.load(assetKey);
-      await _clients.repositoryRuntimeStorageRepository.writeBase64(
-        path: '$directory/$relativePath',
-        base64Content: base64Encode(
-          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
-        ),
-      );
-    }
-    return directory;
-  }
-
   /// Starts the native Access Host and returns its Core-owned identity.
   Future<String> _startNativeWebAccessServer(
     LinkAccessHostConfig config,
     String shutdownToken,
-    String webRoot,
   ) async {
     final deviceInfo = await RuntimeDeviceInfoProvider.current();
-    final responseText = await _runtimeChannel
-        .invokeMethod<String>('startWebAccessServer', <String, Object?>{
-          'bindAddress': config.bindAddress,
-          'token': config.token,
-          'shutdownToken': shutdownToken,
-          'webRoot': webRoot,
-          'deviceInfo': jsonEncode(deviceInfo.toJson()),
-          'enableWebAccess': config.webAccessEnabled.toString(),
-          'enableDiscovery': config.discoveryEnabled.toString(),
-        });
+    final responseText = await _runtimeChannel.invokeMethod<String>(
+      'startWebAccessServer',
+      <String, Object?>{
+        'bindAddress': config.bindAddress,
+        'token': config.token,
+        'shutdownToken': shutdownToken,
+        // Kept as an empty compatibility argument for older platform channels.
+        'webRoot': '',
+        'deviceInfo': jsonEncode(deviceInfo.toJson()),
+        'enableWebAccess': config.webAccessEnabled.toString(),
+        'enableDiscovery': config.discoveryEnabled.toString(),
+      },
+    );
     final response = _throwNativeWebAccessError(responseText);
     final deviceId = response['deviceId'];
     if (deviceId is! String || deviceId.isEmpty) {
@@ -176,14 +130,9 @@ class LinkAccessHost extends ChangeNotifier {
   _startNativeWebAccessServerWithPortMode(
     LinkAccessHostConfig config,
     String shutdownToken,
-    String webRoot,
   ) async {
     if (config.portMode == LinkAccessHostPortMode.fixed) {
-      final deviceId = await _startNativeWebAccessServer(
-        config,
-        shutdownToken,
-        webRoot,
-      );
+      final deviceId = await _startNativeWebAccessServer(config, shutdownToken);
       return (config: config, deviceId: deviceId);
     }
     final endpoint = _parseBindAddress(config.bindAddress);
@@ -195,7 +144,6 @@ class LinkAccessHost extends ChangeNotifier {
         final deviceId = await _startNativeWebAccessServer(
           candidate,
           shutdownToken,
-          webRoot,
         );
         return (config: candidate, deviceId: deviceId);
       } catch (error, stackTrace) {
@@ -214,26 +162,6 @@ class LinkAccessHost extends ChangeNotifier {
       'stopWebAccessServer',
     );
     _throwNativeWebAccessError(responseText);
-  }
-
-  Future<void> _requestNativeWebAccessClose(
-    String baseUrl,
-    String shutdownToken,
-  ) async {
-    final client = HttpClient();
-    try {
-      final request = await client.postUrl(
-        Uri.parse('$baseUrl/client/web-access/close'),
-      );
-      request.headers.set('x-operit-web-access-shutdown-token', shutdownToken);
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError('web access close failed: $body');
-      }
-    } finally {
-      client.close(force: true);
-    }
   }
 
   /// Validates a native Access Host response and returns its JSON payload.
@@ -255,52 +183,6 @@ class LinkAccessHost extends ChangeNotifier {
       code: 'INVALID_RESPONSE',
       message: 'runtime bridge web access response is invalid',
     );
-  }
-}
-
-class _WebAccessBundleVersion {
-  const _WebAccessBundleVersion({
-    required this.version,
-    required this.contentHash,
-  });
-
-  final int version;
-  final String contentHash;
-
-  /// Decodes one Web Access version manifest.
-  factory _WebAccessBundleVersion.fromJsonString(
-    String content,
-    String source,
-  ) {
-    final decoded = jsonDecode(content);
-    if (decoded is! Map) {
-      throw FormatException(
-        'Web Access version manifest must be an object',
-        source,
-      );
-    }
-    final manifest = decoded.cast<String, Object?>();
-    final schemaVersion = manifest['schemaVersion'];
-    final version = manifest['version'];
-    final contentHash = manifest['contentHash'];
-    if (schemaVersion != 1) {
-      throw FormatException(
-        'Unexpected Web Access manifest schema: $schemaVersion',
-        source,
-      );
-    }
-    if (version is! int || version < 1) {
-      throw FormatException('Invalid Web Access version: $version', source);
-    }
-    if (contentHash is! String || contentHash.isEmpty) {
-      throw FormatException('Invalid Web Access content hash', source);
-    }
-    return _WebAccessBundleVersion(version: version, contentHash: contentHash);
-  }
-
-  /// Returns whether two manifests describe the same generated bundle.
-  bool matches(_WebAccessBundleVersion other) {
-    return version == other.version && contentHash == other.contentHash;
   }
 }
 

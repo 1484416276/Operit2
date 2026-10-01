@@ -34,11 +34,6 @@ jobs:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
       FVM_VERSION: 4.3.0
-      TYPESCRIPT_VERSION: 5.9.3
-      WASM_BINDGEN_VERSION: 0.2.122
-      WASI_SDK_VERSION: "20.0"
-      QUICKJS_WASM_SYS_WASI_SDK_MAJOR_VERSION: 20
-      QUICKJS_WASM_SYS_WASI_SDK_MINOR_VERSION: 0
 
     steps:
       - name: Checkout
@@ -84,13 +79,10 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
-          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu,wasm32-unknown-unknown
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu
 
       - name: Check build environment
         run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
-
-      - name: Build Web Access assets
-        run: python3 tools/build_scripts/build_flutter_web_access.py --base-href /
 
       - name: Build and package Linux app
         if: inputs.products != 'cli'

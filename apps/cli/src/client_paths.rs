@@ -19,9 +19,6 @@ pub(crate) fn link_host_state_path() -> PathBuf {
     link_dir().join("host_state.json")
 }
 
-pub(crate) fn link_host_web_access_bundle_dir() -> PathBuf {
-    link_dir().join("web_access_bundle")
-}
 
 #[cfg(windows)]
 fn platform_files_root_dir() -> PathBuf {

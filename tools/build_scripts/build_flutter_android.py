@@ -12,7 +12,6 @@ from common import (
     flutter_command,
     flutter_pub_get,
     read_properties,
-    prepare_web_access_embedded_assets,
     run,
     write_properties,
 )
@@ -71,7 +70,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    prepare_web_access_embedded_assets()
     if not args.skip_signing:
         ensure_android_signing()
     flutter = flutter_command()

@@ -167,12 +167,6 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
-    /// Returns the runtime storage directory for materialized Link Access web assets.
-    pub fn linkAccessWebAssetsDirPath(&self) -> String {
-        OperitPaths::RUNTIME_LINK_ACCESS_WEB_ASSETS_DIR_PATH.to_string()
-    }
-
-    #[allow(non_snake_case)]
     /// Returns the runtime storage path for the client log.
     pub fn clientLogPath(&self) -> String {
         OperitPaths::RUNTIME_CLIENT_LOG_PATH.to_string()

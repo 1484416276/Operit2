@@ -17,14 +17,14 @@ const v86BuildDirectory = path.join(
 const v86AssetDirectory = path.join(
   repositoryDirectory,
   "apps",
-  "web_access",
+  "flutter",
+  "app",
   "web",
+  "runtime",
+  "generated",
   "v86",
 );
-const runtimeDirectory = path.join(
-  v86AssetDirectory,
-  "runtime",
-);
+const runtimeDirectory = v86AssetDirectory;
 
 /** Returns the absolute path for one V86 npm package build artifact. */
 function v86BuildPath(name) {

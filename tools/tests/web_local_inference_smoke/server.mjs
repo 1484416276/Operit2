@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "../../..");
-const bridgePath = join(repositoryRoot, "apps/web_access/web/operit_runtime_bridge.js");
+const bridgePath = join(repositoryRoot, "apps/flutter/app/web/runtime/generated/operit_runtime_bridge.js");
 const fixtureRoot = resolve(process.argv[2]);
 const port = Number.parseInt(process.argv[3] || "18765", 10);
 const asrRoot = join(

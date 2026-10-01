@@ -6,8 +6,7 @@ license = "MIT"
 publish = false
 
 [features]
-default = ["embedded-web-access"]
-embedded-web-access = ["dep:include_dir"]
+default = []
 
 [[bin]]
 name = "operit2"
@@ -24,7 +23,6 @@ futures-util = "0.3"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 mdns-sd = "0.12"
-include_dir = { version = "0.7", optional = true }
 operit-proxy-local = { path = "../../core/crates/proxy/local" }
 operit-node-runtime = { path = "../../core/crates/node/runtime" }
 operit-core-application = { path = "../../core/crates/application/core" }

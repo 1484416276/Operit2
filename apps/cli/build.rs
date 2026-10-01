@@ -9,10 +9,9 @@ struct LocaleFile {
     by_key: BTreeMap<String, String>,
 }
 
-/// Generates TUI localization code and verifies the Web Access bundle input.
+/// Generates the TUI localization source used by the CLI build.
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    verify_web_access_bundle_when_embedded(&manifest_dir);
 
     let locale_dir = manifest_dir
         .join("src")
@@ -34,28 +33,6 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     fs::write(out_dir.join("tui_i18n_generated.rs"), generated)
         .expect("write generated TUI i18n source");
-}
-
-/// Verifies the shared Web Access bundle exists before embedding it.
-fn verify_web_access_bundle_when_embedded(manifest_dir: &Path) {
-    if env::var_os("CARGO_FEATURE_EMBEDDED_WEB_ACCESS").is_none() {
-        return;
-    }
-    let bundle_dir = manifest_dir.join("../web_access/build/bundle");
-    println!("cargo:rerun-if-changed={}", bundle_dir.display());
-    let required_files = ["index.html", "web_access_version.json"];
-    let missing_files = required_files
-        .iter()
-        .filter(|name| !bundle_dir.join(name).is_file())
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing_files.is_empty() {
-        panic!(
-            "Web Access bundle is incomplete at {}. Missing: {}. Run tools/build_scripts/build_flutter_web_access.py before building operit-cli.",
-            bundle_dir.display(),
-            missing_files.join(", ")
-        );
-    }
 }
 
 /// Reads a locale key-value file into ordered and keyed representations.

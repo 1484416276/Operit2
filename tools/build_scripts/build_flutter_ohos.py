@@ -23,7 +23,6 @@ from common import (
     node_package_command,
     flutter_command,
     flutter_pub_get,
-    prepare_web_access_embedded_assets,
     read_properties,
     run,
 )
@@ -93,7 +92,6 @@ def parse_args() -> argparse.Namespace:
 # Builds the signed OpenHarmony HAP through the FVM-selected Flutter SDK.
 def main() -> int:
     args = parse_args()
-    prepare_web_access_embedded_assets()
     if not OHOS_PROJECT_DIR.is_dir():
         raise RuntimeError(
             "OpenHarmony Flutter project not found at "

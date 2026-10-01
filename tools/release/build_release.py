@@ -25,19 +25,6 @@ DIST_DIR = SCRIPT_DIR / "dist"
 WORK_DIR = SCRIPT_DIR / "work"
 SECRETS_DIR = SCRIPT_DIR / "secrets"
 FLUTTER_APP_DIR = REPO_ROOT / "apps" / "flutter" / "app"
-WEB_ACCESS_BUNDLE_DIR = REPO_ROOT / "apps" / "web_access" / "build" / "bundle"
-WEB_ACCESS_EMBEDDED_ASSETS_DIR = FLUTTER_APP_DIR / "assets" / "web_access"
-WEB_ACCESS_ASSET_DECLARATION_PREFIX = "    - path: assets/web_access/"
-WEB_ACCESS_VERSION_FILE = "web_access_version.json"
-WEB_ACCESS_REQUIRED_FILES = (
-    "index.html",
-    "main.dart.js",
-    "operit_flutter_bridge.js",
-    "operit_flutter_bridge_bg.wasm",
-    "sql-wasm.js",
-    "sql-wasm.wasm",
-    WEB_ACCESS_VERSION_FILE,
-)
 PUBSPEC_PATH = FLUTTER_APP_DIR / "pubspec.yaml"
 ANDROID_DIR = FLUTTER_APP_DIR / "android"
 ANDROID_LOCAL_PROPERTIES = ANDROID_DIR / "local.properties"
@@ -127,11 +114,6 @@ class CliArchMode(ValueEnum):
     ALL = "all"
 
 
-class CliWebAssetMode(ValueEnum):
-    EMBEDDED = "embedded"
-    EXTERNAL = "external"
-
-
 @dataclass(frozen=True)
 class CliBuildTarget:
     platform: HostPlatform
@@ -148,7 +130,6 @@ CLI_RUST_TARGETS = {
     (HostPlatform.MACOS, "aarch64"): "aarch64-apple-darwin",
 }
 CLI_RELEASE_ARCHES = ("x86_64", "aarch64")
-CLI_WEB_ASSET_MODES = tuple(item.value for item in CliWebAssetMode)
 CLI_ALL_TARGETS = tuple(
     CliBuildTarget(platform=plat, arch=arch, rust_target=CLI_RUST_TARGETS[(plat, arch)])
     for plat in HostPlatform
@@ -308,41 +289,6 @@ def reset_dir(path):
     path.mkdir(parents=True, exist_ok=True)
     for child in list(path.iterdir()):
         remove_release_path(child)
-
-
-# Verifies the shared Web Access bundle has been generated.
-def require_web_access_bundle():
-    missing_files = [
-        name for name in WEB_ACCESS_REQUIRED_FILES if not (WEB_ACCESS_BUNDLE_DIR / name).is_file()
-    ]
-    if missing_files:
-        raise RuntimeError(
-            "Web Access bundle is incomplete at "
-            f"{WEB_ACCESS_BUNDLE_DIR}; missing: {', '.join(missing_files)}. "
-            "Run tools/build_scripts/build_flutter_web_access.py before building this product."
-        )
-
-    if WEB_ACCESS_EMBEDDED_ASSETS_DIR.is_symlink():
-        WEB_ACCESS_EMBEDDED_ASSETS_DIR.unlink()
-    elif WEB_ACCESS_EMBEDDED_ASSETS_DIR.exists():
-        shutil.rmtree(WEB_ACCESS_EMBEDDED_ASSETS_DIR)
-    WEB_ACCESS_EMBEDDED_ASSETS_DIR.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(WEB_ACCESS_BUNDLE_DIR, WEB_ACCESS_EMBEDDED_ASSETS_DIR)
-
-    declared_paths = []
-    for line in PUBSPEC_PATH.read_text(encoding="utf-8").splitlines():
-        if line.startswith(WEB_ACCESS_ASSET_DECLARATION_PREFIX):
-            relative_path = line.removeprefix("    - path: ").rstrip("/")
-            declared_paths.append(FLUTTER_APP_DIR / Path(relative_path))
-    if not declared_paths:
-        raise RuntimeError(f"No Web Access asset directories are declared in {PUBSPEC_PATH}")
-
-    missing_directories = [path for path in declared_paths if not path.is_dir()]
-    if missing_directories:
-        raise RuntimeError(
-            "Embedded Web Access asset directories declared in pubspec.yaml are missing: "
-            + ", ".join(str(path) for path in missing_directories)
-        )
 
 
 def remove_release_path(path):
@@ -736,36 +682,15 @@ def cli_archive_extension(target_platform):
     return "zip" if target_platform == HostPlatform.WINDOWS else "tar.gz"
 
 
-# Returns the package name suffix for the selected Web Access asset mode.
-def cli_web_asset_package_suffix(web_assets):
-    web_assets = CliWebAssetMode(web_assets)
-    if web_assets == CliWebAssetMode.EMBEDDED:
-        return ""
-    if web_assets == CliWebAssetMode.EXTERNAL:
-        return "-external-web"
-    raise RuntimeError(f"Unsupported CLI Web Access asset mode: {web_assets}")
-
-
-# Returns the cargo feature arguments for the selected Web Access asset mode.
-def cli_web_asset_cargo_args(web_assets):
-    web_assets = CliWebAssetMode(web_assets)
-    if web_assets == CliWebAssetMode.EMBEDDED:
-        return []
-    if web_assets == CliWebAssetMode.EXTERNAL:
-        return ["--no-default-features"]
-    raise RuntimeError(f"Unsupported CLI Web Access asset mode: {web_assets}")
-
-
 # Returns the working directory for one packaged CLI target.
-def cli_package_dir(target, web_assets=CliWebAssetMode.EMBEDDED):
-    return WORK_DIR / f"cli-{target.platform}-{target.arch}{cli_web_asset_package_suffix(web_assets)}"
+def cli_package_dir(target):
+    return WORK_DIR / f"cli-{target.platform}-{target.arch}"
 
 
 # Returns the release archive path for one packaged CLI target.
-def cli_package_path(target, web_assets=CliWebAssetMode.EMBEDDED):
+def cli_package_path(target):
     return DIST_DIR / (
-        f"operit2-cli-{target.platform}-{target.arch}"
-        f"{cli_web_asset_package_suffix(web_assets)}.{cli_archive_extension(target.platform)}"
+        f"operit2-cli-{target.platform}-{target.arch}.{cli_archive_extension(target.platform)}"
     )
 
 
@@ -879,7 +804,6 @@ def wsl_single_quote(value):
 
 
 def build_wsl_linux_app(distro, build_name, build_number):
-    require_web_access_bundle()
     if not wsl_check_command(distro, "dart"):
         raise RuntimeError(
             "WSL Linux app build requires Dart on PATH to start FVM."
@@ -914,7 +838,6 @@ def build_wsl_linux_cli(distro):
 
 
 def wsl_build_cli_target(distro, target):
-    require_web_access_bundle()
     dist = shlex.quote(windows_path_to_wsl(DIST_DIR))
     work = shlex.quote(windows_path_to_wsl(cli_package_dir(target)))
     package = shlex.quote(windows_path_to_wsl(cli_package_path(target)))
@@ -1052,12 +975,6 @@ def build_ohos_app(build_name, build_number):
         ],
     )
 
-
-# Builds the shared Web Access bundle consumed by app and CLI packages.
-def build_web_access_bundle():
-    run([sys.executable, BUILD_SCRIPTS_DIR / "build_flutter_web_access.py", "--base-href", "/"])
-
-
 def build_host_app(build_name, build_number):
     current_platform = host_platform()
     current_arch = host_arch()
@@ -1169,7 +1086,6 @@ def vs_dev_env(vcvars_path, arch):
 
 def build_cli_target(target, use_default_target=False):
     require_command("cargo")
-    require_web_access_bundle()
     binary_name = cli_binary_name(target.platform)
     package_dir = cli_package_dir(target)
     package_path = cli_package_path(target)
@@ -1384,9 +1300,6 @@ def main():
     else:
         DIST_DIR.mkdir(parents=True, exist_ok=True)
     reset_dir(WORK_DIR)
-
-    if ReleaseProduct.APP in products or ReleaseProduct.CLI in products:
-        build_web_access_bundle()
 
     if ReleaseProduct.APP in products:
         build_android_app(platform_version.build_name, platform_version.build_number)

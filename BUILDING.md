@@ -492,6 +492,47 @@ tools/release/secrets/operit2-release.keystore
 tools/release/secrets/android-signing.properties
 ```
 
+### Local Windows Android Build
+
+Building the Android APK outside CI needs extra prerequisites that the CI runners
+provide implicitly:
+
+1. **Developer Mode** (Settings → Privacy & security → For developers). FVM creates
+   a directory symbolic link for the pinned SDK (`.fvm/flutter_sdk`); without the
+   privilege `fvm install` fails with `errno 1314`. A directory junction is not a
+   substitute — the staging check uses `Path.is_symlink()`.
+2. **Host C compiler**. Build-dependency crates (`tree-sitter-*`, `ring`) compile C
+   for the host during `cargo build`; rustup's bundled `gcc.exe` cannot compile C
+   (see its bundled `GCC-WARNING.txt`). Install a full MinGW toolchain (for example
+   `scoop install mingw-winlibs`) or MSVC Build Tools, and make sure it is on `PATH`
+   **before** the Gradle daemon starts — the daemon caches the environment it was
+   launched with, so restart it (`Stop-Process` on `java`) after changing `PATH`.
+3. **pnpm 10.7.0 via corepack**. The plugin sync hook invokes `corepack pnpm`, and
+   the project pins `packageManager: pnpm@10.7.0`; other pnpm installations on
+   `PATH` (scoop/npm shims) shadow corepack and abort with a version check. Remove
+   or align those shims, and run the Web Access prerequisite first:
+
+   ```powershell
+   python tools\build_scripts\build_flutter_web_access.py
+   ```
+
+4. **Android runtime (rootfs) artifacts**. `liboperit_busybox.so`, `liboperit_proot.so`,
+   and `rootfs.tar.gz.bin` are produced on CI by `tools/android-runtime/build_alpine_rootfs_wsl.sh`
+   and require WSL. Without them the Gradle check
+   (`requiredOperitAndroidRuntimeLibraries`) fails.
+
+With the prerequisites in place:
+
+```powershell
+python tools\build_scripts\build_flutter_android.py --build-name 2.0.0 --build-number 11
+```
+
+The command runs the full chain (Web Access bundle, plugin packaging, Rust bridge
+cross-build, Gradle `assembleRelease`) and writes
+`tools/release/dist/operit2-app-android-arm64-v8a.apk`. The NDK is provisioned
+automatically by the Android Gradle Plugin; `rustup target add aarch64-linux-android`
+is still required for the Rust bridge.
+
 ## OpenHarmony Flutter App
 
 OpenHarmony builds require the OpenHarmony Flutter SDK maintained at:

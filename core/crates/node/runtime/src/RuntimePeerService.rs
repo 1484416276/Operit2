@@ -1,4 +1,4 @@
-//! Runtime 节点通信入口：供 Router 转发调用，供应用管理监听和配对；仅声明、不实现。
+//! Runtime 节点通信入口：供 Router 转发调用，供应用管理监听和配对。
 //! PeerLink 只负责连接和传输；匿名准入、身份校验、配对状态和持久化由 runtime 负责。
 //! 配对使用标准 Link Call，不定义额外消息协议，不设置 HTTP 专用配对接口。
 
@@ -11,7 +11,7 @@ use operit_link::{
 use operit_peer_link::{PeerEndpoint, PeerTransport};
 
 /// 一个本地节点的通信服务；Router 不接触 socket、连接收发或配对握手。
-/// 此处只确定接口，不提前确定密钥交换、验证码或存储的具体实现。
+/// 生产实现见 HostRuntimePeerService；契约不依赖具体传输。
 #[async_trait(?Send)]
 pub trait RuntimePeerService: Send + Sync {
     /// 通过 Host 的局域网发现能力取得候选节点；此阶段不鉴权、不返回 token。
@@ -58,7 +58,7 @@ pub trait RuntimePeerService: Send + Sync {
     /// bindAddress、token 和发现选项从 runtime 持有的原配置文件读取，不另建一套默认配置。
     /// 未鉴权连接只能进入 runtime 的匿名配对 Call 白名单；不向应用暴露监听器。
     /// 已鉴权业务交给 Router 检查路由与权限；配对和业务共享接收入口。
-    async fn startListening(&self, transport: PeerTransport) -> Result<(), CoreLinkError>;
+    async fn startListening(&self, transports: &[PeerTransport]) -> Result<(), CoreLinkError>;
 
     /// 停止监听并关闭由本服务管理的连接和流；不删除持久化配对记录。
     async fn stop(&self) -> Result<(), CoreLinkError>;

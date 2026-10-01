@@ -1,3 +1,4 @@
+use crate::PeerSync::{PeerSyncMethod, NODE_SYNC_TARGET};
 use async_trait::async_trait;
 use operit_link::{RoutedCoreRequest, RoutedCoreRequestKind};
 use crate::RuntimePeerService::RuntimePeerService;
@@ -23,6 +24,9 @@ use tokio::sync::{oneshot, Mutex};
 use crate::GeneratedCoreRoute;
 use crate::SpaceRuntime::SpaceRuntime;
 use crate::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, NODE_SPACE_TARGET};
+
+#[path = "peer/sync_dispatch.rs"]
+mod sync_dispatch;
 
 const ROUTED_BINDING_WATCH_RECHECK_DELAY_MS: u64 = 50;
 
@@ -973,10 +977,12 @@ impl CoreNodeRouter {
             bindings.create(key, &target).map_err(CoreLinkError::internal)?
         };
         if commit.binding.nodeId != self.localNodeId {
-            let target = self.targetForSchema("application").ok_or_else(|| CoreLinkError::internal("Application schema missing"))?;
-            let args = operit_link::toCoreValue(serde_json::json!({"operation": commit.operation})).map_err(|e| CoreLinkError::internal(e.to_string()))?;
-            Box::pin(self.callNode(commit.binding.nodeId, CoreCallRequest::new(
-                operit_link::nextCoreRouteRequestId("binding-install"), target, "syncApplyImmediateBindingOperation", args))).await.result?;
+            let args = operit_link::toCoreValue(serde_json::json!({"operation": commit.operation}))
+                .map_err(|error| CoreLinkError::internal(error.to_string()))?;
+            let request = PeerSyncMethod::SyncApplyImmediateBindingOperation.request(
+                operit_link::nextCoreRouteRequestId("binding-install"), args,
+            );
+            Box::pin(self.callNode(commit.binding.nodeId, request)).await.result?;
         }
         Ok(())
     }
@@ -2024,6 +2030,15 @@ impl CoreNodeRouter {
             })();
             return CoreCallResponse { requestId, result };
         }
+        if request.payload.target == NODE_SYNC_TARGET {
+            match self.validatePeerSyncRoute(&previousNodeId, &request)
+                .and_then(|atTarget| PeerSyncMethod::fromRequest(&request.payload).map(|method| (atTarget, method)))
+            {
+                Err(error) => return CoreCallResponse::err(requestId, error),
+                Ok((true, method)) => return self.dispatchPeerSyncCall(method, request.payload).await,
+                Ok((false, _)) => {} // Preserve the protocol target when relaying.
+            }
+        }
         match self.validateIncomingRoute(&previousNodeId, &request) {
             Ok(true) => {
                 if request.routeKind == RoutedCoreRequestKind::SpaceBinding {
@@ -2183,6 +2198,13 @@ impl CoreNodeRouter {
             return Err(CoreLinkError::new("LOCAL_MANAGEMENT_ONLY", "Node management is only available to the local application"));
         }
 
+        if request.payload.target == NODE_SYNC_TARGET {
+            let atTarget = self.validatePeerSyncRoute(&previousNodeId, &request)?;
+            crate::PeerSync::PeerSyncPushMethod::fromRequest(&request.payload)?;
+            if atTarget {
+                return self.dispatchPeerSyncPush(request.payload);
+            }
+        }
         if self.validateIncomingRoute(&previousNodeId, &request)? {
             if request.routeKind == RoutedCoreRequestKind::SpaceBinding {
                 return self
@@ -3336,6 +3358,36 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn peer_sync_keeps_pairing_space_and_management_boundaries() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let mut router = testCoreNodeRouter("sync-local", "sync-peer", "sync-binding");
+        let peers = TestPeerService::new("sync-local".into(), "sync-peer".into(), Arc::new(TestClientEndpoint));
+        router.installNodeServices(NodeServices::new(peers)).unwrap();
+        let space = router.spaceStore.space().unwrap();
+        let request = RoutedCoreRequest {
+            spaceId: space.spaceId,
+            originNodeId: "sync-peer".into(),
+            targetNodeId: "sync-local".into(),
+            ttl: 0,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: PeerSyncMethod::CoreVersion.request("sync-test".into(), CoreValue::Null),
+        };
+        assert!(router.validatePeerSyncRoute("sync-peer", &request).unwrap());
+        assert!(router.routedCall("unpaired".into(), request.clone()).await.result.is_err());
+        let mut wrongSpace = request.clone();
+        wrongSpace.spaceId = "other-space".into();
+        assert!(router.routedCall("sync-peer".into(), wrongSpace).await.result.is_err());
+        let mut management = request.clone();
+        management.payload.target = "core/server.application".into();
+        assert!(router.routedCall("sync-peer".into(), management).await.result.is_err());
+        let mut wrongMethod = request.clone();
+        wrongMethod.payload.methodName = "startPairing".into();
+        assert!(router.routedCall("sync-peer".into(), wrongMethod).await.result.is_err());
+        router.networkControlStore.disconnectNode("sync-peer".into()).unwrap();
+        assert!(router.routedCall("sync-peer".into(), request).await.result.is_err());
+    }
     /// Creates one real router with synthetic local runtime and in-memory route state.
     #[allow(non_snake_case)]
     fn testCoreNodeRouter(

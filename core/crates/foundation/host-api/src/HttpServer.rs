@@ -9,6 +9,8 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
+#[derive(Clone, Copy, Debug)]
+pub struct RemoteAddress(pub std::net::SocketAddr);
 pub type ServerBody = UnsyncBoxBody<Bytes, HostError>;
 pub type ServerRequest = Request<ServerBody>;
 pub type ServerResponse = Response<ServerBody>;

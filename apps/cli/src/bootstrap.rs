@@ -96,6 +96,7 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     )
     .withToastHost(toastHost)
     .withHostSecretStore(hostSecretStore)
+    .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))
     .withWebSocketHost(Arc::new(NativeHttpHost::new()))
     .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))

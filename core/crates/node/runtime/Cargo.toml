@@ -8,10 +8,11 @@ publish.workspace = true
 [features]
 default = ["full"]
 peer-state = ["dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
-full = ["peer-state", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
+full = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
 test-support = []
 
 [dependencies]
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"], optional = true }
 uuid = { workspace = true, optional = true }
 
 operit-peer-link = { path = "../peer-link" }

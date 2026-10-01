@@ -219,7 +219,7 @@ fn runFirmware(
                     let result = nodeExecutor.block_on(async {
                         let services = edgeNode.nodeServices().map_err(|error| error.message)?;
                         services.peers()
-                            .startListening(operit_node_runtime::NodeServices::PeerTransport::Tcp)
+                            .startListening(&[operit_node_runtime::NodeServices::PeerTransport::Tcp])
                             .await
                             .map_err(|error| error.to_string())
                     });

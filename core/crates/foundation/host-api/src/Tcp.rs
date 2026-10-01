@@ -5,6 +5,8 @@ use std::sync::Arc;
 /// Host-owned ordered byte stream. Link framing and authentication stay in Core.
 #[async_trait]
 pub trait TcpConnection: Send + Sync {
+    /// 实际 socket 来源，仅由 Host 提供；缺失时不得推断局域网免 token。
+    fn remote_address(&self) -> Option<std::net::SocketAddr> { None }
     async fn write(&self, bytes: &[u8]) -> HostResult<()>;
     /// Returns at most 4096 bytes, or None at EOF. Cancelling a read loses no bytes.
     async fn read(&self) -> HostResult<Option<Vec<u8>>>;

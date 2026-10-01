@@ -66,7 +66,7 @@ impl CoreApplicationConfig {
 pub struct CoreApplication {
     localClient: Arc<LocalCoreProxy>,
     nodeRuntime: CoreNodeLocalRuntime,
-    nodeRouter: CoreNodeRouter,
+    nodeRouter: Arc<CoreNodeRouter>,
     deviceInfo: LinkDeviceInfo,
     startSpaceSync: bool,
     accessServices: RuntimeRemoteLinkService,
@@ -87,9 +87,12 @@ impl CoreApplication {
         let mut application = Self::startWithSharedLocalClientConfigured(
             Arc::new(localClient), config.deviceInfo, startSpaceSync,
         )?;
-        if let Some(services) = nodeServices {
-            application.installNodeServices(services)?;
-        }
+        let services = match nodeServices {
+            Some(services) => services,
+            None => NodeServices::new(operit_node_runtime::HostRuntimePeerService::HostRuntimePeerService::new(
+                Arc::new(application.localClient.hostManager().clone()), &application.nodeRouter, application.deviceInfo.clone())?),
+        };
+        application.installNodeServices(services)?;
         Ok(application)
     }
 
@@ -108,7 +111,11 @@ impl CoreApplication {
         localClient: Arc<LocalCoreProxy>,
         deviceInfo: LinkDeviceInfo,
     ) -> Result<Self, String> {
-        Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)
+        let mut application = Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)?;
+        let peers = operit_node_runtime::HostRuntimePeerService::HostRuntimePeerService::new(
+            Arc::new(application.localClient.hostManager().clone()), &application.nodeRouter, application.deviceInfo.clone())?;
+        application.installNodeServices(NodeServices::new(peers))?;
+        Ok(application)
     }
 
     /// Starts one Core tree while explicitly selecting whether its persistence worker is owned here.
@@ -119,9 +126,9 @@ impl CoreApplication {
         startSpaceSync: bool,
     ) -> Result<Self, String> {
         let nodeRuntime = localClient.coreNodeLocalRuntime();
-        let nodeRouter = CoreNodeRouter::new(nodeRuntime.clone());
+        let nodeRouter = Arc::new(CoreNodeRouter::new(nodeRuntime.clone()));
         let accessServices = RuntimeRemoteLinkService::newWithRouter(
-            nodeRuntime.clone(), nodeRouter.clone(),
+            nodeRuntime.clone(), (*nodeRouter).clone(),
         );
         let deviceInfo = accessServices.initializeDeviceInfo(deviceInfo)?;
         let routeChangeServices = accessServices.clone();
@@ -140,7 +147,7 @@ impl CoreApplication {
             .pluginSdkIpcHost
             .clone()
             .map(|host| {
-                let target: Arc<dyn PluginSdkLinkTarget> = Arc::new(nodeRouter.clone());
+                let target: Arc<dyn PluginSdkLinkTarget> = nodeRouter.clone();
                 OperitPluginSdkIpcBridge::new(
                     host,
                     PluginSdkIpcEndpoint::standard(),
@@ -193,7 +200,7 @@ impl CoreApplication {
 
     /// Returns the router that owns Rust route dispatch for this Core tree.
     pub fn nodeRouter(&self) -> CoreNodeRouter {
-        self.nodeRouter.clone()
+        (*self.nodeRouter).clone()
     }
 
     /// 设备资料和稳定节点身份不再由旧配对仓库持有。

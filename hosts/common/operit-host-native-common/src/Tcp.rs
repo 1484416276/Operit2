@@ -27,6 +27,7 @@ impl TcpHost for NativeTcpHost {
 }
 
 pub struct NativeTcpConnection {
+    remote: Option<std::net::SocketAddr>,
     reader: Mutex<Option<ReadHalf<TcpStream>>>,
     writer: Mutex<Option<WriteHalf<TcpStream>>>,
     closed: watch::Sender<bool>,
@@ -34,9 +35,11 @@ pub struct NativeTcpConnection {
 
 impl NativeTcpConnection {
     pub fn from_stream(stream: TcpStream) -> Self {
+        let remote = stream.peer_addr().ok();
         let (reader, writer) = tokio::io::split(stream);
         let (closed, _) = watch::channel(false);
         Self {
+            remote,
             reader: Mutex::new(Some(reader)),
             writer: Mutex::new(Some(writer)),
             closed,
@@ -46,6 +49,7 @@ impl NativeTcpConnection {
 
 #[async_trait]
 impl TcpConnection for NativeTcpConnection {
+    fn remote_address(&self) -> Option<std::net::SocketAddr> { self.remote }
     async fn write(&self, bytes: &[u8]) -> HostResult<()> {
         let mut closed = self.closed.subscribe();
         tokio::select! {

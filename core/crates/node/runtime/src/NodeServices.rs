@@ -153,11 +153,11 @@ mod tests {
             self.calls.lock().unwrap().push(format!("remove:{id}"));
             Ok(())
         }
-        async fn startListening(&self, transport: PeerTransport) -> Result<(), CoreLinkError> {
+        async fn startListening(&self, transports: &[PeerTransport]) -> Result<(), CoreLinkError> {
             self.calls
                 .lock()
                 .unwrap()
-                .push(format!("listen:{transport:?}"));
+                .push(format!("listen:{transports:?}"));
             Ok(())
         }
         async fn stop(&self) -> Result<(), CoreLinkError> {
@@ -238,7 +238,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(pending.pairingId, "transaction");
-            services.peers().startListening(transport).await.unwrap();
+            services.peers().startListening(&[transport]).await.unwrap();
         }
         assert_eq!(backend.calls.lock().unwrap().len(), 10);
         assert_eq!(services.peers().pairedPeers().unwrap()[0].nodeId, "board");

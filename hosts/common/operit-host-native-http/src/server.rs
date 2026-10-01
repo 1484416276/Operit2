@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade as AxumUpgrade},
-        FromRequestParts, State,
+        FromRequestParts, State, ConnectInfo,
     },
     response::IntoResponse,
     Router,
@@ -44,7 +44,7 @@ impl HttpServerListener for Listener {
             .ok_or_else(|| error("Listener already served"))?;
         axum::serve(
             listener,
-            Router::new().fallback(dispatch).with_state(handler),
+            Router::new().fallback(dispatch).with_state(handler).into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown)
         .await
@@ -53,9 +53,11 @@ impl HttpServerListener for Listener {
 }
 async fn dispatch(
     State(handler): State<HttpServerHandler>,
+    ConnectInfo(remote): ConnectInfo<std::net::SocketAddr>,
     request: axum::extract::Request,
 ) -> axum::response::Response {
     let (mut parts, body) = request.into_parts();
+    parts.extensions.insert(RemoteAddress(remote));
     if let Ok(upgrade) = AxumUpgrade::from_request_parts(&mut parts, &()).await {
         parts
             .extensions

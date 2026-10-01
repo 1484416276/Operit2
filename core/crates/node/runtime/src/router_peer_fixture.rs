@@ -40,7 +40,7 @@ impl RuntimePeerService for TestPeerService {
     async fn startPairing(&self, _: PeerEndpoint, _: PeerTransport, _: Option<&str>) -> Result<PendingPairing, CoreLinkError> { Err(Self::unsupported()) }
     async fn finishPairing(&self, _: &str, _: &str) -> Result<PairedPeer, CoreLinkError> { Err(Self::unsupported()) }
     async fn cancelPairing(&self, _: &str) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
-    async fn startListening(&self, _: PeerTransport) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
+    async fn startListening(&self, _: &[PeerTransport]) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
     async fn stop(&self) -> Result<(), CoreLinkError> { self.close(); Ok(()) }
     async fn call(&self, nextNodeId: &str, request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
         match self.endpoint(nextNodeId) {

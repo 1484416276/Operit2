@@ -1,3 +1,4 @@
+import '../../core/runtime/PeerEndpointTransport.dart';
 // ignore_for_file: file_names
 
 import 'dart:async';
@@ -6,7 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
-import '../../core/runtime/RemotePairingBridge.dart';
+import '../../core/runtime/PeerEndpointTransport.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../theme/OperitFormStyles.dart';
 
@@ -41,7 +42,7 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
   Future<void> _scan() async {
     _setBusy(true);
     try {
-      final peers = await const RemotePairingBridge().discover();
+      final peers = await widget.clients.server.runtimeRemoteLinkService.discoverPeers(timeoutMs: 2000);
       if (mounted) setState(() { _peers = peers; _error = null; });
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
@@ -52,13 +53,16 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     try {
       final _RemotePairResult? result;
       if (peer == null) {
-        result = await _RemotePairDialog.show(context);
+        result = await _RemotePairDialog.show(context, clients: widget.clients);
       } else {
         // LAN 候选不携带 token；免 token 准入由 runtime/Host 实际来源判断。
-        final pending = await const RemotePairingBridge().start(endpoint: peer.address, nodeId: peer.nodeId);
-        if (!mounted) { await const RemotePairingBridge().cancel(pending.pairingId); return; }
-        result = await _RemotePairCodeDialog.show(context, pairing: pending);
-        if (result == null) await const RemotePairingBridge().cancel(pending.pairingId);
+        final pending = await widget.clients.server.runtimeRemoteLinkService.startPairing(
+          address: peer.address, nodeId: peer.nodeId,
+          transport: peerEndpointTransport(peer.address), token: null,
+        );
+        if (!mounted) { await widget.clients.server.runtimeRemoteLinkService.cancelPairing(pairingId: pending.pairingId); return; }
+        result = await _RemotePairCodeDialog.show(context, pairing: pending, clients: widget.clients);
+        if (result == null) await widget.clients.server.runtimeRemoteLinkService.cancelPairing(pairingId: pending.pairingId);
       }
       if (result != null) {
         final space = await widget.clients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(deviceId: result.peer.nodeId);
@@ -103,13 +107,17 @@ Future<generated.CoreSpace?> confirmAndJoinPairedDeviceSpace({
 }
 
 class _RemotePairDialog extends StatefulWidget {
-  const _RemotePairDialog();
+  const _RemotePairDialog({required this.clients});
+
+  final GeneratedCoreProxyClients clients;
 
   /// Displays the manual remote pairing dialog.
-  static Future<_RemotePairResult?> show(BuildContext context) {
+  static Future<_RemotePairResult?> show(
+    BuildContext context, {required GeneratedCoreProxyClients clients}
+  ) {
     return showDialog<_RemotePairResult>(
       context: context,
-      builder: (_) => const _RemotePairDialog(),
+      builder: (_) => _RemotePairDialog(clients: clients),
     );
   }
 
@@ -154,8 +162,9 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       _error = null;
     });
     try {
-      final pairing = await const RemotePairingBridge().start(
-        endpoint: baseUrl,
+      final pairing = await widget.clients.server.runtimeRemoteLinkService.startPairing(
+        address: baseUrl,
+        nodeId: '',
         token: token,
         transport: _transport,
       );
@@ -192,9 +201,9 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       _error = null;
     });
     try {
-      final session = await const RemotePairingBridge().finish(
+      final session = await widget.clients.server.runtimeRemoteLinkService.finishPairing(
         pairingId: pairing.pairingId,
-        pairingCode: pairingCode,
+        confirmationCode: pairingCode,
       );
       if (mounted) {
         Navigator.of(context).pop(
@@ -293,7 +302,9 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
 }
 
 class _RemotePairCodeDialog extends StatefulWidget {
-  const _RemotePairCodeDialog({required this.pairing});
+  const _RemotePairCodeDialog({required this.pairing, required this.clients});
+
+  final GeneratedCoreProxyClients clients;
 
   final generated.PendingPairing pairing;
 
@@ -301,10 +312,11 @@ class _RemotePairCodeDialog extends StatefulWidget {
   static Future<_RemotePairResult?> show(
     BuildContext context, {
     required generated.PendingPairing pairing,
+    required GeneratedCoreProxyClients clients,
   }) {
     return showDialog<_RemotePairResult>(
       context: context,
-      builder: (_) => _RemotePairCodeDialog(pairing: pairing),
+      builder: (_) => _RemotePairCodeDialog(pairing: pairing, clients: clients),
     );
   }
 
@@ -340,9 +352,9 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       _error = null;
     });
     try {
-      final session = await const RemotePairingBridge().finish(
+      final session = await widget.clients.server.runtimeRemoteLinkService.finishPairing(
         pairingId: widget.pairing.pairingId,
-        pairingCode: pairingCode,
+        confirmationCode: pairingCode,
       );
       if (mounted) {
         Navigator.of(context).pop(

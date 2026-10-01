@@ -1,9 +1,9 @@
 //! 节点通信持久化。沿用原 link_access 路径和 Preferences 格式，不恢复旧握手或 HTTP 接口。
-use crate::NodeServices::PairedPeer;
+use crate::NodeServices::{PairedPeer, PeerTransport};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use operit_host_api::RuntimeStorageHost;
 use operit_link::protocol::LinkDeviceInfo;
-use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, Preferences};
+use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, Preferences, PreferencesDataStoreError, PREFERENCES_SCHEMA_VERSION_KEY_NAME};
 use operit_util::RuntimeStorageLayout::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -20,7 +20,9 @@ pub(crate) enum StoredDirection {
 pub struct PeerHostConfig {
     pub bindAddress: String,
     pub token: String,
-    pub webAccessEnabled: bool,
+    /// 显式暴露的传输方式；空列表不启动监听。
+    #[serde(default)]
+    pub transports: Vec<operit_peer_link::PeerTransport>,
     pub discoveryEnabled: bool,
     pub portMode: PeerHostPortMode,
     pub updatedAt: i64,
@@ -33,24 +35,26 @@ pub enum PeerHostPortMode {
     Fixed,
 }
 
-/// 原有凭证仅作为持久化数据读取；并不构成旧协议的实现。
-#[derive(Deserialize)]
-struct StoredInbound {
-    deviceId: String,
-    deviceInfo: LinkDeviceInfo,
-    pairingServiceVersion: i32,
-    sessionSecret: String,
+/// 配对服务沿用原版本及原入站/出站凭证，不按重构后的传输实现另分版本。
+pub(crate) const PAIRING_SERVICE_VERSION: u32 = 1;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct StoredInbound {
+    pub deviceId: String,
+    pub deviceInfo: LinkDeviceInfo,
+    pub pairingServiceVersion: u32,
+    pub sessionSecret: String,
 }
-#[derive(Deserialize)]
-struct StoredOutbound {
-    endpoint: String,
-    sessionId: String,
-    deviceId: String,
-    peerNodeId: String,
-    peerDeviceInfo: LinkDeviceInfo,
-    pairingServiceVersion: i32,
-    sessionSecret: String,
-    transport: String,
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct StoredOutbound {
+    pub endpoint: String,
+    pub sessionId: String,
+    pub deviceId: String,
+    pub peerNodeId: String,
+    pub peerDeviceInfo: LinkDeviceInfo,
+    pub pairingServiceVersion: u32,
+    pub sessionSecret: String,
+    pub transport: String,
 }
 
 #[derive(Clone)]
@@ -58,25 +62,97 @@ pub struct PeerStateStore {
     storage: Arc<dyn RuntimeStorageHost>,
 }
 impl PeerStateStore {
+    const OUTBOUND_PREFERENCES_VERSION: u32 = 1;
+
     pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
         Self { storage }
     }
     fn store(&self, path: &str) -> CoreNodeStateStore {
-        CoreNodeStateStore::newWithStorage(self.storage.clone(), path)
+        let store = CoreNodeStateStore::newWithStorage(self.storage.clone(), path);
+        if path == RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH {
+            store.withSchema(
+                Self::OUTBOUND_PREFERENCES_VERSION,
+                Self::migrateOutboundPreferences,
+            )
+        } else {
+            store
+        }
     }
+    /// Migrates outbound preferences one schema version at a time.
+    fn migrateOutboundPreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => Self::normalizeOutboundSessionFields(preferences),
+            from => Err(PreferencesDataStoreError::MissingMigration {
+                from,
+                to: from + 1,
+            }),
+        }
+    }
+
+    /// Renames persisted remote session fields without changing pairing credentials.
+    fn normalizeOutboundSessionFields(
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        for (name, encoded) in preferences.entries() {
+            if name == PREFERENCES_SCHEMA_VERSION_KEY_NAME {
+                continue;
+            }
+            let mut record: Value = serde_json::from_str(&encoded)?;
+            let fields = record.as_object_mut().ok_or_else(|| {
+                PreferencesDataStoreError::Message(format!("Invalid outbound record: {name}"))
+            })?;
+            for (old, new) in [
+                ("baseUrl", "endpoint"),
+                ("coreDeviceId", "peerNodeId"),
+                ("remoteDeviceInfo", "peerDeviceInfo"),
+            ] {
+                if let Some(value) = fields.remove(old) {
+                    if fields.get(new).is_some_and(|current| current != &value) {
+                        return Err(PreferencesDataStoreError::Message(format!(
+                            "Conflicting outbound field {new}: {name}"
+                        )));
+                    }
+                    fields.insert(new.into(), value);
+                }
+            }
+            fields
+                .entry("transport")
+                .or_insert_with(|| Value::String("http".into()));
+            serde_json::from_value::<StoredOutbound>(record.clone())?;
+            preferences.set(&stringPreferencesKey(&name), serde_json::to_string(&record)?);
+        }
+        Ok(())
+    }
+
     fn preferences(&self, path: &str) -> Result<Preferences, String> {
         self.store(path).data().map_err(|error| error.to_string())
     }
-    fn records<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
+    pub(crate) fn records<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
         self.preferences(path)?
             .entries()
             .into_iter()
+            .filter(|(name, _)| name != PREFERENCES_SCHEMA_VERSION_KEY_NAME)
             .map(|(name, encoded)| {
                 let record = serde_json::from_str(&encoded)
                     .map_err(|_| format!("Invalid peer state record at {path}, key {name}"))?;
                 Ok((name, record))
             })
             .collect()
+    }
+
+
+    /// 在原 Preferences 文件中提交一个事务/凭证；不创建平行的存储目录。
+    pub(crate) fn putRecord<T: Serialize>(&self, path: &str, id: &str, value: &T) -> Result<(), String> {
+        let encoded = serde_json::to_string(value).map_err(|e| e.to_string())?;
+        self.store(path).edit(|prefs| prefs.set(&stringPreferencesKey(id), encoded))
+            .map_err(|e| e.to_string())
+    }
+    pub(crate) fn deleteRecord(&self, path: &str, id: &str) -> Result<(), String> {
+        self.store(path).edit(|prefs| { prefs.remove(&stringPreferencesKey(id)); })
+            .map_err(|e| e.to_string())
     }
 
     /// 在原 identity.preferences.json 上读取/更新展示资料；稳定节点 ID 和未知字段不变。
@@ -129,13 +205,14 @@ impl PeerStateStore {
 
     /// 更新同一份配置，并保留文件中未来或外围组件增加的字段。
     pub fn saveHostConfig(&self, config: &PeerHostConfig) -> Result<(), String> {
+        let transports = serde_json::to_string(&config.transports).map_err(|error| error.to_string())?;
         self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .edit(|preferences| {
                 for (key, value) in [
                     ("bindAddress", config.bindAddress.clone()),
                     ("token", config.token.clone()),
-                    ("webAccessEnabled", config.webAccessEnabled.to_string()),
                     ("discoveryEnabled", config.discoveryEnabled.to_string()),
+                    ("transports", transports.clone()),
                     (
                         "portMode",
                         match config.portMode {
@@ -214,7 +291,11 @@ impl PeerStateStore {
                     .records::<Value>(path)?
                     .into_iter()
                     .filter_map(|(key, record)| {
-                        (record.pointer(pointer).and_then(Value::as_str) == Some(nodeId))
+                        (record.pointer(pointer).and_then(Value::as_str) == Some(nodeId)
+
+
+                            || (path == &RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH
+                                && record.get("peerNodeId").and_then(Value::as_str) == Some(nodeId)))
                             .then_some(key)
                     })
                     .collect::<Vec<_>>();
@@ -263,8 +344,11 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
     Ok(PeerHostConfig {
         bindAddress: get("bindAddress")?,
         token: get("token")?,
-        webAccessEnabled: parseBool("webAccessEnabled")?,
         discoveryEnabled: parseBool("discoveryEnabled")?,
+        transports: match preferences.get(&stringPreferencesKey("transports")) {
+            Some(value) => serde_json::from_str(value).map_err(|error| format!("Invalid peer host config field transports: {error}"))?,
+            None => Vec::new(),
+        },
         portMode: match get("portMode")?.as_str() {
             "automatic" => PeerHostPortMode::Automatic,
             "fixed" => PeerHostPortMode::Fixed,
@@ -275,7 +359,7 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
             .map_err(|_| "Invalid peer host config field updatedAt".to_string())?,
     })
 }
-fn validateCredential(version: i32, secret: &str) -> Result<(), String> {
+fn validateCredential(version: u32, secret: &str) -> Result<(), String> {
     if version <= 0
         || BASE64
             .decode(secret)
@@ -356,8 +440,101 @@ mod tests {
     fn writeRecord(store: &PeerStateStore, path: &str, key: &str, record: Value) {
         let mut preferences = emptyPreferences();
         preferences.set(&stringPreferencesKey(key), record.to_string());
-        store.store(path).replace(preferences).unwrap();
+        CoreNodeStateStore::newWithStorage(store.storage.clone(), path).replace(preferences).unwrap();
     }
+    #[test]
+    fn original_pairing_credentials_are_used_without_repairing() {
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        let secret = BASE64.encode([9; 32]);
+        writeRecord(&store, RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "in-session", serde_json::json!({
+            "deviceId": "peer", "deviceInfo": {"platform":"test", "model":"peer"},
+            "pairingServiceVersion": 1, "sessionSecret": secret
+        }));
+        writeRecord(&store, RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "saved-name", serde_json::json!({
+            "baseUrl":"http://peer:37194", "sessionId":"out-session", "deviceId":"local",
+            "coreDeviceId":"peer", "remoteDeviceInfo":{"platform":"test", "model":"peer"},
+            "pairingServiceVersion":1, "sessionSecret":secret
+        }));
+        let inbound = store.records::<StoredInbound>(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap();
+        assert_eq!(inbound["in-session"].sessionSecret, secret);
+        let outbound = store.records::<StoredOutbound>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap();
+        let record = &outbound["saved-name"];
+        assert_eq!(record.pairingServiceVersion, PAIRING_SERVICE_VERSION);
+        assert_eq!(record.sessionId, "out-session");
+        assert_eq!(record.sessionSecret, secret);
+        assert_eq!(record.transport, "http");
+        let encoded = serde_json::to_value(record).unwrap();
+        assert_eq!(encoded["peerNodeId"], "peer");
+        assert!(encoded.get("coreDeviceId").is_none());
+        let peers = store.pairedPeers("local").unwrap();
+        assert_eq!(peers.len(), 1);
+        assert!(peers[0].inbound && peers[0].outbound);
+        store.removePairedPeer("peer").unwrap();
+        assert!(store.pairedPeers("local").unwrap().is_empty());
+    }
+
+    #[test]
+    fn outbound_schema_migration_is_persisted_once_and_preserves_unknown_fields() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        writeRecord(&store, RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "named", serde_json::json!({
+            "baseUrl":"http://peer:37194", "sessionId":"session", "deviceId":"local",
+            "coreDeviceId":"peer", "remoteDeviceInfo":{"platform":"test", "model":"peer"},
+            "pairingServiceVersion":1, "sessionSecret":BASE64.encode([8;32]), "future":42
+        }));
+        assert_eq!(store.store(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).schemaVersion().unwrap(), 1);
+        let record = store.records::<Value>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap().remove("named").unwrap();
+        assert_eq!(record["endpoint"], "http://peer:37194");
+        assert_eq!(record["peerNodeId"], "peer");
+        assert_eq!(record["future"], 42);
+        assert!(record.get("baseUrl").is_none());
+        assert!(record.get("coreDeviceId").is_none());
+        assert!(record.get("remoteDeviceInfo").is_none());
+        let before = storage.0.lock().unwrap().clone();
+        let reopened = PeerStateStore::new(storage.clone());
+        reopened.records::<StoredOutbound>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap();
+        assert_eq!(before, *storage.0.lock().unwrap());
+        // Current-schema malformed data must fail, not receive a permanent serde fallback.
+        let mut preferences = store.preferences(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap();
+        let mut invalid = record;
+        invalid.as_object_mut().unwrap().remove("transport");
+        preferences.set(&stringPreferencesKey("named"), invalid.to_string());
+        store.store(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).replace(preferences).unwrap();
+        assert!(store.records::<StoredOutbound>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).is_err());
+    }
+
+    #[test]
+    fn failed_outbound_migration_does_not_rewrite_or_advance_schema() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        writeRecord(&store, RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "conflict", serde_json::json!({
+            "baseUrl":"old", "endpoint":"different"
+        }));
+        let before = storage.0.lock().unwrap().clone();
+        assert!(store.records::<StoredOutbound>(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).is_err());
+        assert_eq!(before, *storage.0.lock().unwrap());
+    }
+
+    #[test]
+    fn outbound_migration_reports_missing_steps_and_rejects_newer_schemas() {
+        let mut preferences = emptyPreferences();
+        assert!(matches!(
+            PeerStateStore::migrateOutboundPreferences(1, &mut preferences),
+            Err(PreferencesDataStoreError::MissingMigration { from: 1, to: 2 })
+        ));
+        let storage = Arc::new(Storage::default());
+        preferences.set(&stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME), "2".into());
+        CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH)
+            .replace(preferences).unwrap();
+        let before = storage.0.lock().unwrap().clone();
+        let store = PeerStateStore::new(storage.clone());
+        assert!(matches!(
+            store.store(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).data(),
+            Err(PreferencesDataStoreError::SchemaVersionTooNew { actual: 2, expected: 1 })
+        ));
+        assert_eq!(before, *storage.0.lock().unwrap());
+    }
+
     #[test]
     fn original_identity_and_unknown_fields_survive_device_info_updates() {
         let store = PeerStateStore::new(Arc::new(Storage::default()));
@@ -387,7 +564,7 @@ mod tests {
         assert!(store.hostConfig().unwrap().is_none());
         let mut config = PeerHostConfig {
             bindAddress: "0.0.0.0:37194".into(), token: "saved-token".into(),
-            webAccessEnabled: false, discoveryEnabled: false,
+            discoveryEnabled: false, transports: vec![PeerTransport::Tcp],
             portMode: PeerHostPortMode::Fixed, updatedAt: 12,
         };
         store.saveHostConfig(&config).unwrap();
@@ -422,6 +599,7 @@ mod tests {
             .unwrap();
         let before = storage.0.lock().unwrap().clone();
         let mut config = store.hostConfig().unwrap().unwrap();
+        assert!(config.transports.is_empty(), "obsolete flags must not enable listeners");
         assert_eq!(config.token, "old-token");
         assert_eq!(config.portMode, PeerHostPortMode::Fixed);
         assert_eq!(

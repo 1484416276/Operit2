@@ -2,7 +2,7 @@
 
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use operit_host_api::ServiceDiscovery::{
-    DiscoveredService, DiscoveryCallback, DiscoverySubscription, ServiceDiscoveryHost,
+    DiscoveredService, DiscoveryCallback, DiscoverySubscription, ServiceDiscoveryHost, ServiceAdvertisement, DiscoveryAdvertisement,
 };
 use operit_host_api::{HostError, HostResult};
 use std::{
@@ -122,7 +122,21 @@ impl ServiceDiscoveryProvider {
     }
 }
 
+struct Advertisement { daemon: ServiceDaemon, name: String }
+impl DiscoveryAdvertisement for Advertisement {}
+impl Drop for Advertisement {
+    fn drop(&mut self) { let _ = self.daemon.unregister(&self.name); }
+}
 impl ServiceDiscoveryHost for ServiceDiscoveryProvider {
+    fn advertise(&self, service: ServiceAdvertisement) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
+        let daemon = self.daemon.get_or_init(|| ServiceDaemon::new().map_err(|e| e.to_string()))
+            .as_ref().map_err(|e| HostError::new(e.clone()))?.clone();
+        let info = ServiceInfo::new(&service.serviceType, &service.instance, &service.hostname,
+            "", service.port, service.properties.into_iter().collect::<std::collections::HashMap<_, _>>()).map_err(|e| HostError::new(e.to_string()))?.enable_addr_auto();
+        let name = info.get_fullname().to_string();
+        daemon.register(info).map_err(|e| HostError::new(e.to_string()))?;
+        Ok(Box::new(Advertisement { daemon, name }))
+    }
     /// Collects resolved records without creating competing multicast consumers.
     fn discover(&self, serviceType: &str, timeoutMs: u64) -> HostResult<Vec<DiscoveredService>> {
         if timeoutMs == 0 {

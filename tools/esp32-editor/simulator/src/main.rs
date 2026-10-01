@@ -129,7 +129,7 @@ async fn run(nodeServices: Option<NodeServices>) -> Result<(), Box<dyn std::erro
                         let services = edgeNode.nodeServices().map_err(|error| error.message)?;
                         if action == "edge_pair" {
                             services.peers()
-                                .startListening(PeerTransport::Tcp)
+                                .startListening(&[PeerTransport::Tcp])
                                 .await
                                 .map_err(|e| e.to_string())?;
                         } else {

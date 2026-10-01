@@ -2503,6 +2503,7 @@ dependencies = [
  "operit-tools",
  "operit-util",
  "quote",
+ "ring",
  "serde",
  "serde_json",
  "syn",
@@ -2515,9 +2516,17 @@ name = "operit-peer-link"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
  "operit-host-api",
  "operit-link",
  "serde",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

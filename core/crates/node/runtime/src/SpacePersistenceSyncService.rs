@@ -1,3 +1,4 @@
+use crate::PeerSync::{PeerSyncMethod, NODE_SYNC_TARGET};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
@@ -281,7 +282,7 @@ impl SpacePersistenceSyncService {
         let remoteVersion: String = callRemote(
             &self.state.nodeRouter,
             targetNodeId,
-            "coreVersion",
+            PeerSyncMethod::CoreVersion,
             Value::Null,
         )
         .await?;
@@ -310,7 +311,7 @@ impl SpacePersistenceSyncService {
             let remoteClock: Value = callRemote(
                 &self.state.nodeRouter,
                 targetNodeId,
-                "syncClock",
+                PeerSyncMethod::SyncClock,
                 Value::Null,
             )
             .await?;
@@ -336,7 +337,7 @@ impl SpacePersistenceSyncService {
             let remoteOperations: Value = callRemote(
                 &self.state.nodeRouter,
                 targetNodeId,
-                "syncOperationsSince",
+                PeerSyncMethod::SyncOperationsSince,
                 json!({
                     "clock": localClock,
                     "domains": SYNC_DOMAINS,
@@ -391,7 +392,7 @@ impl SpacePersistenceSyncService {
             let _: Value = callRemote(
                 &self.state.nodeRouter,
                 targetNodeId,
-                "syncApplyOperations",
+                PeerSyncMethod::SyncApplyOperations,
                 json!({ "operations": operations.clone() }),
             )
             .await?;
@@ -465,11 +466,10 @@ impl SpacePersistenceSyncService {
     #[allow(non_snake_case)]
     async fn validateReachableDeviceSpace(&self, targetNodeId: &str) -> Result<(), String> {
         let localSpace = self.state.spaceStore.initialize()?;
-        let remoteSpace: CoreSpace = callRemoteService(
+        let remoteSpace: CoreSpace = callRemote(
             &self.state.nodeRouter,
             targetNodeId,
-            "server.runtimeRemoteLinkService",
-            "deviceSpace",
+            PeerSyncMethod::DeviceSpace,
             Value::Null,
         )
         .await?;
@@ -567,7 +567,11 @@ impl SpacePersistenceSyncService {
             .nodeRouter
             .openPushNode(
                 targetNodeId.to_string(),
-                blobPushRequest(&self.state.nodeRouter, reference)?,
+                {
+                    let mut request = blobPushRequest(&self.state.nodeRouter, reference)?;
+                    request.target = NODE_SYNC_TARGET.into();
+                    request
+                },
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -615,7 +619,7 @@ impl SpacePersistenceSyncService {
             let chunk: Vec<u8> = callRemote(
                 &self.state.nodeRouter,
                 targetNodeId,
-                "syncReadBlobChunk",
+                PeerSyncMethod::SyncReadBlobChunk,
                 json!({
                     "contentHash": reference.contentHash,
                     "offset": offset,
@@ -760,7 +764,7 @@ async fn remoteHasBlob(
     callRemote(
         nodeRouter,
         targetNodeId,
-        "syncBlobExists",
+        PeerSyncMethod::SyncBlobExists,
         json!({
             "contentHash": reference.contentHash,
             "size": reference.size,
@@ -861,7 +865,7 @@ fn persistenceServices() -> &'static Mutex<BTreeMap<String, Arc<SpacePersistence
 async fn callRemote<T>(
     nodeRouter: &CoreNodeRouter,
     targetNodeId: &str,
-    methodName: &str,
+    method: PeerSyncMethod,
     args: Value,
 ) -> Result<T, String>
 where
@@ -870,7 +874,7 @@ where
     let response = nodeRouter
         .callNode(
             targetNodeId.to_string(),
-            applicationCallRequest(nodeRouter, methodName, args)?,
+            method.request(operit_link::nextCoreRouteRequestId("space-persistence"), toCoreValue(args).map_err(|error| error.to_string())?),
         )
         .await;
     decodeCoreResponse(response.result.map_err(|error| error.to_string())?)

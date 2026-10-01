@@ -41,7 +41,7 @@ pub enum PreferencesDataStoreError {
     Message(String),
 }
 
-const PREFERENCES_SCHEMA_VERSION_KEY_NAME: &str = "__operit_preferences_schema_version";
+pub const PREFERENCES_SCHEMA_VERSION_KEY_NAME: &str = "__operit_preferences_schema_version";
 
 /// Result alias used by Flow-like preference APIs.
 pub type FlowResult<T> = Result<T, PreferencesDataStoreError>;
@@ -1629,6 +1629,17 @@ pub struct CoreNodeStateStore {
 }
 
 impl CoreNodeStateStore {
+    /// Declares a one-time schema migration for node-local state.
+    #[allow(non_snake_case)]
+    pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
+    where
+        F: Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError>
+            + Send + Sync + 'static,
+    {
+        self.inner = self.inner.withSchema(currentVersion, migrate);
+        self
+    }
+
     /// Opens node-local state through an explicit runtime storage host.
     #[allow(non_snake_case)]
     pub fn newWithStorage(

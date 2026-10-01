@@ -78,6 +78,8 @@ pub mod CoreNodeRouter;
 #[cfg(feature = "full")]
 pub mod NodeClient;
 pub mod RuntimePeerService;
+#[cfg(feature = "full")]
+pub mod HostRuntimePeerService;
 pub mod NodeServices;
 #[cfg(feature = "peer-state")]
 pub mod PeerStateStore;
@@ -85,6 +87,8 @@ pub mod PeerStateStore;
 pub mod RuntimeRemoteLinkService;
 #[cfg(feature = "full")]
 pub mod SpacePersistenceSyncService;
+#[cfg(feature = "full")]
+mod PeerSync;
 #[cfg(feature = "full")]
 pub mod SpaceRuntime;
 

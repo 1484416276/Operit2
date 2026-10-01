@@ -178,8 +178,8 @@ impl RuntimeRemoteLinkService {
     pub fn pairingPromptsFlow(&self) -> Result<StateFlow<Vec<crate::NodeServices::PairingPrompt>>, String> {
         self.observePeerState(Self::pairingPrompts)
     }
-    pub async fn startListening(&self, transport: operit_peer_link::PeerTransport) -> Result<(), String> {
-        self.nodeServices()?.peers().startListening(transport).await.map_err(|error| error.to_string())
+    pub async fn startListening(&self, transports: Vec<operit_peer_link::PeerTransport>) -> Result<(), String> {
+        self.nodeServices()?.peers().startListening(&transports).await.map_err(|error| error.to_string())
     }
     pub async fn stopListening(&self) -> Result<(), String> {
         self.nodeServices()?.peers().stop().await.map_err(|error| error.to_string())
@@ -523,6 +523,8 @@ impl RuntimeRemoteLinkService {
             proposal.spaceRevision = proposal.spaceRevision.checked_add(1)
                 .ok_or("Device space revision overflow during join")?;
         }
+        // CoreSpaceStore persists members in sorted order; compare canonical proposals.
+        proposal.members.sort();
         // 已有成员重试也取回控制操作，避免上次中断后只留下 Space 而没有权限状态。
         let accepted: PeerSpaceJoin = self.callPeerSpace(
             &deviceId, "join", toCoreValue(PeerSpaceSnapshot {

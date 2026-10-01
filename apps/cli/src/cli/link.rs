@@ -32,7 +32,7 @@ use tokio::time::timeout;
 
 pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "listen") => {
+        Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts" | "listen") => {
             run_node_pairing_command(args).await
         }
         Some("token") if args.len() == 2 && args[1] == "show" => {
@@ -62,7 +62,72 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
     } else {
         create_cli_core_application_without_space_sync("client").await?
     };
-    execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await
+    if args.first().map(String::as_str) == Some("listen") {
+        return run_node_listen(&application, &args[1..]).await;
+    }
+    let result = execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await;
+    // 配对改变通知本身会唤醒常驻同步；短命 CLI 等待一次现有同步，避免退出截断它。
+    if result.is_ok() && args.first().map(String::as_str) == Some("pair-finish") {
+        operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+            Arc::new(application.nodeRuntime()), application.nodeRouter(),
+            operit_store::CoreSpaceStore::CoreSpaceStore::new(application.nodeRuntime().runtimeStorageHost()),
+        ).synchronizeOnce().await?;
+    }
+    application.shutdown().await;
+    result
+}
+
+/// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
+async fn run_node_listen(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::{PeerHostConfig, PeerHostPortMode}};
+    let mut transports = Vec::new();
+    let mut config = application.accessServices().localHostConfig()?.unwrap_or(PeerHostConfig {
+        bindAddress: "0.0.0.0:37195".into(), token: uuid::Uuid::new_v4().to_string(),
+        transports: Vec::new(), discoveryEnabled: true, portMode: PeerHostPortMode::Fixed,
+        updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
+    });
+    let mut duration = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--bind" | "--token" | "--duration-ms" => {
+                let flag = &args[index]; index += 1;
+                let value = args.get(index).ok_or_else(|| format!("Missing value for {flag}"))?;
+                match flag.as_str() {
+                    "--bind" => config.bindAddress = value.clone(),
+                    "--token" => config.token = value.clone(),
+                    _ => duration = Some(value.parse::<u64>().map_err(|e| e.to_string())?),
+                }
+            },
+            "--no-discovery" => config.discoveryEnabled = false,
+            value => for mode in value.split(',') {
+                let transport = match mode {
+                    "http" => PeerTransport::Http, "ws" => PeerTransport::WebSocket, "tcp" => PeerTransport::Tcp,
+                    "serial" => PeerTransport::Serial, "bluetooth" => PeerTransport::Bluetooth,
+                    _ => return Err(format!("Unknown transport: {mode}")),
+                };
+                if !transports.contains(&transport) { transports.push(transport); }
+            },
+        }
+        index += 1;
+    }
+    if transports.is_empty() { transports = config.transports.clone(); }
+    if transports.is_empty() { return Err("Choose at least one listener transport".into()); }
+    config.transports = transports.clone();
+    config.updatedAt = operit_host_api::TimeUtils::currentTimeMillis();
+    application.accessServices().saveLocalHostConfig(config.clone())?;
+    application.accessServices().startListening(transports).await?;
+    let ready = serde_json::json!({"listening": true, "nodeId": application.localNodeId(), "bindAddress": config.bindAddress, "transports": config.transports});
+    if cli_json_mode() { emit_cli_json(ready); } else { println!("{ready}"); }
+    io::stdout().flush().map_err(|e| e.to_string())?;
+    // 本机验证码通过普通管理命令 `link prompts` 查看，不放入匿名协议响应。
+    match duration {
+        Some(ms) => application.localClient().hostManager().hostRuntimeTaskSchedulerHost.as_ref()
+            .ok_or("Host task scheduler missing")?.waitForHostRuntimeDelay(ms).await.map_err(|e| e.to_string())?,
+        None => tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?,
+    }
+    application.accessServices().stopListening().await?;
+    Ok(())
 }
 
 async fn execute_node_pairing_command(
@@ -102,9 +167,10 @@ async fn execute_node_pairing_command(
             services.removePairedPeer(node).await.map_err(|e| e.to_string())?;
             serde_json::json!({"removed": node})
         }
+        [command] if command == "prompts" => serde_json::to_value(services.pairingPrompts().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         [command] if command == "peers" => serde_json::to_value(services.pairedPeers().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         [command, mode] if command == "listen" => {
-            services.startListening(transport(mode)?).await.map_err(|e| e.to_string())?;
+            services.startListening(&[transport(mode)?]).await.map_err(|e| e.to_string())?;
             tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
             services.stop().await.map_err(|e| e.to_string())?;
             serde_json::json!({"stopped": true})

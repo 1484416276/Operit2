@@ -19,9 +19,19 @@ pub type DiscoveryCallback = Arc<dyn Fn(DiscoveredService) + Send + Sync>;
 
 /// Keeps one announcement listener registered until its owner releases it.
 pub trait DiscoverySubscription: Send + Sync {}
+/// 删除/停止监听时释放广播，与浏览器订阅分开拥有资源。
+pub trait DiscoveryAdvertisement: Send + Sync {}
+#[derive(Clone, Debug)]
+pub struct ServiceAdvertisement {
+    pub serviceType: String, pub instance: String, pub hostname: String,
+    pub port: u16, pub properties: BTreeMap<String, String>,
+}
 
 /// Owns service browsers and their operating-system resources.
 pub trait ServiceDiscoveryHost: Send + Sync {
+    fn advertise(&self, _service: ServiceAdvertisement) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
+        Err(crate::HostError::new("Service advertisement is not supported by this Host"))
+    }
     /// Collects a snapshot after listening for the requested discovery interval.
     fn discover(&self, serviceType: &str, timeoutMs: u64) -> HostResult<Vec<DiscoveredService>>;
 

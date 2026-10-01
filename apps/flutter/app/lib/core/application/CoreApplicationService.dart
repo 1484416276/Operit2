@@ -9,7 +9,6 @@ import 'package:flutter/widgets.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
-import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import '../notifications/AppNotificationService.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
@@ -33,7 +32,6 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   bool _initialized = false;
   bool _localBackgroundServiceStartAttempted = false;
-  bool _linkHostStartAttempted = false;
   Future<void>? _runtimeServicesStart;
   Object? _pendingStartupError;
 
@@ -167,7 +165,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     });
   }
 
-  /// Starts host subscriptions and LinkHost outside the widget lifecycle.
+  /// Starts host subscriptions and configured node listeners outside the widget lifecycle.
   Future<void> _startRuntimeServicesOnce() async {
     final stopwatch = Stopwatch()..start();
     if (!_runtimeManager.runtimeConfigured) {
@@ -201,7 +199,12 @@ class CoreApplicationService with WidgetsBindingObserver {
           .updateCurrentDeviceUserName(
             userName: _runtimeManager.activeIdentity.name,
           );
-      await _ensureLinkHostStarted();
+      // 配置和监听生命周期归 runtime；Dart 只调用生成的类型化 Proxy。
+      final peerService = _coreClients.server.runtimeRemoteLinkService;
+      final config = await peerService.localHostConfig();
+      if (config != null && config.transports.isNotEmpty) {
+        await peerService.startListening(transports: config.transports);
+      }
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
@@ -220,25 +223,6 @@ class CoreApplicationService with WidgetsBindingObserver {
         _pendingStartupError = error;
       }
     }
-  }
-
-  /// Starts LinkHost once the local runtime storage is confirmed.
-  Future<void> _ensureLinkHostStarted() async {
-    if (_linkHostStartAttempted) {
-      ClientLogger.d(
-        'link host initialize skipped attempted=true',
-        tag: _logTag,
-      );
-      return;
-    }
-    _linkHostStartAttempted = true;
-    final linkHostStopwatch = Stopwatch()..start();
-    ClientLogger.i('link host initialize start', tag: _logTag);
-    await LinkAccessHost.instance.initializeFromConfig();
-    ClientLogger.i(
-      'link host initialize done elapsedMs=${linkHostStopwatch.elapsedMilliseconds}',
-      tag: _logTag,
-    );
   }
 
   /// Starts the Android foreground Core service for a local runtime.

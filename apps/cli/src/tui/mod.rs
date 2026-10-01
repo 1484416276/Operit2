@@ -109,7 +109,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     )
     .await?;
     if let Some(transport) = link_args.listen {
-        core_application.accessServices().startListening(transport).await
+        core_application.accessServices().startListening(vec![transport]).await
             .map_err(|error| error.to_string())?;
     }
     join_tui_paired_nodes(&core_application, &link_args).await?;

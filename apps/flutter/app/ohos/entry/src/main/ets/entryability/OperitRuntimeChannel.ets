@@ -250,17 +250,6 @@ interface RuntimeNativeModule {
   /** Creates a retained direct Dart connection to the host runtime. */
   connectCoreFfi(handle: bigint): string;
   destroy(handle: bigint): void;
-  startWebAccessServer(
-    handle: bigint,
-    bindAddress: string,
-    token: string,
-    shutdownToken: string,
-    webRoot: string,
-    deviceInfo: string,
-    enableWebAccess: string,
-    enableDiscovery: string
-  ): string;
-  stopWebAccessServer(handle: bigint): string;
   emitRuntimeEvent(handle: bigint, eventJson: string): string;
 }
 
@@ -419,12 +408,6 @@ export class OperitRuntimeChannel {
           return;
         case 'connectCoreFfi':
           result.success(nativeBridge.connectCoreFfi(this.ensureRuntimeHandle()));
-          return;
-        case 'startWebAccessServer':
-          result.success(this.startWebAccessServer(call));
-          return;
-        case 'stopWebAccessServer':
-          result.success(nativeBridge.stopWebAccessServer(this.ensureRuntimeHandle()));
           return;
         case 'ownerSystemLanguageCode':
           result.success(this.ownerSystemLanguageCode());
@@ -980,19 +963,6 @@ export class OperitRuntimeChannel {
     }
   }
 
-  /// Starts the Web Access server through the Rust bridge.
-  private startWebAccessServer(call: MethodCall): string {
-    return nativeBridge.startWebAccessServer(
-      this.ensureRuntimeHandle(),
-      this.mapString(call, 'bindAddress'),
-      this.mapString(call, 'token'),
-      this.mapString(call, 'shutdownToken'),
-      this.mapString(call, 'webRoot'),
-      this.mapString(call, 'deviceInfo'),
-      this.mapString(call, 'enableWebAccess'),
-      this.mapString(call, 'enableDiscovery')
-    );
-  }
 
   /// Returns the current OpenHarmony system language code.
   private ownerSystemLanguageCode(): JsonStringPayload {

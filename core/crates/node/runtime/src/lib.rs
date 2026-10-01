@@ -70,17 +70,25 @@ impl GeneratedSpaceRoute {
     }
 }
 
+#[cfg(feature = "full")]
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
 
-pub mod remote;
+#[cfg(feature = "full")]
 pub mod CoreNodeRouter;
+#[cfg(feature = "full")]
 pub mod NodeClient;
-pub mod RuntimeRemoteLinkDiscovery;
+pub mod RuntimePeerService;
+pub mod NodeServices;
+#[cfg(feature = "peer-state")]
+pub mod PeerStateStore;
+#[cfg(feature = "full")]
 pub mod RuntimeRemoteLinkService;
+#[cfg(feature = "full")]
 pub mod SpacePersistenceSyncService;
+#[cfg(feature = "full")]
 pub mod SpaceRuntime;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod tests {
     use super::*;
 

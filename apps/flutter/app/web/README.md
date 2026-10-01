@@ -48,6 +48,7 @@ standalone browser runtime is kept under `runtime/` and is split by purpose:
   guest runtime.
 - `runtime/vendor/` contains third-party static files such as MessagePack.
 
-Native apps and the CLI do not package or serve this directory. They expose only
-the Link Access protocol; the browser connects through `https://web.operit.app/`
-with the `accessUrl` and `token` query parameters.
+Native apps and the CLI do not package or serve this directory. The settings
+entry and `operit2 cli web open` open `https://web.operit.app/` without starting a
+local server or putting credentials in the URL. Connecting to another device is
+a separate node listening/pairing operation, not a Web Access server lifecycle.

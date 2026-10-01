@@ -7,7 +7,7 @@ publish.workspace = true
 description = "Lightweight Edge Core node boundary for device apps."
 
 [dependencies]
-operit-peer-link = { path = "../peer-link" }
+operit-node-runtime = { path = "../runtime", default-features = false }
 async-trait.workspace = true
 operit-host-api = { path = "../../foundation/host-api" }
 operit-edge-contract = { path = "../edge-contract" }

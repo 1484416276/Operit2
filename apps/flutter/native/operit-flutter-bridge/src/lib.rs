@@ -23,7 +23,6 @@ use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::{c_char, CStr, CString};
 #[cfg(not(target_arch = "wasm32"))]
 use std::future::Future;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
@@ -35,14 +34,6 @@ use operit_core_application::CoreApplication;
 use operit_proxy_local::LocalCoreProxy;
 
 #[cfg(not(target_arch = "wasm32"))]
-mod mdnss;
-
-#[cfg(not(target_arch = "wasm32"))]
-use operit_node_runtime::remote::{
-    linkTokenHash, LinkAccessHostConfig, LinkDeviceInfo, RemoteLinkServer,
-    RemoteLinkServerConfig, RemoteWebAccessConfig,
-};
-#[cfg(not(target_arch = "wasm32"))]
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostManager::HostManager;
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,7 +42,7 @@ use operit_host_api::RuntimeStorageHost;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkClient,
     CoreLinkError, CoreLinkPushSession, CoreLinkSharedClient, CorePushItem, CorePushRequest,
-    CoreWatchRequest,
+    CoreWatchRequest, LinkDeviceInfo,
 };
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
@@ -72,7 +63,6 @@ use operit_runtime::services::RuntimeHostInteractionService::{
     RuntimeHostInteractionWebVisitPayload,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use operit_store::CoreSpaceStore::CoreSpaceStore;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolPermissionSystem::PermissionRequestResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -204,11 +194,7 @@ pub struct OperitFlutterBridge {
     pub(crate) watchSubscriptions: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
     pub(crate) pushStreams: Mutex<HashMap<String, NativePushState>>,
     #[cfg(not(target_arch = "wasm32"))]
-    webAccessTask: Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
-    #[cfg(not(target_arch = "wasm32"))]
     coreApplication: Mutex<Option<CoreApplication>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    mdns: Mutex<Option<mdnss::MdnsHandle>>,
     #[cfg(any(
         windows,
         all(target_os = "linux", not(target_env = "ohos")),
@@ -351,11 +337,8 @@ impl OperitFlutterBridge {
             watchSubscriptions: Arc::new(Mutex::new(HashMap::new())),
             pushStreams: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
-            webAccessTask: Mutex::new(None),
-            #[cfg(not(target_arch = "wasm32"))]
             coreApplication: Mutex::new(Some(coreApplication)),
             #[cfg(not(target_arch = "wasm32"))]
-            mdns: Mutex::new(None),
             #[cfg(any(
                 windows,
                 all(target_os = "linux", not(target_env = "ohos")),
@@ -386,156 +369,7 @@ impl OperitFlutterBridge {
         CoreLinkSharedClient::call(self.localCore.as_ref(), request).await
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    /// Starts the Access server with pairing control and the Space PeerLink carrier.
-    fn startWebAccessServer(
-        &self,
-        bindAddress: String,
-        token: String,
-        shutdownToken: String,
-        _webRoot: PathBuf,
-        deviceInfo: LinkDeviceInfo,
-        enableWebAccess: bool,
-        enableDiscovery: bool,
-    ) -> Result<String, String> {
-        self.stopWebAccessServer();
-        let (accessStore, identity, nodeRouter, spaceStore) = {
-            let mut coreApplicationGuard = self
-                .coreApplication
-                .lock()
-                .map_err(|error| format!("CoreApplication lock poisoned: {error}"))?;
-            let coreApplication = coreApplicationGuard
-                .as_mut()
-                .expect("Flutter bridge CoreApplication must be initialized");
-            let identity = coreApplication.updateAccessIdentity(deviceInfo)?;
-            (
-                coreApplication.accessStore(),
-                identity,
-                coreApplication.nodeRouter(),
-                CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost()),
-            )
-        };
-        let savedHostConfig = accessStore.initializeHostConfig()?;
-        accessStore.saveHostConfig(LinkAccessHostConfig {
-            bindAddress: bindAddress.clone(),
-            token: token.clone(),
-            webAccessEnabled: enableWebAccess,
-            discoveryEnabled: enableDiscovery,
-            portMode: savedHostConfig.portMode,
-            updatedAt: current_time_millis_u64() as i64,
-        })?;
-        let deviceId = identity.deviceId.clone();
-        if enableDiscovery {
-            let mut mdns_guard = self
-                .mdns
-                .lock()
-                .map_err(|error| format!("mDNS lock poisoned: {error}"))?;
-            if mdns_guard.is_none() {
-                let mut mdns = mdnss::MdnsHandle::new()?;
-                let address: SocketAddr = bindAddress
-                    .parse()
-                    .map_err(|error| format!("invalid bind address: {error}"))?;
-                let mut props = std::collections::HashMap::new();
-                props.insert("deviceId".to_string(), deviceId.clone());
-                props.insert("displayName".to_string(), identity.deviceInfo.displayName());
-                props.insert("platform".to_string(), identity.deviceInfo.platform.clone());
-                props.insert("model".to_string(), identity.deviceInfo.model.clone());
-                props.insert("tokenHash".to_string(), linkTokenHash(&token));
-                props.insert("version".to_string(), "1".to_string());
-                mdns.register(&deviceId, address.port(), props)?;
-                *mdns_guard = Some(mdns);
-            }
-        }
-        let listener_address: SocketAddr = bindAddress
-            .parse()
-            .map_err(|error| format!("invalid bind address: {error}"))?;
-        let presenceBaseUrl = webAccessPresenceBaseUrl(listener_address);
-        let presenceTokenHash = linkTokenHash(&token);
-        let webAccess = RemoteWebAccessConfig { shutdownToken };
-        let (serverStartSender, serverStartReceiver) = mpsc::channel();
-        let task = self.runtime.spawn(async move {
-            let listener = match tokio::net::TcpListener::bind(listener_address).await {
-                Ok(listener) => listener,
-                Err(error) => {
-                    let message = error.to_string();
-                    let _ = serverStartSender.send(Err(message.clone()));
-                    return Err(message);
-                }
-            };
-            let _ = serverStartSender.send(Ok(()));
-            RemoteLinkServer::serveWithListener(
-                nodeRouter,
-                RemoteLinkServerConfig {
-                    bindAddress,
-                    token,
-                    deviceId: identity.deviceId,
-                    deviceInfo: identity.deviceInfo,
-                    webAccess: Some(webAccess),
-                    printStartupInfo: false,
-                    accessStore,
-                },
-                listener,
-                listener_address,
-            )
-            .await
-        });
-        let startResult = serverStartReceiver
-            .recv()
-            .map_err(|error| format!("web access server start channel closed: {error}"))?;
-        if let Err(error) = startResult {
-            return Err(error);
-        }
-        spaceStore.writeLocalDevicePresence(
-            true,
-            presenceBaseUrl,
-            presenceTokenHash,
-            "1".to_string(),
-        )?;
-        *self
-            .webAccessTask
-            .lock()
-            .expect("web access task mutex poisoned") = Some(task);
-        Ok(deviceId)
-    }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    /// Stops the Access server and its discovery registration.
-    fn stopWebAccessServer(&self) {
-        if let Err(error) = self.publishStoppedWebAccessPresence() {
-            operit_util::AppLogger::AppLogger::w(
-                "OperitFlutterBridge",
-                &format!("Web Access presence stop publish failed: {error}"),
-            );
-        }
-        if let Some(task) = self
-            .webAccessTask
-            .lock()
-            .expect("web access task mutex poisoned")
-            .take()
-        {
-            task.abort();
-        }
-        if let Ok(mut mdns_guard) = self.mdns.lock() {
-            if let Some(mdns) = mdns_guard.take() {
-                let _ = mdns.unregister();
-            }
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    /// Publishes that this runtime no longer exposes its Link endpoint.
-    fn publishStoppedWebAccessPresence(&self) -> Result<(), String> {
-        let coreApplicationGuard = self
-            .coreApplication
-            .lock()
-            .map_err(|error| format!("CoreApplication lock poisoned: {error}"))?;
-        let coreApplication = coreApplicationGuard
-            .as_ref()
-            .expect("Flutter bridge CoreApplication must be initialized");
-        CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost())
-            .writeLocalDevicePresence(false, String::new(), String::new(), String::new())?;
-        Ok(())
-    }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn emitRuntimeEvent(&self, eventJson: &str) -> String {
@@ -619,15 +453,6 @@ fn tool_to_permission_payload(tool: &AITool) -> RuntimeHostInteractionToolPermis
 
 fn current_time_millis_u64() -> u64 {
     operit_host_api::TimeUtils::currentTimeMillisU128().min(u64::MAX as u128) as u64
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// Builds the Link endpoint text announced through synchronized device presence.
-fn webAccessPresenceBaseUrl(address: SocketAddr) -> String {
-    match address {
-        SocketAddr::V4(address) => format!("http://{}:{}", address.ip(), address.port()),
-        SocketAddr::V6(address) => format!("http://[{}]:{}", address.ip(), address.port()),
-    }
 }
 
 fn last_create_error() -> &'static Mutex<String> {

@@ -12,6 +12,14 @@ use crate::{
     SerialPortHost, TcpHost,
 };
 
+static DEFAULT_HTTP_SERVER_HOST: OnceLock<Arc<dyn crate::HttpServer::HttpServerHost>> = OnceLock::new();
+pub fn setDefaultHttpServerHost(host: Arc<dyn crate::HttpServer::HttpServerHost>) {
+    let _ = DEFAULT_HTTP_SERVER_HOST.set(host);
+}
+pub fn defaultHttpServerHost() -> crate::HostResult<Arc<dyn crate::HttpServer::HttpServerHost>> {
+    DEFAULT_HTTP_SERVER_HOST.get().cloned()
+        .ok_or_else(|| crate::HostError::new("The active Host has not registered an HTTP server provider"))
+}
 static DEFAULT_TCP_HOST: OnceLock<Arc<dyn TcpHost>> = OnceLock::new();
 
 pub fn setDefaultTcpHost(host: Arc<dyn TcpHost>) {
@@ -122,6 +130,7 @@ pub fn defaultHostRuntimeTaskSchedulerHost() -> Arc<dyn HostRuntimeTaskScheduler
 #[derive(Clone, Default)]
 pub struct HostManager {
     pub serviceDiscoveryHost: Option<Arc<dyn ServiceDiscoveryHost>>,
+    pub httpServerHost: Option<Arc<dyn crate::HttpServer::HttpServerHost>>,
     pub tcpHost: Option<Arc<dyn TcpHost>>,
     pub serialPortHost: Option<Arc<dyn SerialPortHost>>,
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
@@ -173,6 +182,7 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
@@ -214,6 +224,7 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
@@ -258,6 +269,7 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
@@ -303,6 +315,7 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
@@ -352,6 +365,7 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             webSocketHost: None,
+            httpServerHost: None,
             tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
@@ -409,6 +423,10 @@ impl HostManager {
         self
     }
 
+    pub fn withHttpServerHost(mut self, host: Arc<dyn crate::HttpServer::HttpServerHost>) -> Self {
+        self.httpServerHost = Some(host);
+        self
+    }
     pub fn withTcpHost(mut self, host: Arc<dyn TcpHost>) -> Self {
         self.tcpHost = Some(host);
         self

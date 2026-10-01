@@ -119,13 +119,13 @@ class _AppDialogHostState extends State<_AppDialogHost> {
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   bool _shownStartupWebAccessError = false;
-  StreamSubscription<core_proxy.RuntimeHostInteractionRequest>?
-  _webAccessPairingSubscription;
-  Future<void> _webAccessPairingDialogQueue = Future<void>.value();
+  StreamSubscription<List<core_proxy.PairingPrompt>>?
+  _pairingSubscription;
+  Future<void> _pairingDialogQueue = Future<void>.value();
   final RuntimeBootstrapManager _runtimeManager =
       RuntimeBootstrapManager.instance;
 
-  /// Subscribes to native Web Access pairing request events.
+  /// Subscribes to runtime node pairing prompts.
   @override
   void initState() {
     super.initState();
@@ -135,35 +135,25 @@ class _AppDialogHostState extends State<_AppDialogHost> {
 
   /// Opens pairing event monitoring after runtime storage configuration.
   void _syncPairingSubscription() {
-    if (kIsWeb || !_runtimeManager.runtimeConfigured ||
-        _webAccessPairingSubscription != null) {
+    if (!_runtimeManager.runtimeConfigured ||
+        _pairingSubscription != null) {
       return;
     }
-    _webAccessPairingSubscription = _coreClients
-        .servicesRuntimeHostInteractionService
-        .ownerHostInteractionEvents(
-          kinds: <core_proxy.RuntimeHostInteractionKind>[
-            core_proxy.RuntimeHostInteractionKind.webAccessPairing,
-          ],
-        )
-        .listen(
-          (event) => unawaited(_handleWebAccessPairingRequest(event)),
+    _pairingSubscription = _coreClients.server.runtimeRemoteLinkService
+        .pairingPromptsFlow().listen(
+          _handlePairingPrompts,
           onError: (Object error, StackTrace stackTrace) {
-            ClientLogger.e(
-              'web access pairing event stream failed',
-              tag: _logTag,
-              error: error,
-              stackTrace: stackTrace,
-            );
+            ClientLogger.e('node pairing prompt stream failed', tag: _logTag,
+              error: error, stackTrace: stackTrace);
           },
         );
   }
 
-  /// Cancels native Web Access pairing request event monitoring.
+  /// Cancels runtime node pairing prompt monitoring.
   @override
   void dispose() {
     _runtimeManager.removeListener(_syncPairingSubscription);
-    unawaited(_webAccessPairingSubscription?.cancel());
+    unawaited(_pairingSubscription?.cancel());
     super.dispose();
   }
 
@@ -214,60 +204,25 @@ class _AppDialogHostState extends State<_AppDialogHost> {
     });
   }
 
-  /// Queues one Web Access pairing dialog and acknowledges it after dismissal.
-  Future<void> _handleWebAccessPairingRequest(
-    core_proxy.RuntimeHostInteractionRequest event,
-  ) async {
-    final pairing = event.webAccessPairing;
-    if (pairing == null) {
-      throw StateError('web access pairing event payload is missing');
-    }
-    _webAccessPairingDialogQueue = _webAccessPairingDialogQueue
-        .then((_) => _showWebAccessPairingRequest(pairing))
-        .then(
-          (_) => _coreClients.servicesRuntimeHostInteractionService
-              .acknowledgeOwnerHostInteraction(requestId: event.requestId),
-        )
-        .catchError((Object error, StackTrace stackTrace) {
-          ClientLogger.e(
-            'web access pairing event handling failed',
-            tag: _logTag,
-            error: error,
-            stackTrace: stackTrace,
-          );
-        });
-  }
+  final Set<String> _shownPairings = <String>{};
 
-  /// Presents one browser pairing request with its one-time pairing code.
-  Future<void> _showWebAccessPairingRequest(
-    core_proxy.RuntimeHostInteractionWebAccessPairingPayload pairing,
-  ) {
-    if (!mounted) {
-      return Future<void>.value();
+  /// 观察同一个 runtime 的待确认快照；验证码只显示给本机用户。
+  void _handlePairingPrompts(List<core_proxy.PairingPrompt> prompts) {
+    _shownPairings.retainAll(prompts.map((prompt) => prompt.pairingId));
+    for (final prompt in prompts) {
+      if (!_shownPairings.add(prompt.pairingId)) continue;
+      _pairingDialogQueue = _pairingDialogQueue.then((_) async {
+        if (!mounted || !_shownPairings.contains(prompt.pairingId)) return;
+        final l10n = AppLocalizations.of(context)!;
+        await showDialog<void>(context: context, builder: (context) => AlertDialog(
+          title: Text(l10n.settingsRuntimePairRemote),
+          content: SelectableText('${prompt.displayName}\n${prompt.confirmationCode}'),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.ok))],
+        ));
+      }).catchError((Object error, StackTrace stackTrace) {
+        ClientLogger.e('node pairing prompt failed', tag: _logTag, error: error, stackTrace: stackTrace);
+      });
     }
-    final l10n = AppLocalizations.of(context)!;
-    final client = '${pairing.clientPlatform} / ${pairing.clientModel}';
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(l10n.settingsWebAccessPairingRequest),
-          content: SelectableText(
-            l10n.settingsWebAccessPairingRequestMessage(
-              pairing.pairingCode,
-              client,
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(l10n.ok),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   @override

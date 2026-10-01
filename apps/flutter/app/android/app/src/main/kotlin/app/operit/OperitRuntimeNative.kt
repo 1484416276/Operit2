@@ -21,19 +21,7 @@ object OperitRuntimeNative {
     @JvmStatic external fun destroy(handle: Long)
     /** Creates a retained direct FFI connection to the host runtime. */
     @JvmStatic external fun connectCoreFfi(handle: Long): String
-    @JvmStatic
-    external fun startWebAccessServer(
-        handle: Long,
-        bindAddress: String,
-        token: String,
-        shutdownToken: String,
-        webRoot: String,
-        deviceInfoJson: String,
-        enableWebAccess: String,
-        enableDiscovery: String,
-    ): String
 
-    @JvmStatic external fun stopWebAccessServer(handle: Long): String
 
     @JvmStatic external fun emitRuntimeEvent(handle: Long, eventJson: String): String
 

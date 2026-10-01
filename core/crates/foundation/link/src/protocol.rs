@@ -432,7 +432,8 @@ impl<'de> Deserialize<'de> for CoreValue {
 /// Converts a serializable Rust value into the Link value model.
 #[allow(non_snake_case)]
 pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
-    crate::value_codec::to_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
+    crate::value_codec::to_value(value)
+        .map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
 }
 
 /// Converts a Link value into a typed Rust value.
@@ -441,7 +442,8 @@ pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCod
 where
     T: serde::de::DeserializeOwned,
 {
-    crate::value_codec::from_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Decode(e.to_string()))
+    crate::value_codec::from_value(value)
+        .map_err(|e| crate::codec::CoreLinkCodecError::Decode(e.to_string()))
 }
 
 pub struct CoreEventStream {
@@ -480,6 +482,11 @@ impl CoreEventStream {
     /// Waits for the next event from the stream.
     pub async fn recv(&mut self) -> Option<CoreEvent> {
         self.receiver.recv().await
+    }
+
+    /// Polls with the caller's waker, without adding a task or a timer.
+    pub(crate) fn poll_recv(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<CoreEvent>> {
+        self.receiver.poll_recv(cx)
     }
 
     /// Polls the stream for an already available event.
@@ -634,7 +641,6 @@ impl LinkDeviceInfo {
     }
 }
 
-
 impl CoreCallResponse {
     /// Creates a successful call response.
     pub fn ok(requestId: CoreRequestId, value: CoreValue) -> Self {
@@ -697,6 +703,66 @@ impl CorePushRequest {
         self.args = args;
         self
     }
+}
+
+/// One standard application Link request. Transports must expose only these
+/// three operation families; pairing/session control is not a Link operation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkRequest {
+    Call(CoreCallRequest),
+    Watch(CoreLinkWatchRequest),
+    Push(CoreLinkPushRequestMessage),
+}
+
+/// Watch lifecycle messages carried by the standard Link ingress.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkWatchRequest {
+    Snapshot(CoreWatchRequest),
+    Open(CoreWatchRequest),
+    Close { requestId: CoreRequestId },
+}
+
+/// Push lifecycle messages carried by the standard Link ingress.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkPushRequestMessage {
+    Open(CorePushRequest),
+    Item(CorePushItem),
+    Close { pushId: String },
+}
+
+/// Responses preserve the operation family and correlation even when an operation fails.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkResponse {
+    Call(CoreCallResponse),
+    Watch {
+        requestId: CoreRequestId,
+        result: Result<CoreLinkWatchResponse, CoreLinkError>,
+    },
+    Push {
+        pushId: String,
+        result: Result<CoreLinkPushResponse, CoreLinkError>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkWatchResponse {
+    Snapshot(CoreEvent),
+    Opened,
+    Event(CoreEvent),
+    Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkPushResponse {
+    Opened,
+    ItemAccepted { sequence: u64 },
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -846,7 +912,6 @@ impl CoreWatchRequest {
     pub fn registryKey(&self) -> String {
         format!("{}::{}", self.target, self.propertyName)
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

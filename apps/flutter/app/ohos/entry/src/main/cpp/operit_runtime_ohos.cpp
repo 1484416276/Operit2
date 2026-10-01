@@ -17,10 +17,6 @@ using BridgeCreateError = char* (*)();
 using BridgeDestroy = void (*)(BridgeHandle);
 
 using BridgeFreeString = void (*)(char*);
-using BridgeStartWebAccessServer = char* (*)(
-    BridgeHandle, const char*, const char*, const char*, const char*, const char*, const char*,
-    const char*);
-using BridgeStopWebAccessServer = char* (*)(BridgeHandle);
 using BridgeEmitRuntimeEvent = char* (*)(BridgeHandle, const char*);
 using BridgeRuntimeBootstrapRead = char* (*)(const char*);
 using BridgeRuntimeBootstrapWrite = char* (*)(const char*, const char*);
@@ -52,10 +48,6 @@ class OperitBridgeLibrary {
     }
     create_error_ = Load<BridgeCreateError>("operit_flutter_bridge_create_error");
     destroy_ = Load<BridgeDestroy>("operit_flutter_bridge_destroy");
-    start_web_access_server_ =
-        Load<BridgeStartWebAccessServer>("operit_flutter_bridge_start_web_access_server");
-    stop_web_access_server_ =
-        Load<BridgeStopWebAccessServer>("operit_flutter_bridge_stop_web_access_server");
     emit_runtime_event_ = Load<BridgeEmitRuntimeEvent>("operit_flutter_bridge_emit_runtime_event");
     runtime_bootstrap_read_ =
         Load<BridgeRuntimeBootstrapRead>("operit_flutter_bridge_runtime_bootstrap_read");
@@ -64,12 +56,7 @@ class OperitBridgeLibrary {
 
     free_string_ = Load<BridgeFreeString>("operit_flutter_bridge_free_string");
     if (create_with_storage_roots_ == nullptr || create_error_ == nullptr || destroy_ == nullptr ||
-        start_web_access_server_ == nullptr || stop_web_access_server_ == nullptr ||
-        emit_runtime_event_ == nullptr || runtime_bootstrap_read_ == nullptr ||
-        runtime_bootstrap_write_ == nullptr ||
-        free_string_ == nullptr) {
-      AssignError(error, "operit flutter bridge exports are incomplete");
-      return false;
+          return false;
     }
     return true;
   }
@@ -93,29 +80,7 @@ class OperitBridgeLibrary {
     return TakeString(connect(handle));
   }
 
-  /// Starts the Rust Web Access server.
-  std::string StartWebAccessServer(BridgeHandle handle,
-                                   const std::string& bind_address,
-                                   const std::string& token,
-                                   const std::string& shutdown_token,
-                                   const std::string& web_root,
-                                   const std::string& device_info_json,
-                                   const std::string& enable_web_access,
-                                   const std::string& enable_discovery) {
-    return TakeString(start_web_access_server_(handle,
-                                               bind_address.c_str(),
-                                               token.c_str(),
-                                               shutdown_token.c_str(),
-                                               web_root.c_str(),
-                                               device_info_json.c_str(),
-                                               enable_web_access.c_str(),
-                                               enable_discovery.c_str()));
-  }
 
-  /// Stops the Rust Web Access server.
-  std::string StopWebAccessServer(BridgeHandle handle) {
-    return TakeString(stop_web_access_server_(handle));
-  }
 
   /// Delivers one normalized OpenHarmony event through the Rust bridge.
   std::string EmitRuntimeEvent(BridgeHandle handle, const std::string& event_json) {
@@ -164,8 +129,6 @@ class OperitBridgeLibrary {
   BridgeCreateWithStorageRootsAndSystemLanguage create_with_storage_roots_ = nullptr;
   BridgeCreateError create_error_ = nullptr;
   BridgeDestroy destroy_ = nullptr;
-  BridgeStartWebAccessServer start_web_access_server_ = nullptr;
-  BridgeStopWebAccessServer stop_web_access_server_ = nullptr;
   BridgeEmitRuntimeEvent emit_runtime_event_ = nullptr;
   BridgeRuntimeBootstrapRead runtime_bootstrap_read_ = nullptr;
   BridgeRuntimeBootstrapWrite runtime_bootstrap_write_ = nullptr;
@@ -268,43 +231,8 @@ napi_value Destroy(napi_env env, napi_callback_info info) {
 }
 
 /// Starts the Rust Web Access server.
-napi_value StartWebAccessServer(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 8);
-  if (args.empty()) {
-    return nullptr;
-  }
-  BridgeHandle handle = ReadHandle(env, args[0]);
-  if (handle == nullptr) {
-    return nullptr;
-  }
-  return StringValue(env, g_bridge_library.StartWebAccessServer(handle,
-                                                                ReadString(env, args[1]),
-                                                                ReadString(env, args[2]),
-                                                                ReadString(env, args[3]),
-                                                                ReadString(env, args[4]),
-                                                                ReadString(env, args[5]),
-                                                                ReadString(env, args[6]),
-                                                                ReadString(env, args[7])));
-}
 
 /// Stops the Rust Web Access server.
-napi_value StopWebAccessServer(napi_env env, napi_callback_info info) {
-  if (!EnsureBridgeReady(env)) {
-    return nullptr;
-  }
-  auto args = CallbackArgs(env, info, 1);
-  if (args.empty()) {
-    return nullptr;
-  }
-  BridgeHandle handle = ReadHandle(env, args[0]);
-  if (handle == nullptr) {
-    return nullptr;
-  }
-  return StringValue(env, g_bridge_library.StopWebAccessServer(handle));
-}
 
 /// Delivers one normalized OpenHarmony event through Rust.
 napi_value EmitRuntimeEvent(napi_env env, napi_callback_info info) {
@@ -370,16 +298,14 @@ void DefineFunction(napi_env env,
 
 /// Initializes the OpenHarmony native runtime module.
 napi_value Init(napi_env env, napi_value exports) {
-  napi_property_descriptor descriptors[8];
+  napi_property_descriptor descriptors[6];
   DefineFunction(env, exports, "create", Create, &descriptors[0]);
   DefineFunction(env, exports, "destroy", Destroy, &descriptors[1]);
-  DefineFunction(env, exports, "startWebAccessServer", StartWebAccessServer, &descriptors[2]);
-  DefineFunction(env, exports, "stopWebAccessServer", StopWebAccessServer, &descriptors[3]);
-  DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[4]);
-  DefineFunction(env, exports, "runtimeBootstrapRead", RuntimeBootstrapRead, &descriptors[5]);
-  DefineFunction(env, exports, "runtimeBootstrapWrite", RuntimeBootstrapWrite, &descriptors[6]);
-  DefineFunction(env, exports, "connectCoreFfi", ConnectCoreFfi, &descriptors[7]);
-  napi_define_properties(env, exports, 8, descriptors);
+  DefineFunction(env, exports, "emitRuntimeEvent", EmitRuntimeEvent, &descriptors[2]);
+  DefineFunction(env, exports, "runtimeBootstrapRead", RuntimeBootstrapRead, &descriptors[3]);
+  DefineFunction(env, exports, "runtimeBootstrapWrite", RuntimeBootstrapWrite, &descriptors[4]);
+  DefineFunction(env, exports, "connectCoreFfi", ConnectCoreFfi, &descriptors[5]);
+  napi_define_properties(env, exports, 6, descriptors);
   return exports;
 }
 

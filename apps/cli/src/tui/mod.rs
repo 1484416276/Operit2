@@ -46,7 +46,7 @@ use app::{
 use approval::TuiApprovalBridge;
 use i18n::TuiLanguage;
 use link_proxy_rs::tui_core;
-use operit_node_runtime::remote::{RemoteLinkServer, RemoteLinkServerConfig};
+use operit_node_runtime::NodeServices::PeerTransport;
 use operit_core_application::CoreApplication;
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
@@ -65,16 +65,10 @@ use crate::{
     parse_shell_args, ShellArgs,
 };
 
-#[derive(Clone, Debug)]
-struct TuiLinkServerArgs {
-    bindAddress: String,
-    token: String,
-}
-
 #[derive(Clone, Debug, Default)]
 struct TuiLinkStartupArgs {
-    server: Option<TuiLinkServerArgs>,
-    joinSessions: Vec<String>,
+    listen: Option<PeerTransport>,
+    joinNodes: Vec<String>,
 }
 
 /// Runs the local TUI directly against the local Core after completing setup.
@@ -114,8 +108,11 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         },
     )
     .await?;
-    let link_server_task = start_tui_link_server(&core_application, &link_args).await?;
-    join_tui_link_sessions(&core_application, &link_args).await?;
+    if let Some(transport) = link_args.listen {
+        core_application.accessServices().startListening(transport).await
+            .map_err(|error| error.to_string())?;
+    }
+    join_tui_paired_nodes(&core_application, &link_args).await?;
     let language = language_cell
         .lock()
         .expect("TUI language cell lock must not be poisoned")
@@ -154,7 +151,6 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     .await?;
     let result = tui.run().await;
     drop(tui);
-    stop_tui_link_server(link_server_task).await;
     core_application.shutdown().await;
     result
 }
@@ -171,7 +167,7 @@ fn tui_toast_host(sender: mpsc::Sender<String>) -> Arc<dyn operit_host_api::Toas
 /// Returns the TUI startup usage text, shared by `tui --help` and argument
 /// parsing errors.
 fn tui_usage_text() -> &'static str {
-    "usage: operit2 tui [--link-server --link-bind <addr:port> --link-token <token>] [--link-join <session>] [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]"
+    "usage: operit2 tui [--link-listen <http|ws|tcp|serial|bluetooth>] [--link-join <node-id>] [--chat <chat-id>] [--resume] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>] [--update-current-version <version>]"
 }
 
 /// Splits TUI Link startup arguments from normal shell startup arguments.
@@ -182,28 +178,21 @@ fn parse_tui_startup_args(args: &[String]) -> Result<(ShellArgs, TuiLinkStartupA
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--link-server" => {
-                link_args.server = Some(TuiLinkServerArgs {
-                    bindAddress: "0.0.0.0:37192".to_string(),
-                    token: "operit-link-dev".to_string(),
+            "--link-listen" => {
+                index += 1;
+                link_args.listen = Some(match args.get(index).map(String::as_str) {
+                    Some("http") => PeerTransport::Http,
+                    Some("ws") => PeerTransport::WebSocket,
+                    Some("tcp") => PeerTransport::Tcp,
+                    Some("serial") => PeerTransport::Serial,
+                    Some("bluetooth") => PeerTransport::Bluetooth,
+                    _ => return Err(usage.to_string()),
                 });
-            }
-            "--link-bind" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(|| usage.to_string())?.clone();
-                let server = link_args.server.as_mut().ok_or_else(|| usage.to_string())?;
-                server.bindAddress = value;
-            }
-            "--link-token" => {
-                index += 1;
-                let value = args.get(index).ok_or_else(|| usage.to_string())?.clone();
-                let server = link_args.server.as_mut().ok_or_else(|| usage.to_string())?;
-                server.token = value;
             }
             "--link-join" => {
                 index += 1;
                 link_args
-                    .joinSessions
+                    .joinNodes
                     .push(args.get(index).ok_or_else(|| usage.to_string())?.clone());
             }
             value => shell_arg_tokens.push(value.to_string()),
@@ -214,62 +203,22 @@ fn parse_tui_startup_args(args: &[String]) -> Result<(ShellArgs, TuiLinkStartupA
     Ok((shell_args, link_args))
 }
 
-/// Starts a TUI-owned Link server on the current Core tree.
-async fn start_tui_link_server(
-    core_application: &CoreApplication,
-    link_args: &TuiLinkStartupArgs,
-) -> Result<Option<tokio::task::JoinHandle<Result<(), String>>>, String> {
-    let Some(server) = link_args.server.clone() else {
-        return Ok(None);
-    };
-    let access_identity = core_application.accessIdentity().clone();
-    let config = RemoteLinkServerConfig {
-        bindAddress: server.bindAddress,
-        token: server.token,
-        deviceId: access_identity.deviceId,
-        deviceInfo: access_identity.deviceInfo,
-        webAccess: None,
-        printStartupInfo: true,
-        accessStore: core_application.accessStore(),
-    };
-    let node_router = core_application.nodeRouter();
-    let mut task = tokio::spawn(async move { RemoteLinkServer::serve(node_router, config).await });
-    tokio::select! {
-        outcome = &mut task => {
-            match outcome {
-                Ok(Ok(())) => Ok(None),
-                Ok(Err(error)) => Err(error),
-                Err(error) => Err(error.to_string()),
-            }
-        }
-        _ = tokio::time::sleep(Duration::from_millis(150)) => Ok(Some(task)),
-    }
-}
-
 /// Joins configured paired device spaces inside the TUI Core process.
-async fn join_tui_link_sessions(
+async fn join_tui_paired_nodes(
     core_application: &CoreApplication,
     link_args: &TuiLinkStartupArgs,
 ) -> Result<(), String> {
     let service = core_application.accessServices();
-    for session in &link_args.joinSessions {
-        let space = service.joinPairedDeviceSpace(session.clone()).await?;
+    for nodeId in &link_args.joinNodes {
+        let space = service.joinPairedDeviceSpace(nodeId.clone()).await?;
         println!(
-            "tui link joined session={} space={} members={}",
-            session,
+            "tui link joined node={} space={} members={}",
+            nodeId,
             space.spaceName,
             space.members.len()
         );
     }
     Ok(())
-}
-
-/// Stops the TUI-owned Link server task before Core shutdown.
-async fn stop_tui_link_server(task: Option<tokio::task::JoinHandle<Result<(), String>>>) {
-    if let Some(task) = task {
-        task.abort();
-        let _ = task.await;
-    }
 }
 
 fn build_startup_install_prompt() -> Result<Option<StartupInstallPrompt>, String> {

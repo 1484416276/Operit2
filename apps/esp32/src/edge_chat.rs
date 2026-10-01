@@ -1,25 +1,47 @@
 //! Volatile UI state; all chat execution and persistence belongs to Space.
 #![allow(non_snake_case)]
-use operit_peer_link::PeerRouteClient;
 use operit_link::{
     CoreCallRequest, CoreEventKind, CoreValue, CoreWatchRequest, CORE_INTERNAL_TARGET,
 };
+use operit_link::CoreLinkSharedClient;
+use operit_node_runtime::NodeServices::NodeServices;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+pub(crate) struct NodeUiTask(tokio::sync::watch::Sender<bool>);
+impl NodeUiTask {
+    pub fn abort(&self) { let _ = self.0.send(true); }
+}
+pub(crate) fn spawnNodeUiTask<F>(task: impl FnOnce() -> F + Send + 'static) -> NodeUiTask
+where F: std::future::Future<Output = ()> + 'static {
+    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
+    operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
+        .scheduleHostRuntimeAsyncTask("edge-ui", Box::new(move || Box::pin(async move {
+            tokio::select! {
+                _ = async {
+                    if cancelled.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                } => {},
+                _ = task() => {}
+            }
+        }))).expect("Edge UI task must be scheduled by Host");
+    NodeUiTask(cancel)
+}
+
 struct ChatSession {
-    client: PeerRouteClient,
+    client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
+    services: NodeServices,
     histories: Mutex<CoreValue>,
-    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    tasks: Mutex<Vec<NodeUiTask>>,
     chatId: String,
-    runtime: tokio::runtime::Handle,
     messages: Mutex<CoreValue>,
     error: Mutex<Option<String>>,
     sending: AtomicBool,
     sendResult: Mutex<Option<Result<(), String>>>,
     streams: Mutex<BTreeMap<String, StreamText>>,
-    streamTasks: Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
+    streamTasks: Mutex<BTreeMap<String, NodeUiTask>>,
 }
 
 fn isMissingSpaceRoute(error: &operit_link::CoreLinkError) -> bool {
@@ -28,13 +50,13 @@ fn isMissingSpaceRoute(error: &operit_link::CoreLinkError) -> bool {
 }
 
 async fn watchChatMessages(
-    client: &PeerRouteClient,
+    client: &Arc<dyn CoreLinkSharedClient + Send + Sync>,
     chatId: &str,
 ) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {
     let args = operit_link::toCoreValue(serde_json::json!({"chatId": chatId}))
         .map_err(|error| operit_link::CoreLinkError::new("INVALID_ARGS", error.to_string()))?;
     match client
-        .watchRouted(CoreWatchRequest::new(
+        .watch(CoreWatchRequest::new(
             "edge-ui-messages",
             CORE_INTERNAL_TARGET,
             "edgeChatMessagesFlow",
@@ -44,7 +66,8 @@ async fn watchChatMessages(
     {
         Ok(stream) => Ok(stream),
         Err(error) if isMissingSpaceRoute(&error) => Err(operit_link::CoreLinkError::new(
-            "EDGE_CHAT_UNSUPPORTED", "当前 Core 不支持轻量聊天接口，请升级 Core 后重新连接",
+            "EDGE_CHAT_UNSUPPORTED",
+            "当前 Core 不支持轻量聊天接口，请升级 Core 后重新连接",
         )),
         Err(error) => Err(error),
     }
@@ -78,7 +101,9 @@ impl StreamText {
             ),
             Some("savepoint") => {
                 if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
-                    if self.savepoints.len() >= 4 { self.savepoints.clear(); }
+                    if self.savepoints.len() >= 4 {
+                        self.savepoints.clear();
+                    }
                     self.savepoints.insert(id.into(), self.text.clone());
                 }
             }
@@ -186,7 +211,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
         let streamId = descriptor.streamId.clone();
         let owner = session.clone();
         let session = session.clone();
-        let task = tokio::spawn(async move {
+        let task = spawnNodeUiTask(move || async move {
             let mut args = match descriptor.args {
                 CoreValue::Map(args) => args,
                 _ => BTreeMap::new(),
@@ -210,7 +235,7 @@ fn openMessageStreams(session: &Arc<ChatSession>, messages: &CoreValue) {
             );
             let result = session
                 .client
-                .watchRouted(CoreWatchRequest::new(
+                .watch(CoreWatchRequest::new(
                     operit_link::nextCoreRouteRequestId("openCoreStream"),
                     descriptor.target,
                     descriptor.propertyName,
@@ -296,25 +321,37 @@ fn visibleEdgeText(source: &str) -> String {
         };
         appendBounded(&mut result, &rest[..open], MAX_CHAT_STRING_BYTES);
         rest = &rest[open..];
-        let Some(close) = rest.find('>') else { break; };
+        let Some(close) = rest.find('>') else {
+            break;
+        };
         let tag = &rest[1..close];
-        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/')
-            .next().unwrap_or("");
+        let name = tag
+            .trim_start_matches('/')
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .unwrap_or("");
         if name == "link" && (tag.contains("type=\"image\"") || tag.contains("type='image'")) {
             let after_tag = &rest[close + 1..];
-            let Some(end) = after_tag.find("</link>") else { break; };
+            let Some(end) = after_tag.find("</link>") else {
+                break;
+            };
             appendBounded(&mut result, &rest[..=close], MAX_CHAT_STRING_BYTES);
             appendBounded(&mut result, "</link>", MAX_CHAT_STRING_BYTES);
             rest = &after_tag[end + "</link>".len()..];
             continue;
         }
         if name == "tool" && !tag.starts_with('/') {
-            let tool = tag.split_once("name=\"")
+            let tool = tag
+                .split_once("name=\"")
                 .and_then(|(_, tail)| tail.split_once('"').map(|(name, _)| name))
-                .or_else(|| tag.split_once("name='")
-                    .and_then(|(_, tail)| tail.split_once('\'').map(|(name, _)| name)));
+                .or_else(|| {
+                    tag.split_once("name='")
+                        .and_then(|(_, tail)| tail.split_once('\'').map(|(name, _)| name))
+                });
             if let Some(tool) = tool.filter(|name| !name.is_empty()) {
-                if !result.is_empty() { appendBounded(&mut result, "\n", MAX_CHAT_STRING_BYTES); }
+                if !result.is_empty() {
+                    appendBounded(&mut result, "\n", MAX_CHAT_STRING_BYTES);
+                }
                 appendBounded(&mut result, "调用工具：", MAX_CHAT_STRING_BYTES);
                 appendBounded(&mut result, tool, MAX_CHAT_STRING_BYTES);
             }
@@ -322,8 +359,11 @@ fn visibleEdgeText(source: &str) -> String {
         rest = &rest[close + 1..];
         if !tag.starts_with('/') && !name.is_empty() {
             let closing = format!("</{name}>");
-            if let Some(end) = rest.find(&closing) { rest = &rest[end + closing.len()..]; }
-            else if !tag.trim_end().ends_with('/') { break; }
+            if let Some(end) = rest.find(&closing) {
+                rest = &rest[end + closing.len()..];
+            } else if !tag.trim_end().ends_with('/') {
+                break;
+            }
         }
     }
     result
@@ -376,30 +416,15 @@ fn simpleJson(value: Option<&CoreValue>) -> serde_json::Value {
     }
 }
 
-/// A transient carrier reconnect preserves the conversation selected on Edge.
-pub fn reconnect(client: PeerRouteClient, defaultChatId: String) -> tokio::task::JoinHandle<()> {
-    let chatId = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap()
-        .as_ref().map(|session| session.chatId.clone()).unwrap_or(defaultChatId);
-    tokio::spawn(async move {
-        while client.isConnected() {
-            let request = CoreCallRequest::new(operit_link::nextCoreRouteRequestId("ensureRoutedChat"),
-                CORE_INTERNAL_TARGET, "ensureRoutedChat",
-                operit_link::toCoreValue(serde_json::json!({"chatId": chatId})).unwrap());
-            if client.callRouted(request).await.result.is_ok() { install(client, chatId); return; }
-            if operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(2000).await.is_err() { return; }
-        }
-    })
-}
-
 /// Called on the authenticated Link runtime after Space provisions the chat.
-pub fn install(client: PeerRouteClient, chatId: String) {
+pub fn install(client: Arc<dyn CoreLinkSharedClient + Send + Sync>, services: NodeServices, chatId: String) {
     clear();
     let session = Arc::new(ChatSession {
         client,
+        services,
         chatId,
         histories: Mutex::new(CoreValue::List(Vec::new())),
         tasks: Mutex::new(Vec::new()),
-        runtime: tokio::runtime::Handle::current(),
         messages: Mutex::new(CoreValue::List(Vec::new())),
         error: Mutex::new(None),
         sending: AtomicBool::new(false),
@@ -410,7 +435,7 @@ pub fn install(client: PeerRouteClient, chatId: String) {
     *SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(session.clone());
     let owner = session.clone();
     let historySession = session.clone();
-    let task = tokio::spawn(async move {
+    let task = spawnNodeUiTask(move || async move {
         let result = watchChatMessages(&session.client, &session.chatId).await;
         match result {
             Ok(mut stream) => {
@@ -449,34 +474,47 @@ pub fn install(client: PeerRouteClient, chatId: String) {
                 *session.error.lock().unwrap() = Some(error.to_string());
                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
             }
-        }
+       }
     });
     owner.tasks.lock().unwrap().push(task);
-    let task = tokio::spawn(async move {
+    let task = spawnNodeUiTask(move || async move {
         let session = historySession;
-        let result = session.client.watchRouted(CoreWatchRequest::new(
-            operit_link::nextCoreRouteRequestId("routedChatListFlow"),
-            CORE_INTERNAL_TARGET, "routedChatListFlow",
-            operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
-        )).await;
+        let result = session
+            .client
+            .watch(CoreWatchRequest::new(
+                operit_link::nextCoreRouteRequestId("routedChatListFlow"),
+                CORE_INTERNAL_TARGET,
+                "routedChatListFlow",
+                operit_link::toCoreValue(serde_json::json!({"chatId":session.chatId})).unwrap(),
+            ))
+            .await;
         match result {
-            Ok(mut stream) => while let Some(event) = stream.recv().await {
-                if event.kind == CoreEventKind::Completed { break; }
-                let mut histories = session.histories.lock().unwrap();
-                if event.kind == CoreEventKind::Delta {
-                    match histories.applyIncrementalDelta(&event.value) {
-                        Ok(value) => *histories = value,
-                        Err(error) => { *session.error.lock().unwrap() = Some(error); break; }
+            Ok(mut stream) => {
+                while let Some(event) = stream.recv().await {
+                    if event.kind == CoreEventKind::Completed {
+                        break;
                     }
-                } else { *histories = event.value; }
-                UI_REVISION.fetch_add(1, Ordering::Relaxed);
-            },
+                    let mut histories = session.histories.lock().unwrap();
+                    if event.kind == CoreEventKind::Delta {
+                        match histories.applyIncrementalDelta(&event.value) {
+                            Ok(value) => *histories = value,
+                            Err(error) => {
+                                *session.error.lock().unwrap() = Some(error);
+                                break;
+                            }
+                        }
+                    } else {
+                        *histories = event.value;
+                    }
+                    UI_REVISION.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             Err(error) if isMissingSpaceRoute(&error) => {}
             Err(error) => {
                 *session.error.lock().unwrap() = Some(format!("对话列表加载失败：{}", error));
                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
             }
-        }
+       }
     });
     owner.tasks.lock().unwrap().push(task);
 }
@@ -488,7 +526,7 @@ pub fn isConnected() -> bool {
         .get_or_init(|| Mutex::new(None))
         .lock()
         .ok()
-        .and_then(|session| session.as_ref().map(|session| session.client.isConnected()))
+        .and_then(|session| session.as_ref().map(|session| !session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty()))
         .unwrap_or(false)
 }
 
@@ -508,7 +546,9 @@ pub fn clear() {
         .ok()
         .and_then(|mut session| session.take());
     if let Some(session) = session {
-        for task in std::mem::take(&mut *session.tasks.lock().unwrap()) { task.abort(); }
+        for task in std::mem::take(&mut *session.tasks.lock().unwrap()) {
+            task.abort();
+        }
         for (_, task) in std::mem::take(&mut *session.streamTasks.lock().unwrap()) {
             task.abort();
         }
@@ -528,12 +568,12 @@ pub fn snapshot() -> serde_json::Value {
             let streams = session.streams.lock().unwrap().clone();
             let error = session.error.lock().unwrap().clone();
             serde_json::json!({
-                "connected": session.client.isConnected(), "chatId": session.chatId,
+                "connected": !session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty(), "chatId": session.chatId,
                 "conversations": displayConversations(&session.histories.lock().unwrap()),
                 "sending": session.sending.load(Ordering::Acquire),
                 "messages": displayMessages(&session.messages.lock().unwrap(), &streams), "error": error,
             })
-        },
+        }
         None => {
             serde_json::json!({"connected": false, "messages": [], "error": "请先在 Space 中配对此设备"})
         }
@@ -543,19 +583,31 @@ pub fn snapshot() -> serde_json::Value {
 /// The title comes from conversation metadata, never from a response body.
 pub fn preview() -> String {
     let value = snapshot();
-    activeConversation(&value).and_then(|chat| chat["characterCardName"].as_str())
-        .filter(|name| !name.is_empty()).unwrap_or("Operit").to_string()
+    activeConversation(&value)
+        .and_then(|chat| chat["characterCardName"].as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Operit")
+        .to_string()
 }
 
 fn activeConversation(value: &serde_json::Value) -> Option<&serde_json::Value> {
-    value["conversations"].as_array()?.iter().find(|chat| chat["id"] == value["chatId"])
+    value["conversations"]
+        .as_array()?
+        .iter()
+        .find(|chat| chat["id"] == value["chatId"])
 }
 
 /// Changes only this device's view; the full Core continues owning the chat.
 pub fn selectChat(id: &str) -> Result<(), String> {
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+    let session = SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .clone()
         .ok_or("设备尚未连接")?;
-    if !session.client.isConnected() { return Err("设备已离线".into()); }
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
+        return Err("设备已离线".into());
+    }
     let exists = match &*session.histories.lock().unwrap() {
         CoreValue::List(items) => items.iter().any(|item| match item {
             CoreValue::Map(fields) => mapString(fields, "id") == id,
@@ -566,37 +618,54 @@ pub fn selectChat(id: &str) -> Result<(), String> {
     if !exists {
         return Err("对话已不存在，请刷新列表".into());
     }
-    let _guard = session.runtime.enter();
-    install(session.client.clone(), id.to_string());
+    install(session.client.clone(), session.services.clone(), id.to_string());
     Ok(())
 }
 
 pub fn newChat() -> Result<(), String> {
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+    let session = SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .clone()
         .ok_or("设备尚未连接")?;
-    if !session.client.isConnected() { return Err("设备已离线".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) { return Err("请等待当前操作完成".into()); }
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
+        return Err("设备已离线".into());
+    }
+    if session.sending.swap(true, Ordering::AcqRel) {
+        return Err("请等待当前操作完成".into());
+    }
     let value = snapshot();
     let current = activeConversation(&value).cloned().unwrap_or_default();
-    session.runtime.clone().spawn(async move {
-        let response = session.client.callRouted(CoreCallRequest::new(
-            operit_link::nextCoreRouteRequestId("createRoutedChat"), CORE_INTERNAL_TARGET,
-            "createRoutedChat", operit_link::toCoreValue(serde_json::json!({
-                "chatId":session.chatId, "characterCardName":current["characterCardName"],
-                "group":current["group"], "characterGroupId":current["characterGroupId"],
-            })).unwrap(),
-        )).await;
+    spawnNodeUiTask(move || async move {
+        let response = session
+            .client
+            .call(CoreCallRequest::new(
+                operit_link::nextCoreRouteRequestId("createRoutedChat"),
+                CORE_INTERNAL_TARGET,
+                "createRoutedChat",
+                operit_link::toCoreValue(serde_json::json!({
+                    "chatId":session.chatId, "characterCardName":current["characterCardName"],
+                    "group":current["group"], "characterGroupId":current["characterGroupId"],
+                }))
+                .unwrap(),
+            ))
+            .await;
         session.sending.store(false, Ordering::Release);
         match response.result {
             Ok(CoreValue::String(id)) => {
                 let current = SESSION.get().unwrap().lock().unwrap().clone();
-                if current.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session)) {
-                    install(session.client.clone(), id);
+                if current
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &session))
+                {
+                    install(session.client.clone(), session.services.clone(), id);
                 }
-            },
+            }
             result => {
                 *session.error.lock().unwrap() = Some(match result {
-                    Err(error) => error.to_string(), _ => "创建对话返回了无效结果".into(),
+                    Err(error) => error.to_string(),
+                    _ => "创建对话返回了无效结果".into(),
                 });
                 UI_REVISION.fetch_add(1, Ordering::Relaxed);
             }
@@ -618,7 +687,7 @@ pub fn taskStatus() -> String {
     if session.error.lock().unwrap().is_some() {
         return "错误".into();
     }
-    if !session.client.isConnected() {
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
         return "离线".into();
     }
     if session.sending.load(Ordering::Acquire) {
@@ -643,21 +712,38 @@ pub fn screenText() -> String {
 }
 
 pub fn screenTextFromSnapshot(value: &serde_json::Value) -> String {
-    if let Some(error) = value["error"].as_str() { return error.to_string(); }
-    if value["messages"].as_array().is_some_and(|items| !items.is_empty()) { return String::new(); }
-    if isConnected() { "输入消息开始对话".into() } else { "已离线，等待重新连接".into() }
+    if let Some(error) = value["error"].as_str() {
+        return error.to_string();
+    }
+    if value["messages"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty())
+    {
+        return String::new();
+    }
+    if isConnected() {
+        "输入消息开始对话".into()
+    } else {
+        "已离线，等待重新连接".into()
+    }
 }
 
 fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) -> serde_json::Value {
-    let CoreValue::List(items) = value else { return serde_json::json!([]); };
+    let CoreValue::List(items) = value else {
+        return serde_json::json!([]);
+    };
     let start = items.len().saturating_sub(MAX_CHAT_MESSAGES);
     let mut result = Vec::with_capacity(items.len() - start);
     for item in &items[start..] {
-        let CoreValue::Map(fields) = item else { continue; };
+        let CoreValue::Map(fields) = item else {
+            continue;
+        };
         let mut text = String::new();
         if let Some(CoreValue::List(parts)) = fields.get("parts") {
             for part in parts.iter().take(MAX_NESTED_LIST_ITEMS) {
-                let CoreValue::Map(part) = part else { continue; };
+                let CoreValue::Map(part) = part else {
+                    continue;
+                };
                 let kind = mapString(part, "kind");
                 let (prefix, content) = match kind {
                     "markdown" | "status" => ("", mapString(part, "content")),
@@ -669,9 +755,15 @@ fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) ->
                 let content = if kind == "markdown" || kind == "status" {
                     visible = visibleEdgeText(content);
                     visible.as_str()
-                } else { content };
-                if content.is_empty() { continue; }
-                if !text.is_empty() { appendBounded(&mut text, "\n", MAX_CHAT_STRING_BYTES); }
+                } else {
+                    content
+                };
+                if content.is_empty() {
+                    continue;
+                }
+                if !text.is_empty() {
+                    appendBounded(&mut text, "\n", MAX_CHAT_STRING_BYTES);
+                }
                 appendBounded(&mut text, prefix, MAX_CHAT_STRING_BYTES);
                 if kind == "tool_call" {
                     appendBounded(&mut text, content, MAX_TOOL_NAME_BYTES);
@@ -691,7 +783,9 @@ fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) ->
             }
         }
         let (text, images) = crate::edge_image::extract(&text);
-        if text.trim().is_empty() && images.is_empty() { continue; }
+        if text.trim().is_empty() && images.is_empty() {
+            continue;
+        }
         result.push(serde_json::json!({
             "sender": mapString(fields, "sender"),
             "text": text,
@@ -702,11 +796,15 @@ fn displayMessages(value: &CoreValue, streams: &BTreeMap<String, StreamText>) ->
 }
 
 fn displayConversations(value: &CoreValue) -> serde_json::Value {
-    let CoreValue::List(items) = value else { return serde_json::json!([]); };
+    let CoreValue::List(items) = value else {
+        return serde_json::json!([]);
+    };
     let start = items.len().saturating_sub(MAX_CONVERSATIONS);
     let mut result = Vec::with_capacity(items.len() - start);
     for item in &items[start..] {
-        let CoreValue::Map(fields) = item else { continue; };
+        let CoreValue::Map(fields) = item else {
+            continue;
+        };
         result.push(serde_json::json!({
             "id": boundedText(mapString(fields, "id")),
             "title": boundedText(mapString(fields, "title")),
@@ -722,44 +820,86 @@ fn displayConversations(value: &CoreValue) -> serde_json::Value {
 pub fn openImage(input: &str) -> Result<(), String> {
     let (request, id) = input.split_once(':').ok_or("无效的图片请求")?;
     let request = request.parse::<u32>().map_err(|_| "无效的图片请求")?;
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
-    if !session.client.isConnected() { return Err("设备已离线".into()); }
-    let messages = displayMessages(&session.messages.lock().unwrap(), &session.streams.lock().unwrap());
-    if !messages.as_array().into_iter().flatten().any(|m| m["images"].as_array().into_iter().flatten().any(|v| v == id)) {
+    let session = SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("设备尚未连接")?;
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
+        return Err("设备已离线".into());
+    }
+    let messages = displayMessages(
+        &session.messages.lock().unwrap(),
+        &session.streams.lock().unwrap(),
+    );
+    if !messages.as_array().into_iter().flatten().any(|m| {
+        m["images"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|v| v == id)
+    }) {
         return Err("图片已不在当前对话中".into());
     }
-    crate::edge_image::start(session.client.clone(), session.chatId.clone(), id.into(), request, &session.runtime);
+    crate::edge_image::start(
+        session.client.clone(),
+        session.chatId.clone(),
+        id.into(),
+        request,
+    );
     Ok(())
 }
 
 /// Uploads one already bounded image as binary Link data, then sends its Core-owned media link.
 pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
-    if bytes.is_empty() || bytes.len() > 512 * 1024 || !matches!(mime.as_str(), "image/png" | "image/jpeg") {
+    if bytes.is_empty()
+        || bytes.len() > 512 * 1024
+        || !matches!(mime.as_str(), "image/png" | "image/jpeg")
+    {
         return Err("只支持小于 512 KiB 的 PNG/JPEG 图片".into());
     }
-    let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone().ok_or("设备尚未连接")?;
-    if !session.client.isConnected() { return Err("设备已离线".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) { return Err("请等待当前消息发送完成".into()); }
-    let runtime = session.runtime.clone();
-    runtime.spawn(async move {
+    let session = SESSION
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("设备尚未连接")?;
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
+        return Err("设备已离线".into());
+    }
+    if session.sending.swap(true, Ordering::AcqRel) {
+        return Err("请等待当前消息发送完成".into());
+    }
+    spawnNodeUiTask(move || async move {
         let result = async {
             let args = operit_link::CoreValue::Map(std::collections::BTreeMap::from([
                 ("chatId".into(), CoreValue::String(session.chatId.clone())),
                 ("mimeType".into(), CoreValue::String(mime)),
                 ("imageBytes".into(), CoreValue::Bytes(bytes)),
             ]));
-            let response = session.client.callRouted(CoreCallRequest::new(
-                operit_link::nextCoreRouteRequestId("registerChatImage"), CORE_INTERNAL_TARGET,
-                "registerChatImage", args,
-            )).await;
+            let response = session
+                .client
+                .call(CoreCallRequest::new(
+                    operit_link::nextCoreRouteRequestId("registerChatImage"),
+                    CORE_INTERNAL_TARGET,
+                    "registerChatImage",
+                    args,
+                ))
+                .await;
             let link = match response.result.map_err(|e| e.to_string())? {
                 CoreValue::String(link) if link.len() <= 100 => link,
                 _ => return Err("Core 未返回有效的图片引用".into()),
             };
-            if !link.starts_with("<link type=\"image\" id=\"") { return Err("Core 返回了无效图片引用".into()); }
+            if !link.starts_with("<link type=\"image\" id=\"") {
+                return Err("Core 返回了无效图片引用".into());
+            }
             sendImageMessage(&session, link).await
-        }.await;
-        if let Err(error) = &result { *session.error.lock().unwrap() = Some(error.clone()); }
+        }
+        .await;
+        if let Err(error) = &result {
+            *session.error.lock().unwrap() = Some(error.clone());
+        }
         *session.sendResult.lock().unwrap() = Some(result);
         session.sending.store(false, Ordering::Release);
         UI_REVISION.fetch_add(1, Ordering::Relaxed);
@@ -778,15 +918,14 @@ pub fn send(text: String) -> Result<(), String> {
         .unwrap()
         .clone()
         .ok_or_else(|| "设备尚未连接 Space".to_string())?;
-    if !session.client.isConnected() {
+    if session.services.peers().activePeerNodeIds().unwrap_or_default().is_empty() {
         return Err("设备已离线".into());
     }
     if session.sending.swap(true, Ordering::AcqRel) {
         return Err("上一条消息仍在发送".into());
     }
     *session.error.lock().unwrap() = None;
-    let runtime = session.runtime.clone();
-    runtime.spawn(async move {
+    spawnNodeUiTask(move || async move {
         let result = sendImageMessage(&session, text).await;
         if let Err(error) = &result {
             *session.error.lock().unwrap() = Some(error.clone());
@@ -806,11 +945,20 @@ async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), Str
         "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
         "turnOptions": {"persistTurn": true, "notifyReply": null, "hideUserMessage": false,
             "disableWarning": false, "chatInputSubmitRequestedHandled": false},
-    })).unwrap();
-    session.client.callRouted(CoreCallRequest::new(
-        operit_link::nextCoreRouteRequestId("sendUserMessage"), CORE_INTERNAL_TARGET,
-        "sendUserMessage", args,
-    )).await.result.map(|_| ()).map_err(|error| error.to_string())
+    }))
+    .unwrap();
+    session
+        .client
+        .call(CoreCallRequest::new(
+            operit_link::nextCoreRouteRequestId("sendUserMessage"),
+            CORE_INTERNAL_TARGET,
+            "sendUserMessage",
+            args,
+        ))
+        .await
+        .result
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

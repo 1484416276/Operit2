@@ -56,8 +56,6 @@ pub enum RuntimeHostInteractionKind {
     TtsPlayback,
     #[serde(rename = "local_inference")]
     LocalInference,
-    #[serde(rename = "web_access_pairing")]
-    WebAccessPairing,
     #[serde(rename = "app_notification")]
     AppNotification,
 }
@@ -84,7 +82,6 @@ pub struct RuntimeHostInteractionRequest {
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
     pub localInference: Option<RuntimeHostInteractionLocalInferencePayload>,
-    pub webAccessPairing: Option<RuntimeHostInteractionWebAccessPairingPayload>,
     pub appNotification: Option<RuntimeHostInteractionAppNotificationPayload>,
 }
 
@@ -211,12 +208,7 @@ impl RuntimeHostInteractionRequest {
         request
     }
 
-    /// Builds a non-blocking notification for one browser Web Access pairing request.
-    fn webAccessPairing(payload: RuntimeHostInteractionWebAccessPairingPayload) -> Self {
-        let mut request = Self::empty(RuntimeHostInteractionKind::WebAccessPairing);
-        request.webAccessPairing = Some(payload);
-        request
-    }
+
 
     /// Builds a non-blocking notification for one application-level event.
     fn appNotification(payload: RuntimeHostInteractionAppNotificationPayload) -> Self {
@@ -246,7 +238,6 @@ impl RuntimeHostInteractionRequest {
             ttsSynthesis: None,
             ttsPlayback: None,
             localInference: None,
-            webAccessPairing: None,
             appNotification: None,
         }
     }
@@ -732,16 +723,7 @@ pub struct RuntimeHostInteractionLocalInferenceResponse {
     pub resultJson: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-/// Browser identity and code for one Web Access pairing request.
-pub struct RuntimeHostInteractionWebAccessPairingPayload {
-    pub pairingId: String,
-    pub clientDeviceId: String,
-    pub clientPlatform: String,
-    pub clientModel: String,
-    pub pairingCode: String,
-    pub createdAt: i64,
-}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Application event that the owning Flutter process may surface as a system notification.
@@ -1594,13 +1576,7 @@ pub async fn requestChatToolPermissionAsync(
         .await
 }
 
-/// Publishes one browser Web Access pairing request to the owner host.
-pub fn publishOwnerWebAccessPairing(payload: RuntimeHostInteractionWebAccessPairingPayload) {
-    runtimeHostInteractionBroker().publish(
-        RuntimeHostInteractionTarget::OwnerHost,
-        RuntimeHostInteractionRequest::webAccessPairing(payload),
-    );
-}
+
 
 /// Publishes one application notification event to the owner host.
 pub fn publishOwnerAppNotification(payload: RuntimeHostInteractionAppNotificationPayload) {
@@ -1868,42 +1844,7 @@ mod tests {
         MediaPoolManager::remove_media(&invalidAudioId);
     }
 
-    /// Verifies non-blocking owner notifications remain pending until acknowledged.
-    #[test]
-    fn brokerRemovesPublishedNotificationAfterAcknowledgement() {
-        let broker = RuntimeHostInteractionBroker::default();
-        let request = RuntimeHostInteractionRequest::webAccessPairing(
-            RuntimeHostInteractionWebAccessPairingPayload {
-                pairingId: "pairing-1".to_string(),
-                clientDeviceId: "browser-1".to_string(),
-                clientPlatform: "web".to_string(),
-                clientModel: "browser".to_string(),
-                pairingCode: "123456".to_string(),
-                createdAt: 1,
-            },
-        );
-        let requestId = request.requestId.clone();
 
-        broker.publish(RuntimeHostInteractionTarget::OwnerHost, request);
-
-        assert!(broker
-            .state
-            .lock()
-            .expect("host interaction mutex poisoned")
-            .pending
-            .contains_key(&requestId));
-
-        broker
-            .acknowledge(&requestId)
-            .expect("notification acknowledgement must succeed");
-
-        assert!(!broker
-            .state
-            .lock()
-            .expect("host interaction mutex poisoned")
-            .pending
-            .contains_key(&requestId));
-    }
 
     /// Verifies that a structured owner error returns without waiting for timeout.
     #[test]

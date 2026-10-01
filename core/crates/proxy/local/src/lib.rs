@@ -32,6 +32,7 @@ pub fn pluginSdkSurface() -> operit_plugin_sdk_ipc::PluginSdkSurface {
 
 #[derive(Clone)]
 pub struct LocalCoreProxy {
+    peerServices: Arc<std::sync::OnceLock<operit_node_runtime::NodeServices::NodeServices>>,
     application: Arc<Mutex<OperitApplication>>,
     chatRuntimeHolder: Arc<tokio::sync::Mutex<ChatRuntimeHolder>>,
     hostManager: HostManager,
@@ -112,6 +113,7 @@ impl LocalCoreProxy {
         let toolRuntimeSupport = application.toolHandler.runtimeSupport();
         let chatRuntimeHolder = application.chatRuntimeHolder.clone();
         Self {
+            peerServices: Arc::new(std::sync::OnceLock::new()),
             hostManager: application.hostManager.clone(),
             toolRuntimeSupport,
             application: Arc::new(Mutex::new(application)),
@@ -175,7 +177,7 @@ impl LocalCoreProxy {
             bindCoreNodeToolRuntime,
             openPush,
             spaceRuntime,
-        )
+        ).withPeerServices(self.peerServices.clone())
     }
 
     /// Returns the file-system capability owned by this local core.

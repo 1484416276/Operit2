@@ -11,7 +11,9 @@ pub struct DeviceStatusPlugin {
 }
 
 impl DeviceStatusPlugin {
-    pub fn new(status: Arc<FirmwareStatus>) -> Self { Self { status } }
+    pub fn new(status: Arc<FirmwareStatus>) -> Self {
+        Self { status }
+    }
 }
 
 impl EdgePlugin for DeviceStatusPlugin {
@@ -24,7 +26,9 @@ impl EdgePlugin for DeviceStatusPlugin {
     }
 
     fn invoke(&self, action: &str, _args: CoreValue) -> Result<CoreValue, EdgeServiceError> {
-        if action != "read" { return Err(EdgeServiceError::new("unsupported status action")); }
+        if action != "read" {
+            return Err(EdgeServiceError::new("unsupported status action"));
+        }
         let status = self.status.snapshot();
         Ok(CoreValue::Map(std::collections::BTreeMap::from([
             ("boardId".into(), CoreValue::String(status.boardId)),

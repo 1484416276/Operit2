@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use operit_node_runtime::remote::LinkDeviceInfo;
+use operit_link::protocol::LinkDeviceInfo;
 use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{HostResult, ToastHost};
@@ -96,6 +96,7 @@ fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> Hos
     )
     .withToastHost(toastHost)
     .withHostSecretStore(hostSecretStore)
+    .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))
     .withWebSocketHost(Arc::new(NativeHttpHost::new()))
     .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
@@ -150,14 +151,19 @@ pub(crate) async fn create_cli_core_application(
 pub(crate) async fn create_cli_core_application_without_space_sync(
     deviceName: &str,
 ) -> Result<CoreApplication, String> {
-    CoreApplication::start(
-        CoreApplicationConfig::new(
-            create_cli_host_manager(),
-            LinkDeviceInfo::nativeCli(deviceName),
-        )
-        .withSpaceSync(false),
-    )
-    .await
+    create_cli_core_application_with_node_services(deviceName, None).await
+}
+
+/// 外围装配可注入核心或测试替身；不在 CLI 中创建另一份配对状态。
+pub(crate) async fn create_cli_core_application_with_node_services(
+    deviceName: &str,
+    services: Option<operit_node_runtime::NodeServices::NodeServices>,
+) -> Result<CoreApplication, String> {
+    let mut config = CoreApplicationConfig::new(
+        create_cli_host_manager(), LinkDeviceInfo::nativeCli(deviceName),
+    ).withSpaceSync(false);
+    if let Some(services) = services { config = config.withNodeServices(services); }
+    CoreApplication::start(config).await
 }
 
 /// Starts the CLI Core tree after configuring its local client.

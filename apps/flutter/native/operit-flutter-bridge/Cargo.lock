@@ -2008,24 +2008,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-edge-transport"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-peer-link",
- "rand_core 0.6.4",
- "serde",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "operit-flutter-bridge"
 version = "0.1.0"
 dependencies = [
@@ -2089,6 +2071,9 @@ name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "http",
+ "http-body-util",
  "js-sys",
  "serde",
  "serde_json",
@@ -2198,6 +2183,9 @@ dependencies = [
 name = "operit-host-native-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "http-body-util",
  "operit-host-api",
  "reqwest",
  "tokio",
@@ -2366,11 +2354,8 @@ name = "operit-node-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "axum",
  "base64",
  "futures-util",
- "hmac",
- "operit-edge-transport",
  "operit-host-api",
  "operit-link",
  "operit-peer-link",
@@ -2379,15 +2364,11 @@ dependencies = [
  "operit-tools",
  "operit-util",
  "quote",
- "rand_core 0.6.4",
  "serde",
- "serde_bytes",
  "serde_json",
- "sha2",
  "syn",
  "tokio",
  "uuid",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -2398,8 +2379,6 @@ dependencies = [
  "operit-host-api",
  "operit-link",
  "serde",
- "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -2508,6 +2487,7 @@ dependencies = [
  "operit-local-models",
  "operit-model",
  "operit-node-runtime",
+ "operit-peer-link",
  "operit-plugin-sdk",
  "operit-plugin-sdk-codegen",
  "operit-plugin-sdk-ipc",

@@ -5,6 +5,7 @@ use syn::{Expr, ImplItem, Item, Lit, Meta, MetaNameValue, ReturnType, Type};
 
 /// Scans every runtime source file for route annotations and writes server-owned route lookup code.
 fn main() {
+    if std::env::var_os("CARGO_FEATURE_FULL").is_none() { return; }
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be available"),
     );

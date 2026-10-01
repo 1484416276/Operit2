@@ -259,35 +259,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  /// Persists the explicit Link carrier selected for one outbound paired device.
-  Future<void> _setPairedDeviceTransport(
-    generated.RuntimePairedDevice device,
-    generated.PeerTransport transport,
-  ) async {
-    final name = device.outboundSessionName;
-    if (name == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
-        name: name,
-        transport: transport,
-      );
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = error.toString();
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   /// Prompts for and persists a new name for the current device space.
   Future<void> _renameCurrentDeviceSpace() async {
     final currentDeviceSpace = _currentDeviceSpace;
@@ -376,8 +347,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<void> _offerJoiningExistingPairedDeviceSpace(
     generated.RuntimePairedDevice device,
   ) async {
-    final sessionName = device.outboundSessionName;
-    if (sessionName == null) {
+    if (!device.outbound) {
       throw StateError('joining a device space requires an outbound pairing');
     }
     final deviceInfo = device.deviceInfo;
@@ -386,7 +356,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       final joined = await confirmAndJoinPairedDeviceSpace(
         context: context,
         clients: _clients,
-        sessionName: sessionName,
+        deviceId: device.deviceId,
         deviceName: '${deviceInfo.platform}-${deviceInfo.model}',
       );
       if (mounted && joined != null) {
@@ -483,7 +453,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
                 _currentDeviceSpace?.members.toSet() ?? <String>{},
             onJoin: _offerJoiningExistingPairedDeviceSpace,
             onDelete: _deletePairedDevice,
-            onTransportChanged: _setPairedDeviceTransport,
             onRemovedFromSpace: _handleRemovedFromSpace,
           ),
         ],
@@ -1055,7 +1024,6 @@ class _PairedDeviceList extends StatelessWidget {
     required this.currentMemberIds,
     required this.onJoin,
     required this.onDelete,
-    required this.onTransportChanged,
     required this.onRemovedFromSpace,
   });
 
@@ -1065,11 +1033,7 @@ class _PairedDeviceList extends StatelessWidget {
   final Set<String> currentMemberIds;
   final ValueChanged<generated.RuntimePairedDevice> onJoin;
   final ValueChanged<String> onDelete;
-  final void Function(
-    generated.RuntimePairedDevice,
-    generated.PeerTransport,
-  )
-  onTransportChanged;
+
   final VoidCallback onRemovedFromSpace;
 
   @override
@@ -1092,12 +1056,10 @@ class _PairedDeviceList extends StatelessWidget {
             busy: busy,
             state: states[entries[index].key],
             inCurrentSpace: currentMemberIds.contains(entries[index].key),
-            onJoin: entries[index].value.outboundSessionName == null
+            onJoin: !entries[index].value.outbound
                 ? null
                 : () => onJoin(entries[index].value),
             onDelete: () => onDelete(entries[index].key),
-            onTransportChanged: (transport) =>
-                onTransportChanged(entries[index].value, transport),
             onRemovedFromSpace: onRemovedFromSpace,
           ),
           if (index < entries.length - 1) const SizedBox(height: 10),
@@ -1115,7 +1077,6 @@ class _PairedDeviceTile extends StatelessWidget {
     required this.inCurrentSpace,
     required this.onJoin,
     required this.onDelete,
-    required this.onTransportChanged,
     required this.onRemovedFromSpace,
   });
 
@@ -1125,7 +1086,6 @@ class _PairedDeviceTile extends StatelessWidget {
   final bool inCurrentSpace;
   final VoidCallback? onJoin;
   final VoidCallback onDelete;
-  final ValueChanged<generated.PeerTransport> onTransportChanged;
   final VoidCallback onRemovedFromSpace;
 
   @override
@@ -1134,7 +1094,6 @@ class _PairedDeviceTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final probeState = state ?? _PairedRemoteProbeState.checking;
-    final outboundEndpoint = device.outboundEndpoint;
     final statusColor = switch (probeState) {
       _PairedRemoteProbeState.checking => colorScheme.onSurfaceVariant,
       _PairedRemoteProbeState.online => colorScheme.primary,
@@ -1200,7 +1159,7 @@ class _PairedDeviceTile extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          outboundEndpoint ?? device.deviceId,
+                          device.deviceId,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: textTheme.bodySmall?.copyWith(
@@ -1264,62 +1223,6 @@ class _PairedDeviceTile extends StatelessWidget {
                 icon: const Icon(Icons.person_remove_outlined, size: 18),
                 label: Text(l10n.settingsRuntimeRemovedFromSpaceConfirm),
               ),
-            ),
-          if (device.outboundTransport != null)
-            Row(
-              children: <Widget>[
-                Icon(
-                  Icons.swap_horiz_outlined,
-                  size: 15,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  'Link transport',
-                  style: textTheme.labelSmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const Spacer(),
-                SizedBox(
-                  width: 104,
-                  child: SegmentedButton<generated.PeerTransport>(
-                    segments:
-                        const <
-                          ButtonSegment<generated.PeerTransport>
-                        >[
-                          ButtonSegment(
-                            value: generated.PeerTransport.http,
-                            label: Text('HTTP'),
-                          ),
-                          ButtonSegment(
-                            value: generated.PeerTransport.webSocket,
-                            label: Text('WS'),
-                          ),
-                        ],
-                    selected: <generated.PeerTransport>{
-                      device.outboundTransport!,
-                    },
-                    showSelectedIcon: false,
-                    style: ButtonStyle(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: WidgetStatePropertyAll<TextStyle?>(
-                        textTheme.labelSmall,
-                      ),
-                      padding: const WidgetStatePropertyAll<EdgeInsets>(
-                        EdgeInsets.zero,
-                      ),
-                      minimumSize: const WidgetStatePropertyAll<Size>(
-                        Size(0, 28),
-                      ),
-                    ),
-                    onSelectionChanged: busy
-                        ? null
-                        : (selection) => onTransportChanged(selection.first),
-                  ),
-                ),
-              ],
             ),
         ],
       ),

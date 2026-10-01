@@ -1603,7 +1603,7 @@ impl OperitTui {
                 self.handle_language_command(&parts[1..])?;
             }
             "network" => {
-                if let Err(error) = self.handle_network_command(&parts[1..]) {
+                if let Err(error) = self.handle_network_command(&parts[1..]).await {
                     self.status_message = error;
                 }
             }
@@ -1698,7 +1698,7 @@ impl OperitTui {
     }
 
     /// Executes a Space control command through the runtime-owned authorization service.
-    fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
+    async fn handle_network_command(&mut self, args: &[String]) -> Result<(), String> {
         const USAGE: &str = "network <show|bootstrap|audit|devices|identities|identity|admit|remove|disconnect|policy>";
         match args.first().map(String::as_str) {
             None | Some("show") if args.len() <= 1 => {
@@ -1826,14 +1826,14 @@ impl OperitTui {
                 let topology = self.networkControl.deviceSpaceTopology()?;
                 let device_id = network_device_id(&topology, &args[1])?;
                 let device_label = network_device_label_by_id(&topology, &device_id)?;
-                self.networkControl.removeDeviceSpaceMember(device_id)?;
+                self.networkControl.removeDeviceSpaceMember(device_id).await?;
                 self.status_message = format!("network member removed: {}", device_label);
             }
             Some("disconnect") if args.len() == 2 => {
                 let topology = self.networkControl.deviceSpaceTopology()?;
                 let device_id = network_device_id(&topology, &args[1])?;
                 let device_label = network_device_label_by_id(&topology, &device_id)?;
-                self.networkControl.disconnectDeviceSpaceNode(device_id)?;
+                self.networkControl.disconnectDeviceSpaceNode(device_id).await?;
                 self.status_message = format!("network node disconnected: {}", device_label);
             }
             Some("policy") if args.len() == 2 && args[1] == "list" => {

@@ -16,7 +16,6 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../runtime/RuntimeBootstrapManager.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
-import '../runtime/RemotePairingBridge.dart';
 
 class CoreApplicationService with WidgetsBindingObserver {
   CoreApplicationService._();
@@ -35,7 +34,6 @@ class CoreApplicationService with WidgetsBindingObserver {
   bool _initialized = false;
   bool _localBackgroundServiceStartAttempted = false;
   bool _linkHostStartAttempted = false;
-  bool _webAccessBootstrapAttempted = false;
   Future<void>? _runtimeServicesStart;
   Object? _pendingStartupError;
 
@@ -196,8 +194,8 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      await _coreClients.server.remote.linkAccessStore.initializeIdentity(
-        deviceInfo: deviceInfo,
+      await _coreClients.server.runtimeRemoteLinkService.initializeDeviceInfo(
+        supplied: deviceInfo,
       );
       await _coreClients.server.runtimeRemoteLinkService
           .updateCurrentDeviceUserName(
@@ -205,7 +203,6 @@ class CoreApplicationService with WidgetsBindingObserver {
           );
       await _ensureLinkHostStarted();
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
-      await _bootstrapWebAccessSession();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
@@ -223,47 +220,6 @@ class CoreApplicationService with WidgetsBindingObserver {
         _pendingStartupError = error;
       }
     }
-  }
-
-  /// Automatically pairs the browser runtime with the native Web Access host.
-  Future<void> _bootstrapWebAccessSession() async {
-    if (_webAccessBootstrapAttempted) {
-      return;
-    }
-    final launchInfo = LinkAccessHost.instance.webAccessLaunchInfo;
-    if (launchInfo == null) {
-      return;
-    }
-    _webAccessBootstrapAttempted = true;
-    final sessions = await _coreClients.server.remote.linkAccessStore
-        .outboundSessions();
-    PairedPeerSessionRecord? session;
-    for (final candidate in sessions.values) {
-      if (candidate.endpoint == launchInfo.baseUrl) {
-        session = candidate;
-        break;
-      }
-    }
-    late final String name;
-    late final String peerNodeId;
-    if (session != null) {
-      name = remotePairingSessionNameFromRecord(session);
-      peerNodeId = session.peerNodeId;
-    } else {
-      final created = await const RemotePairingBridge().bootstrap(
-        endpoint: launchInfo.baseUrl,
-        token: launchInfo.token,
-      );
-      name = remotePairingSessionNameFromRecord(created);
-      peerNodeId = created.peerNodeId;
-    }
-    await _coreClients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(
-      name: name,
-    );
-    ClientLogger.i(
-      'web access bootstrap completed peerNodeId=$peerNodeId',
-      tag: _logTag,
-    );
   }
 
   /// Starts LinkHost once the local runtime storage is confirmed.

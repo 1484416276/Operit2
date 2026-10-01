@@ -3,7 +3,6 @@
 import 'dart:convert';
 import 'dart:math';
 
-import '../bridge/PlatformCoreProxy.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart' as generated;
@@ -107,42 +106,26 @@ LinkAccessHostPortMode _linkAccessHostPortModeFromJson(Object? value) {
 
 class LinkAccessHostConfigStore {
   const LinkAccessHostConfigStore._();
-
-  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
-    ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
-  );
-
-  /// Reads host listener settings from the runtime-owned Link Access datastore.
+  static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
+  /// 读取原配置，不创建第二份 token。使用生成的类型化服务入口。
   static Future<LinkAccessHostConfig> read() async {
-    final config = await _clients.server.remote.linkAccessStore.initializeHostConfig();
+    final config = await _clients.server.runtimeRemoteLinkService.localHostConfig();
+    if (config == null) throw StateError('Node listener is not configured');
     return LinkAccessHostConfig(
       webAccessEnabled: config.webAccessEnabled,
       discoveryEnabled: config.discoveryEnabled,
-      portMode: switch (config.portMode) {
-        generated.LinkAccessHostPortMode.automatic =>
-          LinkAccessHostPortMode.automatic,
-        generated.LinkAccessHostPortMode.fixed => LinkAccessHostPortMode.fixed,
-      },
-      bindAddress: config.bindAddress,
-      token: config.token,
-      updatedAt: config.updatedAt,
+      portMode: config.portMode == generated.PeerHostPortMode.automatic
+          ? LinkAccessHostPortMode.automatic : LinkAccessHostPortMode.fixed,
+      bindAddress: config.bindAddress, token: config.token, updatedAt: config.updatedAt,
     );
   }
-
-  /// Writes host listener settings to the runtime-owned Link Access datastore.
   static Future<void> write(LinkAccessHostConfig config) async {
-    await _clients.server.remote.linkAccessStore.saveHostConfig(
-      config: generated.LinkAccessHostConfig(
-        bindAddress: config.bindAddress,
-        token: config.token,
-        webAccessEnabled: config.webAccessEnabled,
-        discoveryEnabled: config.discoveryEnabled,
-        portMode: switch (config.portMode) {
-          LinkAccessHostPortMode.automatic =>
-            generated.LinkAccessHostPortMode.automatic,
-          LinkAccessHostPortMode.fixed =>
-            generated.LinkAccessHostPortMode.fixed,
-        },
+    await _clients.server.runtimeRemoteLinkService.saveLocalHostConfig(
+      config: generated.PeerHostConfig(
+        bindAddress: config.bindAddress, token: config.token,
+        webAccessEnabled: config.webAccessEnabled, discoveryEnabled: config.discoveryEnabled,
+        portMode: config.portMode == LinkAccessHostPortMode.automatic
+            ? generated.PeerHostPortMode.automatic : generated.PeerHostPortMode.fixed,
         updatedAt: config.updatedAt,
       ),
     );

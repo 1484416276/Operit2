@@ -11,8 +11,9 @@ name = "operit-esp32"
 path = "src/main.rs"
 
 [dependencies]
+operit-node-runtime = { path = "../../core/crates/node/runtime", default-features = false }
 operit-host-native-scheduler = { path = "../../hosts/common/operit-host-native-scheduler", default-features = false }
-operit-peer-link = { path = "../../core/crates/node/peer-link", features = ["tcp"] }
+operit-peer-link = { path = "../../core/crates/node/peer-link" }
 operit-edge-contract = { path = "../../core/crates/node/edge-contract" }
 async-trait = "0.1"
 base64 = "0.22"

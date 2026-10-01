@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::sync::Arc;
+use operit_node_runtime::NodeServices::NodeServices;
 
 use async_trait::async_trait;
 pub use operit_edge_contract::{
@@ -44,6 +45,7 @@ pub struct EdgeNode {
     robotFaceService: Option<Arc<dyn RobotFaceService>>,
     screenService: Option<Arc<dyn ScreenService>>,
     plugins: Vec<Arc<dyn EdgePlugin>>,
+    nodeServices: Option<NodeServices>,
 }
 
 impl EdgeNode {
@@ -54,7 +56,18 @@ impl EdgeNode {
             robotFaceService: None,
             screenService: None,
             plugins: Vec::new(),
+            nodeServices: None,
         }
+    }
+
+    /// Edge 和普通节点注入同一个外层接口，不自行实现配对或鉴权。
+    pub fn withNodeServices(mut self, services: NodeServices) -> Self {
+        self.nodeServices = Some(services);
+        self
+    }
+
+    pub fn nodeServices(&self) -> Result<NodeServices, EdgeServiceError> {
+        self.nodeServices.clone().ok_or_else(|| EdgeServiceError::new("RuntimePeerService has not been installed"))
     }
 
     /// Creates an Edge Node with device services supplied by one Host Manager.
@@ -467,6 +480,58 @@ mod tests {
         assert!(push.is_err());
     }
 
+    /// The transport-neutral ingress must execute the existing service/Host path,
+    /// not a PeerFrame adapter or a second Edge method registry.
+    #[tokio::test]
+    async fn standard_wire_session_executes_edge_service_and_host() {
+        use operit_host_api::{DeviceDigitalOutputRequest, DeviceDigitalOutputState, DeviceIoHost, HostResult};
+        use operit_link::{CoreLinkSession, CoreLinkRequest, CoreLinkResponse, CoreLinkWatchRequest,
+            CoreLinkWatchResponse, CoreLinkPushRequestMessage, CorePushRequest, encodeLink, decodeLink};
+        struct Board(std::sync::Mutex<bool>);
+        impl DeviceIoHost for Board {
+            fn setDigitalOutput(&self, request: DeviceDigitalOutputRequest) -> HostResult<DeviceDigitalOutputState> {
+                *self.0.lock().unwrap() = request.level;
+                Ok(DeviceDigitalOutputState { pin: request.pin, level: request.level })
+            }
+            fn getDigitalOutput(&self, pin: u8) -> HostResult<DeviceDigitalOutputState> {
+                Ok(DeviceDigitalOutputState { pin, level: *self.0.lock().unwrap() })
+            }
+        }
+        async fn exchange(session: &mut CoreLinkSession<EdgeNode>, request: CoreLinkRequest) -> CoreLinkResponse {
+            let request = decodeLink(&encodeLink(&request).unwrap()).unwrap();
+            let response = session.dispatch(request).await;
+            decodeLink(&encodeLink(&response).unwrap()).unwrap()
+        }
+        let board = Arc::new(Board(std::sync::Mutex::new(false)));
+        let node = EdgeNode::fromHostManager(HostManager::new().withDeviceIoHost(board.clone()));
+        let mut session = CoreLinkSession::new(node, 4);
+        let args = || toCoreValue(DeviceDigitalOutputRequest { pin: 2, level: true }).unwrap();
+        let watch = || CoreWatchRequest::new("watch", EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, args());
+        assert!(matches!(exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Open(watch()))).await,
+            CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Opened), .. }));
+        assert!(matches!(session.nextWatchEvent().await,
+            Some(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Event(CoreEvent { kind: CoreEventKind::Snapshot, .. })), .. })));
+        assert!(matches!(exchange(&mut session, CoreLinkRequest::Call(CoreCallRequest::new(
+            "write", EDGE_DEVICE_IO_OBJECT_ID, "setDigitalOutput", args()))).await,
+            CoreLinkResponse::Call(CoreCallResponse { result: Ok(_), .. })));
+        assert!(*board.0.lock().unwrap());
+        let Some(CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Event(event)), .. }) = session.nextWatchEvent().await else {
+            panic!("Expected service event after Host write");
+        };
+        assert_eq!(event.kind, CoreEventKind::Changed);
+        assert!(operit_link::fromCoreValue::<DeviceDigitalOutputState>(event.value).unwrap().level);
+        assert!(matches!(exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Snapshot(watch()))).await,
+            CoreLinkResponse::Watch { result: Ok(CoreLinkWatchResponse::Snapshot(_)), .. }));
+        let expected = operit_link::CoreLinkError::methodNotFound("unused").code;
+        assert!(matches!(exchange(&mut session, CoreLinkRequest::Push(CoreLinkPushRequestMessage::Open(
+            CorePushRequest::new("push", EDGE_DEVICE_IO_OBJECT_ID, "notDeclared")))).await,
+            CoreLinkResponse::Push { pushId, result: Err(error) } if pushId == "push" && error.code == expected));
+        exchange(&mut session, CoreLinkRequest::Watch(CoreLinkWatchRequest::Close {
+            requestId: operit_link::CoreRequestId::new("watch"),
+        })).await;
+        assert!(!session.hasWatches());
+    }
+
     /// Provides a deterministic typed service for Edge Node tests.
     struct TestDeviceIoService;
 
@@ -642,5 +707,3 @@ mod tests {
         assert_eq!(state.expression, "neutral");
     }
 }
-
-pub mod peer;

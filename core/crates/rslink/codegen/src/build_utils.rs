@@ -147,14 +147,14 @@ mod module_path_tests {
         for (file, module) in [
             ("lib.rs", "operit_node_runtime"),
             ("mod.rs", "operit_node_runtime"),
-            ("remote/mod.rs", "operit_node_runtime::remote"),
+            ("example/mod.rs", "operit_node_runtime::example"),
             (
-                "remote/transport/mod.rs",
-                "operit_node_runtime::remote::transport",
+                "example/transport/mod.rs",
+                "operit_node_runtime::example::transport",
             ),
             (
-                "remote/transport.rs",
-                "operit_node_runtime::remote::transport",
+                "example/transport.rs",
+                "operit_node_runtime::example::transport",
             ),
             ("CoreNodeRouter.rs", "operit_node_runtime::CoreNodeRouter"),
         ] {
@@ -166,16 +166,16 @@ mod module_path_tests {
     }
 
     #[test]
-    fn node_remote_types_resolve_from_directory_module() {
+    fn nested_types_resolve_from_directory_module() {
         let root = Path::new("src");
         assert_eq!(
             full_type_for_source_with_crate(
                 root,
-                &root.join("remote/mod.rs"),
-                "LinkAccessStore",
+                &root.join("example/mod.rs"),
+                "ExampleService",
                 "operit_node_runtime"
             ),
-            "operit_node_runtime::remote::LinkAccessStore"
+            "operit_node_runtime::example::ExampleService"
         );
     }
 }

@@ -15,6 +15,7 @@ name = "operit-pb-sbc01-h3-face"
 path = "src/face_console.rs"
 
 [dependencies]
+operit-link = { path = "../../core/crates/foundation/link" }
 operit-node-runtime = { path = "../../core/crates/node/runtime" }
 operit-board-pb-sbc01-h3 = { path = "../../hosts/boards/pb_sbc01_h3" }
 operit-core-application = { path = "../../core/crates/application/core" }

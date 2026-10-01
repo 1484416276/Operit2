@@ -120,7 +120,10 @@ def _collect_sync_plan(source_dir: Path) -> list[SyncPlanItem]:
     return plans
 
 
-# Runs one command and reports the exact command line on failure.
+# Runs one command and reports the exact command line on failure. The child's
+# stderr is captured and printed when the command fails, so failures carry the
+# actual tool output (pnpm version checks, compile errors) instead of a bare
+# exit code.
 def _run_checked_command(
     command: list[str],
     cwd: Path,
@@ -133,8 +136,13 @@ def _run_checked_command(
         print(f"DRY-RUN-CMD: (cd {cwd}) {command_text}")
         return
     print(f"RUN-CMD: (cd {cwd}) {command_text}")
-    completed = subprocess.run(command, cwd=str(cwd), env=env)
+    completed = subprocess.run(
+        command, cwd=str(cwd), env=env, stderr=subprocess.PIPE, text=True, errors="replace"
+    )
     if completed.returncode != 0:
+        stderr_tail = (completed.stderr or "").strip()[-4000:]
+        if stderr_tail:
+            print(stderr_tail, flush=True)
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {command_text}")
 
 

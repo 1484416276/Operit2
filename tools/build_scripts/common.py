@@ -20,7 +20,11 @@ _fvm_sdk_prepared = False
 
 
 def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
-    """Run a command without opening child console windows on Windows."""
+    """Run a command without opening child console windows on Windows.
+
+    The child's stderr is captured and printed when the command fails, so build
+    failures carry the actual compiler/tool error instead of a bare exit code.
+    """
     print("+ " + " ".join(str(part) for part in command), flush=True)
     merged_env = os.environ.copy()
     if env:
@@ -32,13 +36,24 @@ def run(command: list[str | Path], cwd: Path = REPO_ROOT, env: dict[str, str] | 
         startupinfo.wShowWindow = subprocess.SW_HIDE
         subprocess_options["startupinfo"] = startupinfo
         subprocess_options["creationflags"] = subprocess.CREATE_NO_WINDOW
-    subprocess.run(
+    completed = subprocess.run(
         [str(part) for part in command],
         cwd=cwd,
         env=merged_env,
-        check=True,
+        check=False,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
         **subprocess_options,
     )
+    if completed.returncode != 0:
+        stderr_tail = (completed.stderr or "").strip()[-4000:]
+        if stderr_tail:
+            print(stderr_tail, file=sys.stderr, flush=True)
+        raise RuntimeError(
+            f"Command failed with exit code {completed.returncode}: "
+            + " ".join(str(part) for part in command)
+        )
 
 
 def require_command(name: str) -> str:

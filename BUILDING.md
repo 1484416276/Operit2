@@ -373,9 +373,9 @@ OpenHarmony procedure below remains the supported build path until that SDK
 distribution source and the signing secrets are supplied.
 
 ```powershell
-gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
-gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
-gh workflow run "iOS Flutter Build" -f build_web_assets=false
+gh workflow run "Apple Release Build" -f products=all -f include_ios=true
+gh workflow run "macOS Flutter Build" -f products=all
+gh workflow run "iOS Flutter Build"
 gh workflow run "Windows Release Build" -f products=all -f cli_arches=all
 gh workflow run "Linux Release Build" -f products=all -f cli_arches=all
 gh workflow run "Android Flutter Build"
@@ -578,21 +578,27 @@ cd apps\flutter\app
 fvm flutter create --platforms ohos .
 ```
 
-Build the shared Web Access bundle from the repository root:
+The Web frontend is the standard Flutter Web project under
+`apps/flutter/app/web`. The dedicated `Deploy Web Experience` GitHub Actions
+workflow still builds this frontend and publishes `apps/flutter/app/build/web`
+to the `gh-pages` branch for `web.operit.app`.
+
+Build it locally with the same command used by GitHub Actions:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\build_scripts\build_flutter_web_access.py --base-href /
+cd apps\flutter\app
+fvm flutter build web --release --no-wasm-dry-run --base-href /
 ```
 
-The remote access bundle is written to `apps/web_access/build/bundle` and
-synchronized into the native Flutter assets at:
+To trigger the GitHub Pages deployment manually:
 
-```text
-apps/flutter/app/assets/web_access
+```powershell
+gh workflow run "Deploy Web Experience"
 ```
 
-The bundle includes a generated `web_access_version.json`; native launchers use
-that version to reuse an already materialized Web Access directory.
+Native app and CLI release builds do not compile, copy, or package a Web
+frontend bundle. They expose only the Link Access service; users open
+`https://web.operit.app/?accessUrl=...&token=...`.
 
 Build the OpenHarmony HAP with the repository script. The script invokes the
 same FVM-selected Flutter SDK and the OpenHarmony native toolchain:

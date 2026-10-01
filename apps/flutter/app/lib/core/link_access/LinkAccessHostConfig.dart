@@ -114,7 +114,8 @@ class LinkAccessHostConfigStore {
 
   /// Reads host listener settings from the runtime-owned Link Access datastore.
   static Future<LinkAccessHostConfig> read() async {
-    final config = await _clients.linkAccess.linkAccessStore.initializeHostConfig();
+    final config = await _clients.linkAccess.linkAccessStore
+        .initializeHostConfig();
     return LinkAccessHostConfig(
       webAccessEnabled: config.webAccessEnabled,
       discoveryEnabled: config.discoveryEnabled,

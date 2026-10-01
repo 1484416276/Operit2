@@ -393,7 +393,7 @@ impl OperitFlutterBridge {
         bindAddress: String,
         token: String,
         shutdownToken: String,
-        webRoot: PathBuf,
+        _webRoot: PathBuf,
         deviceInfo: RemoteDeviceInfo,
         enableWebAccess: bool,
         enableDiscovery: bool,
@@ -451,17 +451,7 @@ impl OperitFlutterBridge {
             .map_err(|error| format!("invalid bind address: {error}"))?;
         let presenceBaseUrl = webAccessPresenceBaseUrl(listener_address);
         let presenceTokenHash = link_token_hash(&token);
-        let runtimeStorageHost = self.runtimeStorageHost.clone();
-        let webAccess = RemoteWebAccessConfig {
-            token: token.clone(),
-            shutdownToken,
-            webRoot,
-            readAsset: Arc::new(move |path| {
-                runtimeStorageHost
-                    .readBytes(&path.to_string_lossy())
-                    .map_err(|error| error.message)
-            }),
-        };
+        let webAccess = RemoteWebAccessConfig { shutdownToken };
         let (serverStartSender, serverStartReceiver) = mpsc::channel();
         let task = self.runtime.spawn(async move {
             let listener = match tokio::net::TcpListener::bind(listener_address).await {

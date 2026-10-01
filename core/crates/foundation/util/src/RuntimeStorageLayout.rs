@@ -148,12 +148,6 @@ pub const RUNTIME_COMPOSE_DSL_WEBVIEW_FILES: RuntimeStoragePathDefinition =
         RuntimeStorageOwnership::Ephemeral,
     );
 pub const RUNTIME_COMPOSE_DSL_WEBVIEW_FILES_DIR_PATH: &str = RUNTIME_COMPOSE_DSL_WEBVIEW_FILES.path;
-pub const RUNTIME_LINK_ACCESS_WEB_ASSETS: RuntimeStoragePathDefinition =
-    RuntimeStoragePathDefinition::tree(
-        "runtime/link_access/web_access_bundle",
-        RuntimeStorageOwnership::CoreNode,
-    );
-pub const RUNTIME_LINK_ACCESS_WEB_ASSETS_DIR_PATH: &str = RUNTIME_LINK_ACCESS_WEB_ASSETS.path;
 pub const RUNTIME_LINK_ACCESS_IDENTITY: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::exact(
         "runtime/link_access/identity.preferences.json",
@@ -396,7 +390,6 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_SHARE_IMAGE,
     RUNTIME_WORKSPACE_VIDEO,
     RUNTIME_COMPOSE_DSL_WEBVIEW_FILES,
-    RUNTIME_LINK_ACCESS_WEB_ASSETS,
     RUNTIME_LINK_ACCESS_IDENTITY,
     RUNTIME_LINK_ACCESS_INBOUND_SESSIONS,
     RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS,
@@ -503,10 +496,6 @@ mod tests {
         assert_eq!(
             runtimeStorageOwnership("runtime/temp/share_image/preview.png").unwrap(),
             RuntimeStorageOwnership::Ephemeral
-        );
-        assert_eq!(
-            runtimeStorageOwnership("runtime/link_access/web_access_bundle/index.html").unwrap(),
-            RuntimeStorageOwnership::CoreNode
         );
         assert_eq!(
             runtimeStorageOwnership(RUNTIME_CLIENT_LOG_PATH).unwrap(),

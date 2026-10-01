@@ -231,9 +231,9 @@ and command-line tools. Do not treat it as an available cloud build until that
 external toolchain source and the signing secrets are configured.
 
 ```powershell
-gh workflow run "Apple Release Build" -f products=all -f include_ios=true -f build_web_assets=false
-gh workflow run "macOS Flutter Build" -f products=all -f build_web_assets=false
-gh workflow run "iOS Flutter Build" -f build_web_assets=false
+gh workflow run "Apple Release Build" -f products=all -f include_ios=true
+gh workflow run "macOS Flutter Build" -f products=all
+gh workflow run "iOS Flutter Build"
 gh workflow run "Windows Release Build" -f products=all -f cli_arches=all
 gh workflow run "Linux Release Build" -f products=all -f cli_arches=all
 gh workflow run "Android Flutter Build"

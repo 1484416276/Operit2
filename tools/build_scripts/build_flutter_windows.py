@@ -10,7 +10,6 @@ from common import (
     flutter_command,
     flutter_pub_get,
     host_arch,
-    prepare_web_access_embedded_assets,
     run,
 )
 
@@ -28,7 +27,6 @@ def parse_args() -> argparse.Namespace:
 # Builds the Windows Flutter app and writes a release archive.
 def main() -> int:
     args = parse_args()
-    prepare_web_access_embedded_assets()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
     if args.build_name:

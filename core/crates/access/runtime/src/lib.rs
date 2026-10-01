@@ -4,8 +4,6 @@ use std::convert::Infallible;
 #[cfg(not(target_arch = "wasm32"))]
 use std::net::SocketAddr;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::{Path, PathBuf};
-#[cfg(not(target_arch = "wasm32"))]
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -20,7 +18,7 @@ use axum::body::Bytes;
 #[cfg(not(target_arch = "wasm32"))]
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 #[cfg(not(target_arch = "wasm32"))]
-use axum::extract::{Json, Path as AxumPath, State};
+use axum::extract::{Json, State};
 #[cfg(not(target_arch = "wasm32"))]
 use axum::http::{HeaderMap, StatusCode};
 #[cfg(not(target_arch = "wasm32"))]
@@ -110,57 +108,6 @@ pub struct RemoteLinkServerConfig {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct RemoteLinkServer;
-
-/// Describes the standalone static Web Access server.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
-pub struct StaticWebAccessServerConfig {
-    pub bindAddress: String,
-    pub shutdownToken: String,
-    pub webRoot: PathBuf,
-    pub readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
-    pub linkControl: Option<StaticWebAccessControlConfig>,
-    pub printStartupInfo: bool,
-}
-
-/// Configures the pairing-only control endpoints hosted beside static Web Access.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
-pub struct StaticWebAccessControlConfig {
-    pub token: String,
-    pub deviceId: String,
-    pub deviceInfo: RemoteDeviceInfo,
-    pub accessStore: LinkAccessStore,
-}
-
-/// Hosts the static Web Access bundle without exposing a Core route.
-#[cfg(not(target_arch = "wasm32"))]
-pub struct StaticWebAccessServer;
-
-/// Stores the state needed by standalone static Web Access handlers.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
-struct StaticWebAccessState {
-    shutdownToken: String,
-    shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
-    webRoot: PathBuf,
-    readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
-    control: Option<StaticWebAccessControlState>,
-}
-
-/// Holds identity and authenticated session state for pairing-only endpoints.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
-struct StaticWebAccessControlState {
-    token: String,
-    keySecret: Arc<StaticSecret>,
-    keyPublic: String,
-    deviceId: String,
-    deviceInfo: RemoteDeviceInfo,
-    pairings: Arc<Mutex<BTreeMap<String, PendingPairing>>>,
-    sessions: Arc<Mutex<BTreeMap<String, RemoteSession>>>,
-    accessStore: LinkAccessStore,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemotePairingCodeRecord {
@@ -852,96 +799,7 @@ fn hostPortModeFromPreference(value: &str) -> Result<LinkAccessHostPortMode, Str
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct RemoteWebAccessConfig {
-    pub token: String,
     pub shutdownToken: String,
-    pub webRoot: PathBuf,
-    pub readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl StaticWebAccessServer {
-    /// Binds and serves the standalone static Web Access bundle.
-    pub async fn serve(config: StaticWebAccessServerConfig) -> Result<(), String> {
-        let address: SocketAddr = config
-            .bindAddress
-            .parse()
-            .map_err(|error| format!("invalid bind address: {error}"))?;
-        let listener = TcpListener::bind(address)
-            .await
-            .map_err(|error| error.to_string())?;
-        Self::serveWithListener(config, listener, address).await
-    }
-
-    /// Serves the static bundle from an already bound listener.
-    #[allow(non_snake_case)]
-    pub async fn serveWithListener(
-        config: StaticWebAccessServerConfig,
-        listener: TcpListener,
-        address: SocketAddr,
-    ) -> Result<(), String> {
-        let (shutdownSender, shutdownReceiver) = oneshot::channel::<()>();
-        let control = if let Some(config) = config.linkControl.clone() {
-            CoreSpaceStore::new(config.accessStore.storage.clone()).initialize()?;
-            let keySecret = Arc::new(StaticSecret::random_from_rng(OsRng));
-            let keyPublic = public_key_to_string(&PublicKey::from(keySecret.as_ref()));
-            let sessions = Arc::new(Mutex::new(BTreeMap::new()));
-            for (sessionId, session) in config.accessStore.inboundSessions()? {
-                sessions.lock().await.insert(
-                    sessionId,
-                    RemoteSession {
-                        deviceId: session.deviceId,
-                        deviceInfo: session.deviceInfo,
-                        pairingServiceVersion: session.pairingServiceVersion,
-                        sessionSecret: BASE64
-                            .decode(session.sessionSecret.as_bytes())
-                            .map_err(|error| error.to_string())?,
-                    },
-                );
-            }
-            Some(StaticWebAccessControlState {
-                token: config.token,
-                keySecret,
-                keyPublic,
-                deviceId: config.deviceId,
-                deviceInfo: config.deviceInfo,
-                pairings: Arc::new(Mutex::new(BTreeMap::new())),
-                sessions,
-                accessStore: config.accessStore,
-            })
-        } else {
-            None
-        };
-        let state = StaticWebAccessState {
-            shutdownToken: config.shutdownToken,
-            shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
-            webRoot: config.webRoot,
-            readAsset: config.readAsset,
-            control,
-        };
-        let mut app = Router::new();
-        if state.control.is_some() {
-            app = app
-                .route("/link/hello", get(static_web_access_hello))
-                .route("/link/pair/start", post(static_web_access_pair_start))
-                .route("/link/pair/finish", post(static_web_access_pair_finish))
-                .route("/link/session", post(static_web_access_session_info))
-                .route("/link/space/adopt", post(static_web_access_space_adopt));
-        }
-        app = app
-            .route("/", get(static_web_access_index))
-            .route("/client/web-access/close", post(static_web_access_close))
-            .route("/*path", get(static_web_access_asset));
-        let app = app.with_state(state);
-        if config.printStartupInfo {
-            println!("static web access server listening on http://{address}");
-        }
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = shutdownReceiver.await;
-            })
-            .await
-            .map_err(|error| error.to_string())
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1234,8 +1092,6 @@ pub fn coreNodeTransportClient(
 struct RemoteWebAccessState {
     shutdownToken: String,
     shutdownSender: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
-    webRoot: PathBuf,
-    readAsset: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1566,8 +1422,6 @@ impl RemoteLinkServer {
         let webAccess = webAccessConfig.clone().map(|value| RemoteWebAccessState {
             shutdownToken: value.shutdownToken,
             shutdownSender: Arc::new(StdMutex::new(Some(shutdownSender))),
-            webRoot: value.webRoot,
-            readAsset: value.readAsset,
         });
         let core = Arc::new(StdMutex::new(
             Box::new(core) as Box<dyn CoreNodeLinkClient + Send>
@@ -1594,10 +1448,7 @@ impl RemoteLinkServer {
             .route("/link/peer/channel/frame", post(peer_channel_frame))
             .route("/link/ws", get(ws));
         if webAccessConfig.is_some() {
-            app = app
-                .route("/", get(web_access_index))
-                .route("/*path", get(web_access_asset))
-                .route("/client/web-access/close", post(web_access_close));
+            app = app.route("/client/web-access/close", post(web_access_close));
         }
         let app = app.with_state(state);
         if config.printStartupInfo {
@@ -2541,375 +2392,6 @@ async fn peer_channel_frame(
     encode_link_response(StatusCode::OK, serde_json::json!({ "ok": true }))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-async fn web_access_index(State(state): State<RemoteLinkState>) -> Response {
-    let Some(webAccess) = state.webAccess.as_ref() else {
-        return bad_request("web access is not enabled");
-    };
-    serve_web_access_file(webAccess, "index.html")
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn web_access_asset(
-    State(state): State<RemoteLinkState>,
-    AxumPath(path): AxumPath<String>,
-) -> Response {
-    let Some(webAccess) = state.webAccess.as_ref() else {
-        return bad_request("web access is not enabled");
-    };
-    serve_web_access_file(webAccess, &path)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn web_access_close(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Response {
-    let Some(webAccess) = state.webAccess.as_ref() else {
-        return bad_request("web access is not enabled");
-    };
-    let token = header_string(&headers, "x-operit-web-access-shutdown-token");
-    if token.as_deref() != Some(webAccess.shutdownToken.as_str()) {
-        return unauthorized("invalid web access shutdown token");
-    }
-    let sender = webAccess
-        .shutdownSender
-        .lock()
-        .expect("web access shutdown mutex poisoned")
-        .take();
-    let Some(sender) = sender else {
-        return bad_request("web access close already requested");
-    };
-    if sender.send(()).is_err() {
-        return bad_request("web access shutdown receiver is closed");
-    }
-    Json(serde_json::json!({"ok": true})).into_response()
-}
-
-/// Serves the standalone Web Access index document.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_index(State(state): State<StaticWebAccessState>) -> Response {
-    serve_static_web_access_file(&state, "index.html")
-}
-
-/// Serves one standalone Web Access asset.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_asset(
-    State(state): State<StaticWebAccessState>,
-    AxumPath(path): AxumPath<String>,
-) -> Response {
-    serve_static_web_access_file(&state, &path)
-}
-
-/// Stops the standalone Web Access server after validating its control token.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_close(
-    State(state): State<StaticWebAccessState>,
-    headers: HeaderMap,
-) -> Response {
-    let token = header_string(&headers, "x-operit-web-access-shutdown-token");
-    if token.as_deref() != Some(state.shutdownToken.as_str()) {
-        return unauthorized("invalid web access shutdown token");
-    }
-    let sender = state
-        .shutdownSender
-        .lock()
-        .expect("static web access shutdown mutex poisoned")
-        .take();
-    let Some(sender) = sender else {
-        return bad_request("web access close already requested");
-    };
-    if sender.send(()).is_err() {
-        return bad_request("web access shutdown receiver is closed");
-    }
-    Json(serde_json::json!({"ok": true})).into_response()
-}
-
-/// Returns the pairing control state attached to the static Web Access server.
-#[cfg(not(target_arch = "wasm32"))]
-fn static_web_access_control(state: &StaticWebAccessState) -> &StaticWebAccessControlState {
-    state
-        .control
-        .as_ref()
-        .expect("static Web Access pairing control is not configured")
-}
-
-/// Returns the authenticated device and Space metadata used during pairing.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_hello(
-    State(state): State<StaticWebAccessState>,
-    headers: HeaderMap,
-) -> Response {
-    let control = static_web_access_control(&state);
-    if header_string(&headers, "x-operit-link-token-hash").as_deref()
-        != Some(link_token_hash(&control.token).as_str())
-    {
-        return unauthorized("invalid token");
-    }
-    let spaceStore = CoreSpaceStore::new(control.accessStore.storage.clone());
-    let space = match spaceStore.initialize() {
-        Ok(value) => value,
-        Err(error) => return internal_server_error(error),
-    };
-    let profiles = match spaceStore.deviceProfiles() {
-        Ok(value) => value,
-        Err(error) => return internal_server_error(error),
-    };
-    let Some(profile) = profiles.get(&control.deviceId) else {
-        return internal_server_error("Current device profile is not initialized");
-    };
-    Json(HelloResponse {
-        protocolVersion: 4,
-        pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
-        coreDeviceId: control.deviceId.clone(),
-        coreDeviceInfo: control.deviceInfo.clone(),
-        deviceSpace: RemoteDeviceSpaceInfo {
-            spaceId: space.spaceId,
-            spaceName: space.spaceName,
-            spaceRevision: space.spaceRevision,
-            deviceCount: space.members.len(),
-            userName: profile.userName.clone(),
-        },
-        corePublicKey: control.keyPublic.clone(),
-        transports: vec!["http".to_string(), "ws".to_string()],
-        pairingRequired: true,
-    })
-    .into_response()
-}
-
-/// Begins one pairing transaction without creating any Core route capability.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_pair_start(
-    State(state): State<StaticWebAccessState>,
-    Json(request): Json<PairStartRequest>,
-) -> Response {
-    let control = static_web_access_control(&state);
-    if request.tokenHash != link_token_hash(&control.token) {
-        return unauthorized("invalid token");
-    }
-    let clientPublic = match parse_public_key(&request.clientPublicKey) {
-        Ok(value) => value,
-        Err(error) => return bad_request(error),
-    };
-    let sharedSecret = control
-        .keySecret
-        .diffie_hellman(&clientPublic)
-        .as_bytes()
-        .to_vec();
-    let pairingId = Uuid::new_v4().to_string();
-    let pairingCode = pairing_code();
-    let serverNonce = Uuid::new_v4().to_string();
-    eprintln!(
-        "operit link pairing code for {}: {}",
-        request.clientDeviceId, pairingCode
-    );
-    let pairingRecord = RemotePairingCodeRecord {
-        pairingId: pairingId.clone(),
-        pairingServiceVersion: request.pairingServiceVersion,
-        clientDeviceId: request.clientDeviceId.clone(),
-        clientDeviceInfo: request.clientDeviceInfo.clone(),
-        pairingCode: pairingCode.clone(),
-        createdAt: unix_millis(),
-    };
-    if let Err(error) = control
-        .accessStore
-        .savePendingPairing(pairingRecord.clone())
-    {
-        return internal_server_error(error);
-    }
-    control.pairings.lock().await.insert(
-        pairingId.clone(),
-        PendingPairing {
-            pairingServiceVersion: request.pairingServiceVersion,
-            clientDeviceId: request.clientDeviceId.clone(),
-            clientDeviceInfo: request.clientDeviceInfo.clone(),
-            clientPublicKey: request.clientPublicKey,
-            pairingCode,
-            serverNonce: serverNonce.clone(),
-            clientNonce: request.clientNonce,
-            sharedSecret,
-        },
-    );
-    if !request.autoBootstrap {
-        publishOwnerWebAccessPairing(RuntimeHostInteractionWebAccessPairingPayload {
-            pairingId: pairingRecord.pairingId,
-            clientDeviceId: pairingRecord.clientDeviceId,
-            clientPlatform: pairingRecord.clientDeviceInfo.platform,
-            clientModel: pairingRecord.clientDeviceInfo.model,
-            pairingCode: pairingRecord.pairingCode,
-            createdAt: pairingRecord.createdAt,
-        });
-    }
-    Json(PairStartResponse {
-        pairingId,
-        pairingServiceVersion: REMOTE_PAIRING_SERVICE_VERSION,
-        coreDeviceId: control.deviceId.clone(),
-        coreDeviceInfo: control.deviceInfo.clone(),
-        corePublicKey: control.keyPublic.clone(),
-        serverNonce,
-    })
-    .into_response()
-}
-
-/// Completes one pairing transaction and persists its authenticated session.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_pair_finish(
-    State(state): State<StaticWebAccessState>,
-    Json(request): Json<PairFinishRequest>,
-) -> Response {
-    let control = static_web_access_control(&state);
-    let Some(pairing) = control
-        .pairings
-        .lock()
-        .await
-        .get(&request.pairingId)
-        .cloned()
-    else {
-        return bad_request("pairing not found");
-    };
-    let tokenAuthorized = request
-        .tokenHash
-        .as_deref()
-        .map(|tokenHash| tokenHash == link_token_hash(&control.token))
-        .unwrap_or(false);
-    if !tokenAuthorized && pairing.pairingCode != request.pairingCode.trim() {
-        return unauthorized("invalid pairing code");
-    }
-    let expectedClientProof = proof(
-        &pairing.sharedSecret,
-        &pairing.clientNonce,
-        &pairing.serverNonce,
-        "client",
-    );
-    if request.clientProof != expectedClientProof {
-        return unauthorized("invalid client proof");
-    }
-    let sessionId = request.pairingId.clone();
-    let sessionSecret = session_secret(
-        &pairing.sharedSecret,
-        &pairing.clientNonce,
-        &pairing.serverNonce,
-    );
-    let record = AcceptedRemoteSessionRecord {
-        deviceId: pairing.clientDeviceId.clone(),
-        deviceInfo: pairing.clientDeviceInfo.clone(),
-        pairingServiceVersion: pairing.pairingServiceVersion,
-        sessionSecret: BASE64.encode(sessionSecret.as_slice()),
-    };
-    if let Err(error) = control
-        .accessStore
-        .saveInboundSession(sessionId.clone(), record)
-    {
-        return internal_server_error(error);
-    }
-    if let Err(error) = control.accessStore.removePendingPairing(&request.pairingId) {
-        return internal_server_error(error);
-    }
-    control.sessions.lock().await.insert(
-        sessionId.clone(),
-        RemoteSession {
-            deviceId: pairing.clientDeviceId,
-            deviceInfo: pairing.clientDeviceInfo,
-            pairingServiceVersion: pairing.pairingServiceVersion,
-            sessionSecret,
-        },
-    );
-    control.pairings.lock().await.remove(&request.pairingId);
-    Json(PairFinishResponse {
-        sessionId,
-        pairingServiceVersion: pairing.pairingServiceVersion,
-        coreProof: proof(
-            &pairing.sharedSecret,
-            &pairing.clientNonce,
-            &pairing.serverNonce,
-            "core",
-        ),
-    })
-    .into_response()
-}
-
-/// Returns one authenticated session summary for pairing clients.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_session_info(
-    State(state): State<StaticWebAccessState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let control = static_web_access_control(&state);
-    let verified = match verify_static_web_access_session(control, &headers, &body).await {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let envelope = match operit_link::decodeLink::<RemoteSessionInfoEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return encode_link_response(
-                StatusCode::BAD_REQUEST,
-                CoreLinkError::new("BAD_REQUEST", error.to_string()),
-            )
-        }
-    };
-    let spaceStore = CoreSpaceStore::new(control.accessStore.storage.clone());
-    let space = match spaceStore.initialize() {
-        Ok(value) => value,
-        Err(error) => return internal_server_error(error),
-    };
-    let deviceProfiles = match spaceStore.deviceProfilesForCurrentSpace() {
-        Ok(value) => value,
-        Err(error) => return internal_server_error(error),
-    };
-    let sessions = control.sessions.lock().await;
-    let Some(session) = sessions.get(&verified.sessionId) else {
-        return encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            remote_session_auth_error("invalid session", "invalid_session"),
-        );
-    };
-    encode_link_response(
-        StatusCode::OK,
-        RemoteSessionInfoResponse {
-            protocolVersion: 4,
-            pairingServiceVersion: session.pairingServiceVersion,
-            coreDeviceId: control.deviceId.clone(),
-            coreDeviceInfo: control.deviceInfo.clone(),
-            clientDeviceId: session.deviceId.clone(),
-            clientDeviceInfo: session.deviceInfo.clone(),
-            transports: vec!["http".to_string(), "ws".to_string()],
-            deviceSpace: space,
-            deviceProfiles,
-            nonce: envelope.nonce,
-        },
-    )
-}
-
-/// Applies one authenticated Space projection through the standalone pairing server.
-#[cfg(not(target_arch = "wasm32"))]
-async fn static_web_access_space_adopt(
-    State(state): State<StaticWebAccessState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let control = static_web_access_control(&state);
-    let verified = match verify_static_web_access_session(control, &headers, &body).await {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let envelope = match operit_link::decodeLink::<RemoteSpaceAdoptEnvelope>(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return encode_link_response(
-                StatusCode::BAD_REQUEST,
-                CoreLinkError::new("BAD_REQUEST", error.to_string()),
-            )
-        }
-    };
-    match acceptAuthenticatedSpaceJoin(
-        control.accessStore.storage.clone(),
-        &verified.deviceId,
-        envelope,
-    ) {
-        Ok(result) => encode_link_response(StatusCode::OK, result),
-        Err(error) => encode_link_response(StatusCode::CONFLICT, CoreLinkError::internal(error)),
-    }
-}
-
 /// Applies one authenticated Space projection during the pairing join handshake.
 #[cfg(not(target_arch = "wasm32"))]
 async fn space_adopt(
@@ -2999,83 +2481,6 @@ fn acceptAuthenticatedSpaceJoin(
     Ok(RemoteSpaceAdoptResult {
         space: spaceStore.adopt(envelope.space)?,
         controlOperations,
-    })
-}
-
-/// Verifies one session request against the pairing-only control state.
-#[cfg(not(target_arch = "wasm32"))]
-async fn verify_static_web_access_session(
-    state: &StaticWebAccessControlState,
-    headers: &HeaderMap,
-    body: &[u8],
-) -> Result<VerifiedRemoteSession, Response> {
-    if header_string(headers, "x-operit-link-version").as_deref() != Some("4") {
-        return Err(encode_link_response(
-            StatusCode::BAD_REQUEST,
-            CoreLinkError::new(
-                "LINK_VERSION_MISMATCH",
-                "Link protocol version 4 is required",
-            ),
-        ));
-    }
-    let Some(sessionId) = header_string(headers, "x-operit-session") else {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            CoreLinkError::new("UNAUTHORIZED", "missing session"),
-        ));
-    };
-    let Some(deviceId) = header_string(headers, "x-operit-device") else {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            CoreLinkError::new("UNAUTHORIZED", "missing device"),
-        ));
-    };
-    let Some(signature) = header_string(headers, "x-operit-signature") else {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            CoreLinkError::new("UNAUTHORIZED", "missing signature"),
-        ));
-    };
-    let records = state.accessStore.inboundSessions().map_err(|error| {
-        encode_link_response(StatusCode::UNAUTHORIZED, CoreLinkError::internal(error))
-    })?;
-    let Some(record) = records.get(&sessionId) else {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            remote_session_auth_error("invalid session", "invalid_session"),
-        ));
-    };
-    let session = accepted_session_from_record(record)
-        .map_err(|error| encode_link_response(StatusCode::UNAUTHORIZED, error))?;
-    if session.deviceId != deviceId {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            remote_session_auth_error("device mismatch", "device_mismatch"),
-        ));
-    }
-    if sign(&session.sessionSecret, body) != signature {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            remote_session_auth_error("signature mismatch", "signature_mismatch"),
-        ));
-    }
-    let disconnected = NetworkControlStore::new(state.accessStore.storage.clone())
-        .and_then(|store| store.nodeIsDisconnected(&deviceId))
-        .map_err(|error| {
-            encode_link_response(StatusCode::UNAUTHORIZED, CoreLinkError::internal(error))
-        })?;
-    if disconnected {
-        return Err(encode_link_response(
-            StatusCode::UNAUTHORIZED,
-            remote_session_auth_error(
-                "device is prohibited from this Space connection",
-                "disconnected_node",
-            ),
-        ));
-    }
-    Ok(VerifiedRemoteSession {
-        sessionId,
-        deviceId,
     })
 }
 
@@ -3543,6 +2948,30 @@ fn accepted_session_from_record(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Stops the local Link Access server after validating its shutdown token.
+async fn web_access_close(State(state): State<RemoteLinkState>, headers: HeaderMap) -> Response {
+    let Some(webAccess) = state.webAccess.as_ref() else {
+        return bad_request("web access is not enabled");
+    };
+    let token = header_string(&headers, "x-operit-web-access-shutdown-token");
+    if token.as_deref() != Some(webAccess.shutdownToken.as_str()) {
+        return unauthorized("invalid web access shutdown token");
+    }
+    let sender = webAccess
+        .shutdownSender
+        .lock()
+        .expect("web access shutdown mutex poisoned")
+        .take();
+    let Some(sender) = sender else {
+        return bad_request("web access close already requested");
+    };
+    if sender.send(()).is_err() {
+        return bad_request("web access shutdown receiver is closed");
+    }
+    Json(serde_json::json!({"ok": true})).into_response()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn token_matches(state: &RemoteLinkState, headers: &HeaderMap) -> bool {
     header_string(headers, "x-operit-link-token-hash")
         .map(|value| token_hash_matches(state, &value))
@@ -3658,100 +3087,5 @@ fn encode_link_response(status: StatusCode, value: impl Serialize) -> Response {
             .body(Body::from(bytes))
             .expect("Link response must build"),
         Err(error) => internal_server_error(error.to_string()),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn serve_web_access_file(webAccess: &RemoteWebAccessState, path: &str) -> Response {
-    let relativePath = match sanitize_web_asset_path(path) {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let fullPath = webAccess.webRoot.join(&relativePath);
-    if !fullPath.starts_with(&webAccess.webRoot) {
-        return bad_request("web asset path escapes web root");
-    }
-    let bytes = match (webAccess.readAsset)(&fullPath) {
-        Ok(value) => value,
-        Err(error) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(CoreLinkError::new("NOT_FOUND", error.to_string())),
-            )
-                .into_response();
-        }
-    };
-    let contentType = content_type_for_path(&fullPath);
-    Response::builder()
-        .header("content-type", contentType)
-        .header("cross-origin-opener-policy", "same-origin")
-        .header("cross-origin-embedder-policy", "require-corp")
-        .header("cross-origin-resource-policy", "same-origin")
-        .body(Body::from(bytes))
-        .expect("web asset response must build")
-}
-
-/// Reads and returns one asset from the standalone Web Access root.
-#[cfg(not(target_arch = "wasm32"))]
-fn serve_static_web_access_file(webAccess: &StaticWebAccessState, path: &str) -> Response {
-    let relativePath = match sanitize_web_asset_path(path) {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let fullPath = webAccess.webRoot.join(&relativePath);
-    if !fullPath.starts_with(&webAccess.webRoot) {
-        return bad_request("web asset path escapes web root");
-    }
-    let bytes = match (webAccess.readAsset)(&fullPath) {
-        Ok(value) => value,
-        Err(error) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(CoreLinkError::new("NOT_FOUND", error.to_string())),
-            )
-                .into_response();
-        }
-    };
-    let contentType = content_type_for_path(&fullPath);
-    Response::builder()
-        .header("content-type", contentType)
-        .header("cross-origin-opener-policy", "same-origin")
-        .header("cross-origin-embedder-policy", "require-corp")
-        .header("cross-origin-resource-policy", "same-origin")
-        .body(Body::from(bytes))
-        .expect("web asset response must build")
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn sanitize_web_asset_path(path: &str) -> Result<PathBuf, Response> {
-    let normalized = path.trim_start_matches('/');
-    if normalized.is_empty() {
-        return Ok(PathBuf::from("index.html"));
-    }
-    let relative = PathBuf::from(normalized);
-    if relative
-        .components()
-        .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(bad_request("invalid web asset path"));
-    }
-    Ok(relative)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn content_type_for_path(path: &Path) -> &'static str {
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("html") => "text/html; charset=utf-8",
-        Some("js") => "application/javascript; charset=utf-8",
-        Some("css") => "text/css; charset=utf-8",
-        Some("json") => "application/json; charset=utf-8",
-        Some("wasm") => "application/wasm",
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("svg") => "image/svg+xml",
-        Some("ico") => "image/x-icon",
-        Some("woff") => "font/woff",
-        Some("woff2") => "font/woff2",
-        _ => "application/octet-stream",
     }
 }

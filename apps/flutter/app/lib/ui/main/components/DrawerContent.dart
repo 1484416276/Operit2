@@ -1291,7 +1291,6 @@ class _DrawerContentState extends State<DrawerContent> {
                         appearance: widget.appearance,
                         trailing: _SegmentedModeSwitch(
                           groupingMode: _groupingMode,
-                          appearance: widget.appearance,
                           onToggle: _toggleGroupingMode,
                         ),
                       ),
@@ -1309,7 +1308,6 @@ class _DrawerContentState extends State<DrawerContent> {
                         children: <Widget>[
                           Expanded(
                             child: _UnifiedCreateBar(
-                              appearance: widget.appearance,
                               onCreateConversation: _createConversation,
                               onCreateGroup: _showCreateGroupDialog,
                             ),
@@ -2260,28 +2258,23 @@ class _HistoryCountBadge extends StatelessWidget {
 class _SegmentedModeSwitch extends StatelessWidget {
   const _SegmentedModeSwitch({
     required this.groupingMode,
-    required this.appearance,
     required this.onToggle,
   });
 
   final _HistoryGroupingMode groupingMode;
-  final NavigationDrawerAppearance appearance;
   final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final isWorkspace = groupingMode == _HistoryGroupingMode.workspace;
     return Container(
       width: 98,
       height: 23,
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: appearance.buttonContainerColor.withValues(alpha: 0.60),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: appearance.dividerColor.withValues(alpha: 0.22),
-          width: 1,
-        ),
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -2298,65 +2291,59 @@ class _SegmentedModeSwitch extends StatelessWidget {
                   width: tabWidth,
                   height: constraints.maxHeight,
                   decoration: BoxDecoration(
-                    color: appearance.selectedContainerColor.withValues(
-                      alpha: 0.65,
-                    ),
-                    borderRadius: BorderRadius.circular(4.5),
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.16),
-                        blurRadius: 3,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
+                    color: colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(10),
                   ),
                 ),
               ),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(4.5),
-                      onTap: isWorkspace ? onToggle : null,
-                      child: Center(
-                        child: Text(
-                          '角色卡',
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            letterSpacing: -0.2,
-                            fontWeight: !isWorkspace
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                            color: !isWorkspace
-                                ? appearance.selectedContentColor
-                                : appearance.itemColor.withValues(alpha: 0.72),
+              Material(
+                color: Colors.transparent,
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: isWorkspace ? onToggle : null,
+                        child: Center(
+                          child: Text(
+                            '角色卡',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              letterSpacing: -0.2,
+                              fontWeight: !isWorkspace
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: !isWorkspace
+                                  ? colorScheme.onSecondaryContainer
+                                  : colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(4.5),
-                      onTap: !isWorkspace ? onToggle : null,
-                      child: Center(
-                        child: Text(
-                          '工作区',
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            letterSpacing: -0.2,
-                            fontWeight: isWorkspace
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                            color: isWorkspace
-                                ? appearance.selectedContentColor
-                                : appearance.itemColor.withValues(alpha: 0.72),
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: !isWorkspace ? onToggle : null,
+                        child: Center(
+                          child: Text(
+                            '工作区',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              letterSpacing: -0.2,
+                              fontWeight: isWorkspace
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: isWorkspace
+                                  ? colorScheme.onSecondaryContainer
+                                  : colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           );
@@ -2368,51 +2355,47 @@ class _SegmentedModeSwitch extends StatelessWidget {
 
 class _UnifiedCreateBar extends StatelessWidget {
   const _UnifiedCreateBar({
-    required this.appearance,
     required this.onCreateConversation,
     required this.onCreateGroup,
   });
 
-  final NavigationDrawerAppearance appearance;
   final VoidCallback onCreateConversation;
   final VoidCallback onCreateGroup;
 
   @override
   Widget build(BuildContext context) {
-    final textColor = appearance.titleColor.withValues(alpha: 0.90);
-    final iconColor = appearance.itemColor.withValues(alpha: 0.85);
-    return Container(
+    final colorScheme = Theme.of(context).colorScheme;
+    final contentColor = colorScheme.onPrimaryContainer;
+    return SizedBox(
       height: 34,
-      decoration: BoxDecoration(
-        color: appearance.buttonContainerColor.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: appearance.dividerColor.withValues(alpha: 0.35),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Material(
-              color: Colors.transparent,
+      child: Material(
+        color: colorScheme.primaryContainer,
+        shape: const StadiumBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: <Widget>[
+            Expanded(
               child: InkWell(
                 borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(7),
+                  left: Radius.circular(17),
                 ),
+                hoverColor: contentColor.withValues(alpha: 0.08),
+                focusColor: contentColor.withValues(alpha: 0.10),
+                splashColor: contentColor.withValues(alpha: 0.10),
+                highlightColor: contentColor.withValues(alpha: 0.10),
                 onTap: onCreateConversation,
                 child: Center(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      Icon(Icons.add_rounded, size: 17, color: iconColor),
+                      Icon(Icons.add_rounded, size: 17, color: contentColor),
                       const SizedBox(width: 6),
                       Text(
                         '新建对话',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: textColor,
+                          color: contentColor,
                           letterSpacing: -0.1,
                         ),
                       ),
@@ -2421,40 +2404,42 @@ class _UnifiedCreateBar extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-          Container(
-            width: 1,
-            height: 16,
-            color: appearance.dividerColor.withValues(alpha: 0.45),
-          ),
-          Tooltip(
-            message: '新建分组',
-            child: SizedBox(
-              width: 38,
-              height: 34,
-              child: Material(
-                color: Colors.transparent,
+            Container(
+              width: 1,
+              height: 16,
+              color: contentColor.withValues(alpha: 0.16),
+            ),
+            Tooltip(
+              message: '新建分组',
+              child: SizedBox(
+                width: 38,
+                height: 34,
                 child: InkWell(
                   borderRadius: const BorderRadius.horizontal(
-                    right: Radius.circular(7),
+                    right: Radius.circular(17),
                   ),
+                  hoverColor: contentColor.withValues(alpha: 0.08),
+                  focusColor: contentColor.withValues(alpha: 0.10),
+                  splashColor: contentColor.withValues(alpha: 0.10),
+                  highlightColor: contentColor.withValues(alpha: 0.10),
                   onTap: onCreateGroup,
                   child: Center(
                     child: Icon(
                       Icons.create_new_folder_outlined,
                       size: 16,
-                      color: iconColor,
+                      color: contentColor,
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
+
 class _BottomThemeToggleButton extends StatelessWidget {
   const _BottomThemeToggleButton({
     required this.appearance,

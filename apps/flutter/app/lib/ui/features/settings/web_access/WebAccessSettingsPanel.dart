@@ -10,6 +10,8 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
 
+const String _webAppUrl = 'https://web.operit.app';
+
 class WebAccessSettingsPanel extends StatefulWidget {
   const WebAccessSettingsPanel({super.key, this.embedded = false});
 
@@ -531,15 +533,11 @@ String _baseUrlForBindAddress(String bindAddress) {
   return 'http://$displayHost:$port';
 }
 
-/// Adds the Link Access token to one browser pairing URL.
+/// Builds the single public Web runtime URL with the local Link Access target.
 String _webAccessPairingUrl(String baseUrl, String token) {
-  final uri = Uri.parse(baseUrl);
-  return uri
+  return Uri.parse(_webAppUrl)
       .replace(
-        queryParameters: <String, String>{
-          ...uri.queryParameters,
-          'token': token,
-        },
+        queryParameters: <String, String>{'accessUrl': baseUrl, 'token': token},
       )
       .toString();
 }

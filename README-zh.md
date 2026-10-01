@@ -71,7 +71,9 @@ Operit2 的扩展面已经从“内置工具集合”逐步抽象为可管理的
 
 Web Access 让浏览器访问一个已运行的 CoreNode；打开页面不会自动让浏览器成为 Space 中的独立节点。浏览器 Host 与 WebAssembly 运行时是另一条工程路径，两者的能力和部署方式需要分别看待。
 
-本地开发方式见下方“Web Access 开发”，访问与部署说明见 [`apps/web_access/README.md`](apps/web_access/README.md)。
+本地开发方式见下方“Web Access 开发”。GitHub Actions 中保留独立的
+`Deploy Web Experience` 工作流，用标准 Flutter Web 构建并发布到
+`gh-pages`；访问与部署说明见 [`apps/flutter/app/web/README.md`](apps/flutter/app/web/README.md)。
 
 ### 数据备份与迁移
 
@@ -212,7 +214,7 @@ apps/
 ├── cli/                 Rust CLI/TUI 入口
 ├── pb_sbc01_h3/         PB_SBC01_H3 硬件主控入口
 ├── flutter/app/         Flutter App 入口
-├── web_access/          Web Access 前端边界和共享 bundle
+├── flutter/app/web/     web.operit.app 的标准 Flutter Web 前端
 └── server/              Server 形态预留目录
 
 core/
@@ -236,7 +238,7 @@ docs/                    架构、权限、Link、迁移和版本文档
 - [Link、Access 与 Space 边界](docs/link-access-architecture.md)
 - [权限、AI 能力与 sandbox 边界](docs/permission-access-architecture.md)
 - [平台 Host 实现边界](hosts/README.md)
-- [Web Access 前端与部署要求](apps/web_access/README.md)
+- [Web Access 前端与部署要求](apps/flutter/app/web/README.md)
 - [插件作者文档](plugins/docs/README.md)
 - [版本、tag、渠道与发布资产](docs/release-versioning.md)
 - [当前 crate 拆分与迁移计划](docs/core-module-crate-layout.md)

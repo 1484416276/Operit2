@@ -14,7 +14,6 @@ mod core_proxy;
 mod error;
 mod mdns;
 mod tui;
-mod web_access_assets;
 
 pub(crate) use bootstrap::{
     create_cli_core_application, create_cli_core_application_configured,

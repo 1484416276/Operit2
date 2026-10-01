@@ -23,7 +23,7 @@ sudo dnf install -y gcc gcc-c++ glibc-devel.i686 libstdc++-devel.i686 ncurses-de
 ```
 
 The command writes the kernel, compressed initramfs, and hash manifest to
-`apps/web_access/v86/runtime/`. Publish a verified release to the immutable
+`apps/flutter/app/web/runtime/generated/v86/`. Publish a verified release to the immutable
 R2 location consumed by the Web host:
 
 ```powershell

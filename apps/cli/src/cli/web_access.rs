@@ -1,17 +1,12 @@
 use super::*;
 use crate::create_cli_core_application;
 
-use operit_access_runtime::{
-    link_token_hash, StaticWebAccessControlConfig, StaticWebAccessServer,
-    StaticWebAccessServerConfig,
-};
+use operit_access_runtime::{link_token_hash, RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::mdns::MdnsRegistration;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -51,7 +46,6 @@ struct CliLinkHostState {
     base_url: String,
     web_access_enabled: bool,
     discovery_enabled: bool,
-    web_root: String,
     shutdown_token: String,
     process_id: u32,
     started_at: i64,
@@ -74,11 +68,10 @@ pub(crate) async fn run_web_access_command(args: &[String]) -> Result<(), String
     }
 }
 
-/// Opens the local static web-access server.
+/// Starts the local Link Access server used by the public Web runtime.
 async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     let mut bind_address = None::<String>;
     let mut token = None::<String>;
-    let mut web_root = None::<PathBuf>;
     let mut discoverable = false;
     let mut index = 0;
     while index < args.len() {
@@ -88,7 +81,7 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 bind_address = Some(
                     args.get(index)
                         .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
+                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>]"
                                 .to_string()
                         })?
                         .clone(),
@@ -99,29 +92,18 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
                 token = Some(
                     args.get(index)
                         .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
+                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>]"
                                 .to_string()
                         })?
                         .clone(),
                 );
-            }
-            "--web-root" => {
-                index += 1;
-                web_root = Some(PathBuf::from(
-                    args.get(index)
-                        .ok_or_else(|| {
-                            "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>]"
-                                .to_string()
-                        })?
-                        .clone(),
-                ));
             }
             "--discoverable" => {
                 discoverable = true;
             }
             _ => {
                 return Err(
-                    "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>] [--discoverable]"
+                    "usage: operit2 cli web open [--bind <addr:port>] [--token <token>] [--discoverable]"
                         .to_string(),
                 );
             }
@@ -155,22 +137,19 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
         updated_at: unix_millis(),
     };
 
-    let web_root = resolve_web_root(web_root)?;
     let shutdown_token = generate_token();
     let core_application = create_cli_core_application("server").await?;
     let access_store = core_application.accessStore();
     let identity = core_application.accessIdentity().clone();
     let device_info = identity.deviceInfo.clone();
     let device_id = identity.deviceId.clone();
-    let web_asset_reader: Arc<dyn Fn(&Path) -> Result<Vec<u8>, String> + Send + Sync> =
-        Arc::new(|path| std::fs::read(path).map_err(|error| error.to_string()));
+    let node_router = core_application.nodeRouter();
     let state = CliLinkHostState {
         device_id: device_id.clone(),
         bind_address: resolved_bind_address.clone(),
         base_url: base_url_for_bind_address(&resolved_bind_address)?,
         web_access_enabled: true,
         discovery_enabled: discoverable,
-        web_root: web_root.to_string_lossy().to_string(),
         shutdown_token: shutdown_token.clone(),
         process_id: process::id(),
         started_at: unix_millis(),
@@ -201,34 +180,31 @@ async fn run_web_access_open_command(args: &[String]) -> Result<(), String> {
     if cli_json_mode() {
         emit_cli_json(serde_json::json!({
             "baseUrl": state.base_url,
+            "webUrl": web_app_url(&state.base_url, &config.token),
             "token": config.token,
             "statePath": crate::client_paths::link_host_state_path(),
-            "webRoot": web_root,
             "runtimeMode": "local",
         }));
     } else {
-        println!("Web access URL: {}", state.base_url);
+        println!("Web access URL: {}", web_app_url(&state.base_url, &config.token));
+        println!("Link Access endpoint: {}", state.base_url);
         println!("Web access token: {}", config.token);
         println!(
             "State path: {}",
             crate::client_paths::link_host_state_path().display()
         );
-        println!("Web root: {}", web_root.display());
         println!("Runtime mode: local");
     }
-    let result = StaticWebAccessServer::serveWithListener(
-        StaticWebAccessServerConfig {
+    let result = RemoteLinkServer::serveWithListener(
+        node_router,
+        RemoteLinkServerConfig {
             bindAddress: resolved_bind_address,
-            shutdownToken: shutdown_token.clone(),
-            webRoot: web_root,
-            readAsset: web_asset_reader,
-            linkControl: Some(StaticWebAccessControlConfig {
-                token: config.token.clone(),
-                deviceId: identity.deviceId,
-                deviceInfo: identity.deviceInfo,
-                accessStore: access_store,
-            }),
+            token: config.token.clone(),
+            deviceId: identity.deviceId,
+            deviceInfo: identity.deviceInfo,
+            webAccess: Some(RemoteWebAccessConfig { shutdownToken: shutdown_token.clone() }),
             printStartupInfo: false,
+            accessStore: access_store,
         },
         listener,
         listener_address,
@@ -463,20 +439,13 @@ fn base_url_for_bind_address(bind_address: &str) -> Result<String, String> {
     Ok(format!("http://{host}:{port}"))
 }
 
-/// Resolves the Web Access asset root used by the local HTTP server.
-fn resolve_web_root(value: Option<PathBuf>) -> Result<PathBuf, String> {
-    let web_root = match value {
-        Some(path) => path,
-        None => crate::web_access_assets::materialize_web_access_bundle()?,
-    };
-    let index = web_root.join("index.html");
-    if !index.is_file() {
-        return Err(format!(
-            "Web Access bundle not found: {}. Rebuild operit2 after building the Web Access bundle or pass --web-root <path>.",
-            web_root.display()
-        ));
-    }
-    Ok(web_root)
+fn web_app_url(base_url: &str, token: &str) -> String {
+    let mut url = reqwest::Url::parse("https://web.operit.app/")
+        .expect("web.operit.app URL must be valid");
+    url.query_pairs_mut()
+        .append_pair("accessUrl", base_url)
+        .append_pair("token", token);
+    url.to_string()
 }
 
 fn generate_token() -> String {
@@ -496,7 +465,7 @@ fn print_web_access_usage() {
         emit_cli_json(serde_json::json!({ "usage": "operit2 cli web <open|close|status|token>" }));
         return;
     }
-    println!("operit2 cli web open [--bind <addr:port>] [--token <token>] [--web-root <path>] [--discoverable]");
+    println!("operit2 cli web open [--bind <addr:port>] [--token <token>] [--discoverable]");
     println!("operit2 cli web close");
     println!("operit2 cli web status");
     println!("operit2 cli web token rotate");

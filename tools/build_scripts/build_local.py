@@ -90,7 +90,7 @@ def check_local_environment(products: str, cli_arches: str, include_ios: bool) -
     run(command)
 
 
-# Builds the selected native products after producing the shared Web Access bundle.
+# Builds the selected native products without embedding the Web client.
 def main() -> int:
     args = parse_args()
     platform_name = host_platform()
@@ -103,15 +103,6 @@ def main() -> int:
         return 0
 
     os.environ["RUSTFLAGS"] = "-Awarnings"
-    if args.products in ("app", "cli", "all"):
-        run(
-            [
-                sys.executable,
-                os.path.join(BUILD_SCRIPTS_DIR, "build_flutter_web_access.py"),
-                "--base-href",
-                "/",
-            ]
-        )
     if args.products in ("app", "all"):
         build_local_app(platform_name, args.enforce_lockfile)
         if args.include_ios:

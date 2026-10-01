@@ -71,7 +71,9 @@ The plugin author entry point is [`plugins/docs/README.md`](plugins/docs/README.
 
 Web Access lets a browser access a running CoreNode; opening the page does not automatically make the browser an independent node in the Space. The browser Host and the WebAssembly runtime are separate engineering paths, and their capabilities and deployment methods should be considered separately.
 
-See "Web Access Development" below for local development, and [`apps/web_access/README.md`](apps/web_access/README.md) for access and deployment instructions.
+See "Web Access Development" below for local development. The dedicated
+`Deploy Web Experience` GitHub Actions workflow builds this Flutter Web
+frontend and publishes it to `gh-pages`; see [`apps/flutter/app/web/README.md`](apps/flutter/app/web/README.md) for access and deployment instructions.
 
 ### Data Backup and Migration
 
@@ -212,7 +214,7 @@ apps/
 ├── cli/                 Rust CLI/TUI entry point
 ├── pb_sbc01_h3/         PB_SBC01_H3 hardware control entry point
 ├── flutter/app/         Flutter App entry point
-├── web_access/          Web Access frontend boundary and shared bundle
+├── flutter/app/web/     Standard Flutter Web frontend for web.operit.app
 └── server/              Reserved directory for the Server form
 
 core/
@@ -236,7 +238,7 @@ docs/                    Architecture, permission, Link, migration, and version 
 - [Link, Access, and Space boundaries](docs/link-access-architecture.md)
 - [Permission, AI capability, and sandbox boundaries](docs/permission-access-architecture.md)
 - [Platform Host implementation boundaries](hosts/README.md)
-- [Web Access frontend and deployment requirements](apps/web_access/README.md)
+- [Web Access frontend and deployment requirements](apps/flutter/app/web/README.md)
 - [Plugin author documentation](plugins/docs/README.md)
 - [Versions, tags, channels, and release assets](docs/release-versioning.md)
 - [Current crate split and migration plan](docs/core-module-crate-layout.md)

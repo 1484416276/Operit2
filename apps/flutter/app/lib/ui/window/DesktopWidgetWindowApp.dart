@@ -3,6 +3,7 @@
 import 'package:desktop_widgets/desktop_widgets.dart';
 import 'package:flutter/material.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../core/errors/UnhandledErrorReporter.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../l10n/generated/app_localizations.dart';
@@ -104,24 +105,26 @@ class _DesktopWidgetWindowAppState extends State<DesktopWidgetWindowApp> {
         scaffoldBackgroundColor: Colors.transparent,
         canvasColor: Colors.transparent,
       ),
-      home: Material(
-        type: MaterialType.transparency,
-        child: Builder(
-          builder: (context) => GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onLongPressStart: (_) => _perform(DesktopWidgetWindow.move),
-            onSecondaryTapUp: (details) =>
-                _perform(() => _menu(context, details.localPosition)),
-            child: _error == null
-                ? ToolPkgDesktopWidgetView(
-                    key: ValueKey(_revision),
-                    clients: _clients,
-                    definition: _definition,
-                    instanceId: widget.launch.payload['instanceId'] as String,
-                    onOpenRoute: (package, route) =>
-                        _perform(() => _openRoute(package, route)),
-                  )
-                : Center(child: Text(_error.toString())),
+      home: UnhandledErrorHost(
+        child: Material(
+          type: MaterialType.transparency,
+          child: Builder(
+            builder: (context) => GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onLongPressStart: (_) => _perform(DesktopWidgetWindow.move),
+              onSecondaryTapUp: (details) =>
+                  _perform(() => _menu(context, details.localPosition)),
+              child: _error == null
+                  ? ToolPkgDesktopWidgetView(
+                      key: ValueKey(_revision),
+                      clients: _clients,
+                      definition: _definition,
+                      instanceId: widget.launch.payload['instanceId'] as String,
+                      onOpenRoute: (package, route) =>
+                          _perform(() => _openRoute(package, route)),
+                    )
+                  : Center(child: Text(_error.toString())),
+            ),
           ),
         ),
       ),

@@ -58,6 +58,7 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
     _menuCommandsFuture = widget.onLoadMenuCommands();
   }
 
+  /// Builds browser actions and explicitly renders userscript menu errors.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -92,8 +93,19 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
           FutureBuilder<List<WorkspaceUserscriptMenuCommand>>(
             future: _menuCommandsFuture,
             builder: (context, snapshot) {
-              final commands =
-                  snapshot.data ?? const <WorkspaceUserscriptMenuCommand>[];
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const LinearProgressIndicator();
+              }
+              if (snapshot.hasError) {
+                return ListTile(
+                  leading: const Icon(Icons.error_outline),
+                  title: const Text('加载脚本菜单失败'),
+                  subtitle: Text('${snapshot.error}'),
+                  textColor: Theme.of(context).colorScheme.error,
+                  iconColor: Theme.of(context).colorScheme.error,
+                );
+              }
+              final commands = snapshot.requireData;
               if (commands.isEmpty) {
                 return const SizedBox.shrink();
               }

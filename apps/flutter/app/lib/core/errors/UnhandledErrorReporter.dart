@@ -1,15 +1,14 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Describes one error that has stopped the current application session.
-class FatalErrorReport {
-  const FatalErrorReport({
+/// Describes an unhandled error without ending the application session.
+class UnhandledErrorReport {
+  /// Creates a diagnostic report for an unhandled application error.
+  const UnhandledErrorReport({
     required this.source,
     required this.error,
     required this.stackTrace,
@@ -19,7 +18,7 @@ class FatalErrorReport {
   final Object error;
   final StackTrace? stackTrace;
 
-  /// Formats the report for native crash views and clipboard export.
+  /// Formats the report for the error dialog and clipboard export.
   String get details {
     final buffer = StringBuffer()
       ..writeln('Unhandled error source: $source')
@@ -35,182 +34,242 @@ class FatalErrorReport {
   }
 }
 
-/// Owns the process-wide transition from the product UI to a fatal error view.
+/// Delivers unhandled errors to the active application dialog host.
 class UnhandledErrorReporter {
+  /// Prevents instances of this process-wide reporter.
   UnhandledErrorReporter._();
 
-  static final ValueNotifier<FatalErrorReport?> fatalError =
-      ValueNotifier<FatalErrorReport?>(null);
-  static bool _fatalErrorDeliveryScheduled = false;
+  static final ValueNotifier<UnhandledErrorReport?> pendingError =
+      ValueNotifier<UnhandledErrorReport?>(null);
+  static bool _errorDeliveryScheduled = false;
 
-  /// Records a fatal error for the active application container.
+  /// Schedules one error notification without mutating widgets during a frame.
   static void report({
     required String source,
     required Object error,
     required StackTrace? stackTrace,
   }) {
-    if (fatalError.value != null || _fatalErrorDeliveryScheduled) {
+    if (pendingError.value != null || _errorDeliveryScheduled) {
       return;
     }
-    final report = FatalErrorReport(
+    final report = UnhandledErrorReport(
       source: source,
       error: error,
       stackTrace: stackTrace,
     );
-    _fatalErrorDeliveryScheduled = true;
+    _errorDeliveryScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _fatalErrorDeliveryScheduled = false;
-      if (fatalError.value == null) {
-        fatalError.value = report;
+      _errorDeliveryScheduled = false;
+      if (pendingError.value == null) {
+        pendingError.value = report;
       }
     });
     WidgetsBinding.instance.scheduleFrame();
   }
 }
 
-/// Replaces the product tree after an unrecoverable application error.
-class FatalErrorHost extends StatelessWidget {
-  const FatalErrorHost({required this.child, super.key});
+/// Presents dismissible error dialogs while keeping the product tree mounted.
+class UnhandledErrorHost extends StatefulWidget {
+  /// Creates a dialog host beneath the application's Material navigator.
+  const UnhandledErrorHost({required this.child, super.key});
 
   final Widget child;
 
-  /// Builds the active app or a complete Material root for fatal errors.
+  /// Creates the listener that presents errors on the existing navigator.
+  @override
+  State<UnhandledErrorHost> createState() => _UnhandledErrorHostState();
+}
+
+class _UnhandledErrorHostState extends State<UnhandledErrorHost> {
+  bool _dialogPending = false;
+
+  /// Subscribes to reports, including errors received before the host mounts.
+  @override
+  void initState() {
+    super.initState();
+    UnhandledErrorReporter.pendingError.addListener(_handleError);
+    _handleError();
+  }
+
+  /// Removes the report listener without disposing the application's navigator.
+  @override
+  void dispose() {
+    UnhandledErrorReporter.pendingError.removeListener(_handleError);
+    super.dispose();
+  }
+
+  /// Defers route changes until the frame completes and prevents stacked dialogs.
+  void _handleError() {
+    if (_dialogPending || UnhandledErrorReporter.pendingError.value == null) {
+      return;
+    }
+    _dialogPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_presentError());
+    });
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  /// Shows one report and releases it when the user dismisses the dialog.
+  Future<void> _presentError() async {
+    final report = UnhandledErrorReporter.pendingError.value;
+    try {
+      if (report != null) {
+        await showDialog<void>(
+          context: context,
+          builder: (context) => UnhandledErrorDialog(report: report),
+        );
+      }
+    } finally {
+      if (identical(UnhandledErrorReporter.pendingError.value, report)) {
+        UnhandledErrorReporter.pendingError.value = null;
+      }
+      _dialogPending = false;
+      if (mounted) {
+        _handleError();
+      }
+    }
+  }
+
+  /// Keeps the same application child mounted throughout error reporting.
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// Displays diagnostics in a dialog that never invokes a native crash screen.
+class UnhandledErrorDialog extends StatelessWidget {
+  /// Creates a dismissible error dialog with selectable diagnostic details.
+  const UnhandledErrorDialog({required this.report, super.key});
+
+  final UnhandledErrorReport report;
+
+  /// Copies diagnostics while leaving the current dialog and app state intact.
+  Future<void> _copyDetails() {
+    return Clipboard.setData(ClipboardData(text: report.details));
+  }
+
+  /// Builds a scrollable dialog with an explicit continue action.
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<FatalErrorReport?>(
-      valueListenable: UnhandledErrorReporter.fatalError,
-      builder: (context, report, _) {
-        if (report == null) {
-          return child;
-        }
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'Operit2',
-          home: FatalErrorScreen(report: report),
-        );
-      },
+    return AlertDialog(
+      constraints: const BoxConstraints(maxWidth: 840),
+      scrollable: true,
+      icon: Icon(
+        Icons.error_outline,
+        color: Theme.of(context).colorScheme.error,
+      ),
+      title: const Text('Operit2 encountered an error'),
+      content: SizedBox(
+        width: 760,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'An unexpected error occurred. You can close this dialog and '
+              'continue using the app. The affected operation may not have completed.',
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.4,
+              child: _ErrorDetails(report: report),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton.icon(
+          onPressed: _copyDetails,
+          icon: const Icon(Icons.copy),
+          label: const Text('Copy details'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Continue using app'),
+        ),
+      ],
     );
   }
 }
 
-/// Starts a minimal Flutter container when startup fails before the app tree exists.
-class FatalErrorApplication extends StatelessWidget {
-  const FatalErrorApplication({super.key});
+/// Displays startup diagnostics when no application tree has been started.
+class StartupErrorApplication extends StatelessWidget {
+  /// Creates the startup error container for incomplete initialization.
+  const StartupErrorApplication({super.key});
 
+  /// Builds a diagnostic screen without claiming the application is usable.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Operit2',
-      home: ValueListenableBuilder<FatalErrorReport?>(
-        valueListenable: UnhandledErrorReporter.fatalError,
-        builder: (context, report, _) {
-          if (report == null) {
-            return const SizedBox.expand();
-          }
-          return FatalErrorScreen(report: report);
-        },
+      home: Scaffold(
+        body: SafeArea(
+          child: ValueListenableBuilder<UnhandledErrorReport?>(
+            valueListenable: UnhandledErrorReporter.pendingError,
+            builder: (context, report, _) {
+              if (report == null) {
+                return const SizedBox.expand();
+              }
+              return Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      'Operit2 could not start',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'An error prevented application initialization.',
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(child: _ErrorDetails(report: report)),
+                    const SizedBox(height: 16),
+                    TextButton.icon(
+                      onPressed: () => Clipboard.setData(
+                        ClipboardData(text: report.details),
+                      ),
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy details'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Displays the final Flutter crash surface and asks supported native hosts to take over.
-class FatalErrorScreen extends StatefulWidget {
-  const FatalErrorScreen({required this.report, super.key});
+/// Renders selectable diagnostics within a bounded scrolling surface.
+class _ErrorDetails extends StatelessWidget {
+  /// Creates the shared diagnostic surface for dialogs and startup errors.
+  const _ErrorDetails({required this.report});
 
-  final FatalErrorReport report;
+  final UnhandledErrorReport report;
 
-  @override
-  State<FatalErrorScreen> createState() => _FatalErrorScreenState();
-}
-
-class _FatalErrorScreenState extends State<FatalErrorScreen> {
-  static const MethodChannel _nativeCrashChannel = MethodChannel(
-    'operit/crash',
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_presentNativeCrashScreen());
-  }
-
-  /// Invokes the platform's native crash surface where the host owns one.
-  Future<void> _presentNativeCrashScreen() {
-    if (kIsWeb ||
-        !(Platform.isAndroid ||
-            Platform.isWindows ||
-            Platform.isLinux ||
-            Platform.isIOS ||
-            Platform.isMacOS ||
-            Platform.operatingSystem == 'ohos')) {
-      return Future<void>.value();
-    }
-    return _nativeCrashChannel.invokeMethod<void>('present', <String, Object>{
-      'details': widget.report.details,
-    });
-  }
-
-  /// Copies the diagnostic report without leaving the fatal screen.
-  Future<void> _copyDetails() {
-    return Clipboard.setData(ClipboardData(text: widget.report.details));
-  }
-
+  /// Builds the report using the surrounding application's Material theme.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Icon(Icons.error_outline, color: colorScheme.error, size: 42),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Operit2 has stopped',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'A fatal error prevented this session from continuing.',
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: colorScheme.outlineVariant),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: SelectableText(
-                          widget.report.details,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(fontFamily: 'OperitTerminalMono'),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _copyDetails,
-                      icon: const Icon(Icons.copy),
-                      label: const Text('Copy details'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: SelectableText(
+          report.details,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontFamily: 'OperitTerminalMono',
           ),
         ),
       ),

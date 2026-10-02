@@ -163,8 +163,8 @@ class BrowserSessions {
     String? url,
     String? script,
     String payloadJson = '',
-  }) {
-    return _browser.submitBrowserCommand(
+  }) async {
+    final result = await _browser.submitBrowserCommand(
       command: RuntimeBrowserCommand(
         action: action,
         sessionId: sessionId,
@@ -175,6 +175,13 @@ class BrowserSessions {
         headers: const <String, String>{},
       ),
     );
+    if (!result.success) {
+      throw StateError(
+        'Browser command "$action" failed (session: $sessionId): '
+        '${result.error}',
+      );
+    }
+    return result;
   }
 
   /// Opens the generated reverse stream for compositor interactions.

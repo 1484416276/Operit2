@@ -10,6 +10,7 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../core/errors/UnhandledErrorReporter.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeBootstrapManager.dart';
@@ -335,20 +336,22 @@ class _OperitMaterialApp extends StatelessWidget {
           child: appContent,
         );
       },
-      home: RuntimeBrowserOwnerHost(
-        enabled: hostInteractionHostsEnabled,
-        child: WorkspaceWebVisitHost(
-          child: AppToastHost(
-            child: Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                Positioned.fill(child: child),
-                const TtsFloatingPanel(),
-                PluginLoadingOverlay(
-                  key: const ValueKey<String>('plugin-loading-overlay'),
-                  enabled: hostInteractionHostsEnabled,
-                ),
-              ],
+      home: UnhandledErrorHost(
+        child: RuntimeBrowserOwnerHost(
+          enabled: hostInteractionHostsEnabled,
+          child: WorkspaceWebVisitHost(
+            child: AppToastHost(
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  Positioned.fill(child: child),
+                  const TtsFloatingPanel(),
+                  PluginLoadingOverlay(
+                    key: const ValueKey<String>('plugin-loading-overlay'),
+                    enabled: hostInteractionHostsEnabled,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

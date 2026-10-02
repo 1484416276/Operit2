@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/core/errors/UnhandledErrorReporter.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/packages/market/MarketBrowseList.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
@@ -41,35 +39,6 @@ void main() {
     );
 
     expect(find.text('$prefix$emoji...'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('fatal host provides a Material root for the error screen', (
-    tester,
-  ) async {
-    const crashChannel = MethodChannel('operit/crash');
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      crashChannel,
-      (_) async => null,
-    );
-    addTearDown(() {
-      UnhandledErrorReporter.fatalError.value = null;
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        crashChannel,
-        null,
-      );
-    });
-    UnhandledErrorReporter.fatalError.value = FatalErrorReport(
-      source: 'test',
-      error: StateError('fatal test error'),
-      stackTrace: StackTrace.current,
-    );
-
-    await tester.pumpWidget(const FatalErrorHost(child: SizedBox.expand()));
-    await tester.pump();
-
-    expect(find.text('Operit2 has stopped'), findsOneWidget);
-    expect(find.byType(Scaffold), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

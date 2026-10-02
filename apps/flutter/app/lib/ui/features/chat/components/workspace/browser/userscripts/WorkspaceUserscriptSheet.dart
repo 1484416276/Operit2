@@ -37,13 +37,13 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
   bool _installingFromUrl = false;
   bool _installingFromWorkspace = false;
   final Set<String> _checkingUpdateIds = <String>{};
-  List<WorkspaceUserscriptMenuCommand> _menuCommands =
-      const <WorkspaceUserscriptMenuCommand>[];
+  late Future<List<WorkspaceUserscriptMenuCommand>> _menuCommandsFuture;
 
+  /// Starts the menu query for the asynchronous menu section.
   @override
   void initState() {
     super.initState();
-    _loadMenuCommands();
+    _menuCommandsFuture = widget.onLoadMenuCommands();
   }
 
   @override
@@ -54,6 +54,7 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
     super.dispose();
   }
 
+  /// Builds the userscript manager and its asynchronous page menu.
   @override
   Widget build(BuildContext context) {
     final scripts = widget.store.items;
@@ -142,11 +143,11 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
                 shrinkWrap: true,
                 children: <Widget>[
                   _UserscriptMenuCommandSection(
-                    commands: _menuCommands,
+                    commandsFuture: _menuCommandsFuture,
                     onRefresh: _loadMenuCommands,
                     onRun: (command) async {
                       await widget.onRunMenuCommand(command.index);
-                      await _loadMenuCommands();
+                      _loadMenuCommands();
                     },
                   ),
                   _UserscriptPageRunSection(pageRuns: pageRuns),
@@ -286,13 +287,13 @@ class _WorkspaceUserscriptSheetState extends State<WorkspaceUserscriptSheet> {
     setState(() => _showInstall = false);
   }
 
-  Future<void> _loadMenuCommands() async {
-    final commands = await widget.onLoadMenuCommands();
+  /// Starts an explicit menu refresh observed by the menu section.
+  void _loadMenuCommands() {
     if (!mounted) {
       return;
     }
     setState(() {
-      _menuCommands = commands;
+      _menuCommandsFuture = widget.onLoadMenuCommands();
     });
   }
 
@@ -413,16 +414,18 @@ class _UserscriptPageRunSection extends StatelessWidget {
 }
 
 class _UserscriptMenuCommandSection extends StatelessWidget {
+  /// Creates a page menu section that renders query failures explicitly.
   const _UserscriptMenuCommandSection({
-    required this.commands,
+    required this.commandsFuture,
     required this.onRefresh,
     required this.onRun,
   });
 
-  final List<WorkspaceUserscriptMenuCommand> commands;
-  final Future<void> Function() onRefresh;
+  final Future<List<WorkspaceUserscriptMenuCommand>> commandsFuture;
+  final VoidCallback onRefresh;
   final Future<void> Function(WorkspaceUserscriptMenuCommand command) onRun;
 
+  /// Renders loading, error, and successful menu query states separately.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -454,26 +457,56 @@ class _UserscriptMenuCommandSection extends StatelessWidget {
                   ),
                 ],
               ),
-              if (commands.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    '当前页面没有脚本菜单',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                )
-              else
-                for (final command in commands)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.play_arrow_outlined, size: 20),
-                    title: Text(command.caption),
-                    subtitle: Text(command.scriptName),
-                    onTap: () => onRun(command),
-                  ),
+              FutureBuilder<List<WorkspaceUserscriptMenuCommand>>(
+                future: commandsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: LinearProgressIndicator(),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '加载脚本菜单失败：${snapshot.error}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    );
+                  }
+                  final commands = snapshot.requireData;
+                  if (commands.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '当前页面没有脚本菜单',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    );
+                  }
+                  return Column(
+                    children: <Widget>[
+                      for (final command in commands)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.play_arrow_outlined,
+                            size: 20,
+                          ),
+                          title: Text(command.caption),
+                          subtitle: Text(command.scriptName),
+                          onTap: () => onRun(command),
+                        ),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),

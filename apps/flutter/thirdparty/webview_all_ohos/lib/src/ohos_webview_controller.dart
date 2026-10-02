@@ -772,7 +772,7 @@ class OhosWebViewController extends PlatformWebViewController {
     }
   }
 
-  @override
+  /// Invokes an asynchronous script through this controller's ArkWeb bridge.
   Future<Object?> callAsyncJavaScript(JavaScriptInvocationParams params) async {
     final int generation = _navigationGeneration;
     final Stopwatch stopwatch = Stopwatch()..start();
@@ -937,7 +937,7 @@ ${params.functionBody}
     }
   }
 
-  @override
+  /// Reports this controller's deterministic user-script injection capability.
   Future<bool> isUserScriptInjectionSupported(
     WebViewUserScriptInjectionTime injectionTime,
   ) async {

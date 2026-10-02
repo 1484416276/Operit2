@@ -22,6 +22,7 @@ const String _appStartupLogTag = 'AppStartup';
 /// Runs the application startup sequence with structured diagnostics.
 void main(List<String> arguments) async {
   late Zone startupZone;
+  var applicationStarted = false;
   await runZonedGuarded(
     () async {
       startupZone = Zone.current;
@@ -74,7 +75,10 @@ void main(List<String> arguments) async {
       );
       await DesktopWidgets.run(
         arguments: arguments,
-        widgetBuilder: (launch) => DesktopWidgetWindowApp(launch: launch),
+        widgetBuilder: (launch) {
+          applicationStarted = true;
+          return DesktopWidgetWindowApp(launch: launch);
+        },
         application: () async {
           final windowStopwatch = Stopwatch()..start();
           final windowArguments = await readOperitWindowArguments();
@@ -91,8 +95,10 @@ void main(List<String> arguments) async {
                 tag: _appStartupLogTag,
               );
               _runMainWindow();
+              applicationStarted = true;
             case final DetachedChatWindowArguments detachedArguments:
               _runDetachedChatWindow(detachedArguments);
+              applicationStarted = true;
           }
         },
       );
@@ -116,7 +122,9 @@ void main(List<String> arguments) async {
           error: error,
           stackTrace: stackTrace,
         );
-        runApp(const FatalErrorApplication());
+        if (!applicationStarted) {
+          runApp(const StartupErrorApplication());
+        }
       });
     },
   );
@@ -146,7 +154,7 @@ void _runMainWindow() {
         thickness: 36,
         quality: GlassQuality.standard,
       ),
-      child: const FatalErrorHost(child: OperitApp()),
+      child: const OperitApp(),
     ),
   );
 }
@@ -162,7 +170,7 @@ void _runDetachedChatWindow(DetachedChatWindowArguments arguments) {
         thickness: 36,
         quality: GlassQuality.standard,
       ),
-      child: FatalErrorHost(child: DetachedChatWindowApp(arguments: arguments)),
+      child: DetachedChatWindowApp(arguments: arguments),
     ),
   );
 }

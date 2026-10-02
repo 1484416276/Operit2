@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../utils/MCPCommandRunner.dart';
+import '../components/ExtensionScopeControls.dart';
 
 class MCPImportResult {
   const MCPImportResult({required this.message});
@@ -103,6 +104,12 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
                       },
               ),
               const SizedBox(height: 16),
+              Text(
+                _mode == _MCPImportMode.zip || _mode == _MCPImportMode.github
+                    ? '本地部署 MCP 仅保存在本设备，不参与空间同步。'
+                    : '远程 MCP 可选择设备空间；包含本地命令的配置仅限本设备。',
+              ),
+              const SizedBox(height: 12),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 160),
                 child: _mode == _MCPImportMode.config
@@ -223,6 +230,35 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
     });
   }
 
+  /// Uses structured MCP definitions to enforce the local deployment boundary.
+  Future<String?> _chooseConfigScope(String jsonConfig) async {
+    final document = jsonDecode(jsonConfig);
+    if (document is! Map<String, dynamic> ||
+        document['mcpServers'] is! Map<String, dynamic>) {
+      throw const FormatException('MCP 配置必须包含 mcpServers 对象');
+    }
+    final servers = document['mcpServers'] as Map<String, dynamic>;
+    if (servers.isEmpty) throw const FormatException('MCP 配置为空');
+    for (final definition in servers.values) {
+      if (definition is! Map<String, dynamic>)
+        throw const FormatException('MCP 服务必须是对象');
+      final command = definition['command'];
+      final url = definition['url'];
+      final local = command is String && command.trim().isNotEmpty;
+      final remote = url is String && url.trim().isNotEmpty;
+      if (local == remote)
+        throw const FormatException('MCP 服务必须且只能指定 command 或 url');
+    }
+    final hasLocal = servers.values.any(
+      (definition) =>
+          definition['command'] is String &&
+          (definition['command'] as String).trim().isNotEmpty,
+    );
+    if (hasLocal) return 'device';
+    if (!mounted) return null;
+    return chooseExtensionScope(context);
+  }
+
   Future<void> _mergeConfig() async {
     final jsonConfig = _mergeConfigController.text.trim();
     if (jsonConfig.isEmpty) {
@@ -234,20 +270,42 @@ class _MCPImportDialogState extends State<MCPImportDialog> {
       );
       return;
     }
+    String? scope;
+    try {
+      scope = await _chooseConfigScope(jsonConfig);
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+    if (scope == null) return;
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
       final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
-          .mergeConfigFromJson(jsonConfig: jsonConfig);
+          .mergeConfigFromJsonWithScope(jsonConfig: jsonConfig, scope: scope!);
       await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });
   }
 
   Future<void> _mergeFormConfig(String jsonConfig) async {
+    String? scope;
+    try {
+      scope = await _chooseConfigScope(jsonConfig);
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+    if (scope == null) return;
     await _run(() async {
       final lifecycles = _serverLifecyclesFromConfig(jsonConfig);
       final count = await widget.clients.permissionsMcpRuntimeMcpLocalServer
-          .mergeConfigFromJson(jsonConfig: jsonConfig);
+          .mergeConfigFromJsonWithScope(jsonConfig: jsonConfig, scope: scope!);
       await _applyImportedServerLifecycles(lifecycles);
       return '已导入 $count 个 MCP 服务';
     });

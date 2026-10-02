@@ -7,7 +7,7 @@ use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
     HttpRequestData, RuntimeStorageHost, SystemOperationHost,
 };
-use operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore;
+use operit_store::ExtensionStore::ExtensionStore;
 
 use crate::runtime_support::{
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
@@ -28,14 +28,12 @@ use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
     ToolValidationResult,
 };
-use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::DocumentConversionUtil::DocumentConversionUtil;
 use operit_util::FileUtils::FileUtils;
+use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
 use operit_util::OCRUtils::{OCRUtils, Quality as OCRQuality};
-use operit_util::RuntimeStorageLayout::{
-    EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, RUNTIME_ROOT_PATH_PREFIX, RUNTIME_SYNC_DIR_PATH,
-};
+use operit_util::RuntimeStorageLayout::RUNTIME_ROOT_PATH_PREFIX;
 
 use super::StandardWebVisitTool::StandardWebVisitTool;
 
@@ -83,7 +81,23 @@ impl StandardFileSystemTools {
         )
     }
 
-    /// Writes one text file through the synchronized plugin-config store or its mapped host.
+    /// Publishes extension file changes through their complete ownership records.
+    #[allow(non_snake_case)]
+    fn publishMappedChanges(&self, paths: &[&str]) -> Result<(), String> {
+        let mut storagePaths = Vec::new();
+        for path in paths {
+            let canonical = PathMapper::canonicalizeVfsPath(path)?;
+            if let Some(relative) = PathMapper::relativePath("/app/data/extensions", &canonical)? {
+                storagePaths.push(format!("runtime/extensions/{relative}"));
+            }
+        }
+        if storagePaths.is_empty() {
+            return Ok(());
+        }
+        ExtensionStore::new(self.runtimeStorageHost.clone()).publishFileChanges(&storagePaths)
+    }
+
+    /// Writes text then publishes the owning extension snapshot, including appended bytes.
     #[allow(non_snake_case)]
     fn writeMappedText(
         &self,
@@ -92,23 +106,11 @@ impl StandardFileSystemTools {
         content: &str,
         append: bool,
     ) -> Result<(), String> {
-        match pluginConfigStoragePath(path)? {
-            Some(storagePath) => {
-                let store = RuntimeFileSyncStore::new(
-                    self.runtimeStorageHost.clone(),
-                    RUNTIME_SYNC_DIR_PATH,
-                );
-                if append {
-                    store.appendBytes(&storagePath, content.as_bytes())
-                } else {
-                    store.writeBytes(&storagePath, content.as_bytes())
-                }
-            }
-            None => vfs.writeFile(path, content, append),
-        }
+        vfs.writeFile(path, content, append)?;
+        self.publishMappedChanges(&[path])
     }
 
-    /// Writes one binary file through the synchronized plugin-config store or its mapped host.
+    /// Writes binary data then publishes the owning extension snapshot.
     #[allow(non_snake_case)]
     fn writeMappedBytes(
         &self,
@@ -116,13 +118,8 @@ impl StandardFileSystemTools {
         path: &str,
         content: &[u8],
     ) -> Result<(), String> {
-        match pluginConfigStoragePath(path)? {
-            Some(storagePath) => {
-                RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
-                    .writeBytes(&storagePath, content)
-            }
-            None => vfs.writeFileBytes(path, content),
-        }
+        vfs.writeFileBytes(path, content)?;
+        self.publishMappedChanges(&[path])
     }
 
     #[allow(non_snake_case)]
@@ -279,13 +276,11 @@ impl StandardFileSystemTools {
                             content,
                         }),
                     ),
-                    Err(error) => {
-                        toolError(
-                            tool,
-                            String::new(),
-                            format!("Error decoding text file: {error}"),
-                        )
-                    }
+                    Err(error) => toolError(
+                        tool,
+                        String::new(),
+                        format!("Error decoding text file: {error}"),
+                    ),
                 }
             }
             Ok(existence) if !existence.exists => {
@@ -625,7 +620,8 @@ impl StandardFileSystemTools {
         };
         let isTruncated = partContent.len() > ToolExecutionLimits::MAX_FILE_READ_BYTES;
         if isTruncated {
-            partContent = utf8Prefix(&partContent, ToolExecutionLimits::MAX_FILE_READ_BYTES).to_string();
+            partContent =
+                utf8Prefix(&partContent, ToolExecutionLimits::MAX_FILE_READ_BYTES).to_string();
         }
         let mut numbered = addLineNumbers(&partContent, startIndex, totalLines);
         if isTruncated {
@@ -734,7 +730,10 @@ impl StandardFileSystemTools {
         let recursive = parameterBool(tool, "recursive");
         let vfs = self.vfs();
 
-        match vfs.deleteFile(&path, recursive) {
+        match vfs
+            .deleteFile(&path, recursive)
+            .and_then(|_| self.publishMappedChanges(&[&path]))
+        {
             Ok(()) => successData(
                 tool,
                 fileOperationResult(
@@ -778,7 +777,10 @@ impl StandardFileSystemTools {
         let destPath = parameterValue(tool, "destination");
         let vfs = self.vfs();
 
-        match vfs.moveFile(&sourcePath, &destPath) {
+        match vfs
+            .moveFile(&sourcePath, &destPath)
+            .and_then(|_| self.publishMappedChanges(&[&sourcePath, &destPath]))
+        {
             Ok(()) => successData(
                 tool,
                 fileOperationResult(
@@ -803,7 +805,10 @@ impl StandardFileSystemTools {
         let recursive = parameterBoolDefaultTrue(tool, "recursive");
         let vfs = self.vfs();
 
-        match vfs.copyFile(&sourcePath, &destPath, recursive) {
+        match vfs
+            .copyFile(&sourcePath, &destPath, recursive)
+            .and_then(|_| self.publishMappedChanges(&[&destPath]))
+        {
             Ok(()) => successData(
                 tool,
                 fileOperationResult(
@@ -1472,25 +1477,6 @@ pub enum FileSystemToolOperation {
     UnzipFiles,
     OpenFile,
     ShareFile,
-}
-
-/// Maps one ToolPkg or JS plugin configuration VFS file into runtime storage.
-#[allow(non_snake_case)]
-fn pluginConfigStoragePath(vfsPath: &str) -> Result<Option<String>, String> {
-    let relativeRoot = EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH
-        .strip_prefix(RUNTIME_ROOT_PATH_PREFIX)
-        .expect("plugin configuration layout must be below runtime");
-    let vfsRoot = PathMapper::joinVfsPath("/app/data", relativeRoot)?;
-    let canonicalPath = PathMapper::canonicalizeVfsPath(vfsPath)?;
-    let Some(relativePath) = PathMapper::relativePath(&vfsRoot, &canonicalPath)? else {
-        return Ok(None);
-    };
-    if relativePath.is_empty() {
-        return Err("plugin configuration writes must identify a file".to_string());
-    }
-    Ok(Some(format!(
-        "{EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH}/{relativePath}"
-    )))
 }
 
 impl ToolExecutor for FileSystemToolExecutor {

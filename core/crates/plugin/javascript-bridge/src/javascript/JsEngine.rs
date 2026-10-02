@@ -171,26 +171,29 @@ impl JsEngineWorker {
         let wakeScheduler = defaultHostRuntimeTaskSchedulerHost();
         let wakeSlot = backgroundWake.clone();
         let wakeAlive = alive.clone();
-        let wake: JsBackgroundWake = Arc::new(move || {
-            if !wakeAlive.load(Ordering::Acquire) {
-                return;
-            }
-            requested.store(true, Ordering::Release);
-            if scheduled.swap(true, Ordering::AcqRel) {
-                return;
-            }
-            let taskRuntimeHost = wakeRuntimeHost.clone();
-            let taskScheduler = wakeScheduler.clone();
-            let taskScheduled = scheduled.clone();
-            let taskRequested = requested.clone();
-            let taskWakeSlot = wakeSlot.clone();
-            let taskAlive = wakeAlive.clone();
-            let task: operit_host_api::HostRuntimeAsyncTask = Box::new(move || Box::pin(async move {
-                if !taskAlive.load(Ordering::Acquire) {
+        let wake: JsBackgroundWake =
+            Arc::new(move || {
+                if !wakeAlive.load(Ordering::Acquire) {
                     return;
                 }
-                taskRequested.store(false, Ordering::Release);
-                let result = taskRuntimeHost
+                requested.store(true, Ordering::Release);
+                if scheduled.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let taskRuntimeHost = wakeRuntimeHost.clone();
+                let taskScheduler = wakeScheduler.clone();
+                let taskScheduled = scheduled.clone();
+                let taskRequested = requested.clone();
+                let taskWakeSlot = wakeSlot.clone();
+                let taskAlive = wakeAlive.clone();
+                let task: operit_host_api::HostRuntimeAsyncTask =
+                    Box::new(move || {
+                        Box::pin(async move {
+                            if !taskAlive.load(Ordering::Acquire) {
+                                return;
+                            }
+                            taskRequested.store(false, Ordering::Release);
+                            let result = taskRuntimeHost
                     .executeHostJavaScriptRuntimeStateAsyncTask(
                         stateHandle,
                         60_000,
@@ -203,26 +206,45 @@ impl JsEngineWorker {
                         })),
                     )
                     .await;
-                if let Err(error) = result {
-                    if !taskAlive.load(Ordering::Acquire) {
-                        return;
-                    }
-                    AppLogger::e(TAG, &format!("detached JavaScript execution failed: {error}"));
+                            if let Err(error) = result {
+                                if !taskAlive.load(Ordering::Acquire) {
+                                    return;
+                                }
+                                AppLogger::e(
+                                    TAG,
+                                    &format!("detached JavaScript execution failed: {error}"),
+                                );
+                            }
+                            taskScheduled.store(false, Ordering::Release);
+                            if taskRequested.swap(false, Ordering::AcqRel) {
+                                if let Some(wake) = taskWakeSlot
+                                    .lock()
+                                    .expect("background wake mutex poisoned")
+                                    .clone()
+                                {
+                                    wake();
+                                }
+                            }
+                        })
+                    });
+                if let Err(error) =
+                    taskScheduler.scheduleHostRuntimeAsyncTask("operit-js-detached", task)
+                {
+                    scheduled.store(false, Ordering::Release);
+                    AppLogger::e(
+                        TAG,
+                        &format!("schedule detached JavaScript execution failed: {error}"),
+                    );
                 }
-                taskScheduled.store(false, Ordering::Release);
-                if taskRequested.swap(false, Ordering::AcqRel) {
-                    if let Some(wake) = taskWakeSlot.lock().expect("background wake mutex poisoned").clone() {
-                        wake();
-                    }
-                }
-            }));
-            if let Err(error) = taskScheduler.scheduleHostRuntimeAsyncTask("operit-js-detached", task) {
-                scheduled.store(false, Ordering::Release);
-                AppLogger::e(TAG, &format!("schedule detached JavaScript execution failed: {error}"));
-            }
-        });
-        *backgroundWake.lock().expect("background wake mutex poisoned") = Some(wake);
-        Self { runtimeHost, stateHandle, alive }
+            });
+        *backgroundWake
+            .lock()
+            .expect("background wake mutex poisoned") = Some(wake);
+        Self {
+            runtimeHost,
+            stateHandle,
+            alive,
+        }
     }
 
     /// Executes one JavaScript request through the host-owned state executor.
@@ -1122,10 +1144,8 @@ impl JsEngineState {
             // Async Compose renders and actions need the same API contract as synchronous calls.
             let apiVersion = match self.toolPkgContext.as_ref() {
                 Some(context) => context.api_version.clone(),
-                None => {
-                    operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
-                        .to_string()
-                }
+                None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
+                    .to_string(),
             };
             effectiveParams.insert(
                 "__operit_toolpkg_api_version".to_string(),
@@ -1291,9 +1311,8 @@ impl JsEngineState {
         // Standalone scripts use the current SDK contract; ToolPkg engines retain their manifest contract.
         let apiVersion = match self.toolPkgContext.as_ref() {
             Some(context) => context.api_version.clone(),
-            None => {
-                operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION.to_string()
-            }
+            None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
+                .to_string(),
         };
         effectiveParams.insert(
             "__operit_toolpkg_api_version".to_string(),
@@ -1538,7 +1557,9 @@ impl JsEngineState {
                     self.runJavaScriptJobs()?;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => return Err("JavaScript asynchronous callback queue disconnected".to_string()),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err("JavaScript asynchronous callback queue disconnected".to_string())
+                }
             }
         }
         for callId in ids {
@@ -1558,15 +1579,14 @@ impl JsEngineState {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(
-                        "JavaScript asynchronous callback queue disconnected".to_string(),
-                    )
+                    return Err("JavaScript asynchronous callback queue disconnected".to_string())
                 }
             }
         }
         let activeIds = self
             .evalJavaScriptString("JSON.stringify(typeof __operitGetDetachedCallIds === 'function' ? __operitGetDetachedCallIds() : [])")?;
-        let activeIds: Vec<String> = serde_json::from_str(&activeIds).map_err(|error| error.to_string())?;
+        let activeIds: Vec<String> =
+            serde_json::from_str(&activeIds).map_err(|error| error.to_string())?;
         let completedCallIds = self
             .detachedCallContexts
             .keys()
@@ -1592,7 +1612,8 @@ impl JsEngineState {
         &mut self,
         pending: &JsPendingScriptExecution,
     ) -> Result<(), String> {
-        let callIdJson = serde_json::to_string(&pending.callId).map_err(|error| error.to_string())?;
+        let callIdJson =
+            serde_json::to_string(&pending.callId).map_err(|error| error.to_string())?;
         let detached = self.evalJavaScriptString(&format!(
             "JSON.stringify((typeof __operitGetCallState === 'function' && __operitGetCallState({callIdJson}))?.detached === true)"
         ))?;
@@ -1822,6 +1843,16 @@ impl JsEngineState {
                 }),
             ),
             (
+                "__operitNativeGetScopedPluginConfigDir",
+                Arc::new(|arguments| {
+                    let [ownerId, pluginId] = exactHostJavaScriptArguments(
+                        "__operitNativeGetScopedPluginConfigDir",
+                        arguments,
+                    )?;
+                    Ok(nativeGetScopedPluginConfigDirString(ownerId, pluginId))
+                }),
+            ),
+            (
                 "__operitNativeIsPackageImported",
                 Arc::new(|arguments| {
                     let [packageName] =
@@ -1970,7 +2001,11 @@ impl JsEngineState {
         let backgroundWake = self.backgroundWake.clone();
         let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
             let _ = asyncCallbackSender.send(callback);
-            if let Some(wake) = backgroundWake.lock().expect("background wake mutex poisoned").clone() {
+            if let Some(wake) = backgroundWake
+                .lock()
+                .expect("background wake mutex poisoned")
+                .clone()
+            {
                 wake();
             }
         });
@@ -2054,9 +2089,13 @@ impl JsEngineState {
                             "__operitNativeInvokeToolPkgIpcAsync",
                             arguments,
                         )?;
-                    let context = ipcContext.as_ref().ok_or_else(|| HostError::new("ToolPkg IPC requires a bound package context"))?;
+                    let context = ipcContext.as_ref().ok_or_else(|| {
+                        HostError::new("ToolPkg IPC requires a bound package context")
+                    })?;
                     if packageTarget != context.container_package_name {
-                        return Err(HostError::new("Package-private IPC cannot target another package"));
+                        return Err(HostError::new(
+                            "Package-private IPC cannot target another package",
+                        ));
                     }
                     dispatchToolPkgIpcAsync(
                         None,
@@ -2077,7 +2116,10 @@ impl JsEngineState {
                 "__operitNativeCallDependencyAsync",
                 Arc::new(move |arguments| {
                     let [callbackId, packageTarget, methodName, payloadJson] =
-                        exactHostJavaScriptArguments("__operitNativeCallDependencyAsync", arguments)?;
+                        exactHostJavaScriptArguments(
+                            "__operitNativeCallDependencyAsync",
+                            arguments,
+                        )?;
                     let context = dependencyContext.as_ref().ok_or_else(|| {
                         HostError::new("Dependency calls require a bound ToolPkg context")
                     })?;
@@ -2716,9 +2758,8 @@ fn nativeCallToolStrings(toolType: String, toolName: String, paramsJson: String)
 
 #[allow(non_snake_case)]
 fn nativeSendIntermediateResultString(callId: String, result: String) {
-    let detachedCallback = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| {
-        callbacks.borrow().get(&callId).cloned()
-    });
+    let detachedCallback = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS
+        .with(|callbacks| callbacks.borrow().get(&callId).cloned());
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         if let Some(listener) = listener.borrow().as_ref() {
             listener.on_intermediate_result(&callId, &result);
@@ -2933,6 +2974,17 @@ fn nativeSetEnvsStrings(valuesJson: String) -> String {
     String::new()
 }
 
+/// Resolves package-owned configuration without altering the public one-argument API.
+#[allow(non_snake_case)]
+fn nativeGetScopedPluginConfigDirString(ownerId: String, pluginId: String) -> String {
+    match currentExecutionHost().and_then(|host| host.scoped_plugin_config_dir(&ownerId, &pluginId))
+    {
+        Ok(path) => path,
+        Err(error) => buildJsExecutionErrorPayload(&error),
+    }
+}
+
+/// Resolves explicit device configuration for the original native entry point.
 #[allow(non_snake_case)]
 fn nativeGetPluginConfigDirString(pluginId: String) -> String {
     currentExecutionHost()

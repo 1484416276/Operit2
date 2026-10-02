@@ -96,19 +96,20 @@ impl Drop for OperitFlutterBridge {
                     }
                 }
             }
-            if let Ok(coreApplication) = self.coreApplication.get_mut() {
-                if let Some(coreApplication) = coreApplication.take() {
-                    coreApplication.shutdownNow();
-                }
-            }
             self.watchChannel.close();
-            if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
-                for (_, cancelSender) in subscriptions.drain() {
-                    let _ = cancelSender.send(());
-                }
-            }
-            crate::PlatformRuntimeFactory::release_runtime_host();
         }
+        if let Ok(coreApplication) = self.coreApplication.get_mut() {
+            if let Some(coreApplication) = coreApplication.take() {
+                coreApplication.shutdownNow();
+            }
+        }
+        if let Ok(mut subscriptions) = self.watchSubscriptions.lock() {
+            for (_, cancelSender) in subscriptions.drain() {
+                let _ = cancelSender.send(());
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::PlatformRuntimeFactory::release_runtime_host();
     }
 }
 

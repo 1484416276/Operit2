@@ -163,6 +163,11 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         ))
     }
 
+    /// Resolves scoped configuration through the explicit test contract.
+    fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
+        self.plugin_config_dir(plugin_id)
+    }
+
     /// Records direct ToolPkg text resource reads rejected by this test host.
     fn read_toolpkg_text_resource(
         &self,
@@ -1752,37 +1757,84 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
 #[test]
 fn render_planask_through_async_compose_host() {
     ensure_test_runtime_root();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4).unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+        .unwrap();
     let dist = root.join("plugins/packages/buildin/plan_mode/dist");
     let script = std::fs::read_to_string(dist.join("ui/planask/index.ui.js")).unwrap();
     let mut resources = BTreeMap::new();
     collect_message_insert_text_resources(&dist, &dist, &mut resources);
     let mut params = testParams();
-    params.insert("packageName".into(), serde_json::json!("com.operit.plan_mode_bundle"));
-    params.insert("toolPkgId".into(), serde_json::json!("com.operit.plan_mode_bundle"));
-    params.insert("__operit_toolpkg_runtime_kind".into(), serde_json::json!("ui"));
-    params.insert("__operit_script_screen".into(), serde_json::json!("dist/ui/planask/index.ui.js"));
+    params.insert(
+        "packageName".into(),
+        serde_json::json!("com.operit.plan_mode_bundle"),
+    );
+    params.insert(
+        "toolPkgId".into(),
+        serde_json::json!("com.operit.plan_mode_bundle"),
+    );
+    params.insert(
+        "__operit_toolpkg_runtime_kind".into(),
+        serde_json::json!("ui"),
+    );
+    params.insert(
+        "__operit_script_screen".into(),
+        serde_json::json!("dist/ui/planask/index.ui.js"),
+    );
     params.insert("routeInstanceId".into(), serde_json::json!("test-planask"));
     params.insert("state".into(), serde_json::json!({"xmlContent": "<planask><title>Plan</title><question id=\"q1\"><title>Choose</title><option id=\"a\">A</option><option id=\"b\">B</option></question></planask>"}));
     params.insert("memo".into(), serde_json::json!({}));
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let raw = expect_js_output(runtime.block_on(engine.execute_compose_dsl_script_async(script, params.clone(), BTreeMap::new(), Arc::new(resources))), "planask async render");
+    let raw = expect_js_output(
+        runtime.block_on(engine.execute_compose_dsl_script_async(
+            script,
+            params.clone(),
+            BTreeMap::new(),
+            Arc::new(resources),
+        )),
+        "planask async render",
+    );
     let result: Value = serde_json::from_str(&raw).unwrap();
-    assert!(result["tree"].is_object(), "Unexpected render result: {raw}");
+    assert!(
+        result["tree"].is_object(),
+        "Unexpected render result: {raw}"
+    );
     params.insert("state".into(), result["state"].clone());
     params.insert("memo".into(), result["memo"].clone());
-    let action = result["tree"]["props"]["onLoad"]["__actionId"].as_str().unwrap().to_string();
+    let action = result["tree"]["props"]["onLoad"]["__actionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let intermediate = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = intermediate.clone();
-    let raw = expect_js_output(runtime.block_on(engine.dispatch_compose_dsl_action_result_async(action, None, params, BTreeMap::new(), Some(Arc::new(move |value| captured.lock().unwrap().push(value))))), "planask onLoad");
+    let raw = expect_js_output(
+        runtime.block_on(engine.dispatch_compose_dsl_action_result_async(
+            action,
+            None,
+            params,
+            BTreeMap::new(),
+            Some(Arc::new(move |value| captured.lock().unwrap().push(value))),
+        )),
+        "planask onLoad",
+    );
     let result: Value = serde_json::from_str(&raw).unwrap();
-    assert!(result["tree"].is_object(), "Unexpected action result: {raw}");
+    assert!(
+        result["tree"].is_object(),
+        "Unexpected action result: {raw}"
+    );
     let intermediate = intermediate.lock().unwrap();
-    assert!(!intermediate.is_empty(), "onLoad must deliver intermediate renders");
+    assert!(
+        !intermediate.is_empty(),
+        "onLoad must deliver intermediate renders"
+    );
     for raw in intermediate.iter() {
         let result: Value = serde_json::from_str(raw).unwrap();
-        assert!(result["tree"].is_object(), "Unexpected intermediate result: {raw}");
+        assert!(
+            result["tree"].is_object(),
+            "Unexpected intermediate result: {raw}"
+        );
     }
     engine.destroy();
 }
@@ -1808,8 +1860,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
         exports.default = Screen;
     "#;
     let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
-    let runtime =
-        tokio::runtime::Runtime::new().expect("JavaScript async test runtime must start");
+    let runtime = tokio::runtime::Runtime::new().expect("JavaScript async test runtime must start");
     let params = testParams();
     let renderedRaw = expect_js_output(
         runtime.block_on(engine.execute_compose_dsl_script_async(

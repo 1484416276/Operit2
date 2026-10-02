@@ -23,8 +23,9 @@ impl HostRuntimePeerService {
         Ok(())
     }
 
-    pub(super) async fn startAvailabilityWorker(&self) -> Result<(), CoreLinkError> {
-        let mut worker = self.state.availability.lock().await;
+    /// Starts authenticated peer probes independently of inbound listening support.
+    pub(super) fn startAvailabilityWorker(&self) -> Result<(), CoreLinkError> {
+        let mut worker = self.state.availability.lock().map_err(|_| error("Peer availability lock poisoned"))?;
         if worker.is_some() { return Ok(()); }
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.clone()
             .ok_or_else(|| error("Host scheduler is not installed"))?;
@@ -60,9 +61,10 @@ impl HostRuntimePeerService {
         Ok(())
     }
 
+    /// Cancels probes and waits without retaining the worker state lock.
     pub(super) async fn stopAvailabilityWorker(&self) {
-        let mut worker = self.state.availability.lock().await;
-        if let Some(AvailabilityWorker { stop, done }) = worker.take() {
+        let worker = self.state.availability.lock().unwrap().take();
+        if let Some(AvailabilityWorker { stop, done }) = worker {
             let _ = stop.send(());
             let _ = done.await;
         }

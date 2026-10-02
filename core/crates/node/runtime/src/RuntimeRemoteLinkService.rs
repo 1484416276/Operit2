@@ -284,8 +284,7 @@ impl RuntimeRemoteLinkService {
         Err("Device space changed while reading its overview".to_string())
     }
 
-    /// Observes persistent Space changes and live Peer Links without UI polling.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Observes persistent Space changes and live Peer Links through the shared Host scheduler.
     pub fn deviceSpaceSnapshotFlow(&self) -> Result<StateFlow<RuntimeDeviceSpaceSnapshot>, String> {
         let (changes, mut changed) = tokio::sync::mpsc::channel(1);
         let mutationSubscription = subscribeSyncMutations(move || {

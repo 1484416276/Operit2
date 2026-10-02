@@ -4,17 +4,17 @@ use crate::core::events::RuntimeEvent::RuntimeEvent;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
+use crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
-use crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge;
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
-    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost, setDefaultSerialPortHost,
-    HostManager,
+    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultSerialPortHost,
+    setDefaultWebSocketHost, HostManager,
 };
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
@@ -427,6 +427,75 @@ impl OperitApplication {
         SkillRepository::getInstance(&self.hostManager, self.toolHandler.runtimeSupport())
     }
 
+    /// Observes extension catalog changes from both local operations and device-space synchronization.
+    #[allow(non_snake_case)]
+    pub fn extensionCatalogRevisionFlow(&self) -> StateFlow<i64> {
+        operit_store::ExtensionStore::catalogRevisionFlow()
+    }
+
+    /// Lists explicit installation scopes, including subpackages that inherit their container scope.
+    #[allow(non_snake_case)]
+    pub fn getExtensionScopes(&self, kind: String) -> Result<BTreeMap<String, String>, String> {
+        match kind.as_str() {
+            "package" => {}
+            "skill" => {
+                self.skillRepository().getAvailableSkillPackages();
+            }
+            "mcp" => {}
+            _ => return Err(format!("Unknown extension kind: {kind}")),
+        }
+        let mut result = BTreeMap::new();
+        for record in operit_store::ExtensionStore::ExtensionStore::default().records(&kind)? {
+            let scope = if record
+                .settings
+                .get("builtin")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                "builtin".to_string()
+            } else {
+                record.scope.clone()
+            };
+            if result.insert(record.id.clone(), scope.clone()).is_some() {
+                return Err(format!(
+                    "Extension ownership conflict: {} exists in both locations",
+                    record.id
+                ));
+            }
+            if kind == "package" {
+                let members: Vec<String> =
+                    serde_json::from_value(record.settings["members"].clone())
+                        .map_err(|e| e.to_string())?;
+                for member in members {
+                    if member != record.id {
+                        result.insert(member, scope.clone());
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Moves an existing extension; local MCP is rejected by the owning store before content changes.
+    #[allow(non_snake_case)]
+    pub fn setExtensionScope(&self, kind: String, id: String, scope: String) -> Result<(), String> {
+        match kind.as_str() {
+            "package" => self
+                .packageManager()
+                .lock()
+                .map_err(|e| e.to_string())?
+                .setPackageScope(&id, &scope),
+            "skill" => {
+                self.skillRepository().getAvailableSkillPackages();
+                operit_store::ExtensionStore::ExtensionStore::default()
+                    .moveScope(&kind, &id, &scope)
+            }
+            "mcp" => operit_store::ExtensionStore::ExtensionStore::default()
+                .moveScope(&kind, &id, &scope),
+            _ => Err(format!("Unknown extension kind: {kind}")),
+        }
+    }
+
     /// Creates a user-markdown repository using this runtime's configured storage host.
     #[allow(non_snake_case)]
     pub fn userMarkdownRepository(&self, ownerKey: String) -> UserMarkdownRepository {
@@ -471,7 +540,9 @@ impl OperitApplication {
         }
         let normalizedSha256 = expectedSha256.trim().to_ascii_lowercase();
         if normalizedSha256.len() != 64
-            || !normalizedSha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !normalizedSha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("Market artifact SHA-256 is invalid".to_string());
         }
@@ -794,6 +865,17 @@ impl OperitApplication {
         store
             .appendOperations(&persistentOperations)
             .map_err(|error| error.to_string())?;
+        if appliedPersistentOperations.iter().any(|operation| {
+            operation.domain == RUNTIME_FILE_SYNC_DOMAIN
+                && operation.entityId.starts_with("runtime/extensions/space/")
+        }) {
+            self.packageManager()
+                .lock()
+                .map_err(|e| e.to_string())?
+                .loadAvailablePackages();
+            self.refreshSpaceMcpDefinitions()?;
+            operit_store::ExtensionStore::notifyCatalogChanged();
+        }
         self.refreshSynchronizedChatFlows(&synchronizedChatIds)?;
         AppLogger::trace(
             "CoreSyncTrace",
@@ -810,6 +892,54 @@ impl OperitApplication {
             ),
         );
         Ok(serde_json::json!({ "applied": applied }))
+    }
+
+    /// Stops removed or disabled MCP registrations and schedules only shared remote definitions.
+    fn refreshSpaceMcpDefinitions(&self) -> Result<(), String> {
+        let local = operit_tools::tools::mcp_runtime::MCPLocalServer::MCPLocalServer::getInstance(
+            &self.hostManager,
+        );
+        let definitions = local.getAllMCPServers();
+        let manager =
+            operit_tools::tools::mcp::MCPManager::MCPManager::getInstance(self.hostManager.clone());
+        let bridge = operit_tools::tools::mcp_runtime::plugins::MCPBridge::MCPBridge::getInstance(
+            &self.hostManager,
+        );
+        for id in manager.getRegisteredServers().keys() {
+            if definitions.get(id).is_none_or(|server| server.disabled) {
+                manager.unregisterServer(id);
+                bridge.unregisterMcpService(id);
+            }
+        }
+        let records = operit_store::ExtensionStore::ExtensionStore::default().records("mcp")?;
+        let sharedIds = records
+            .into_iter()
+            .filter(|record| {
+                record.scope == "space"
+                    && definitions
+                        .get(&record.id)
+                        .is_some_and(|server| !server.disabled)
+            })
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        if sharedIds.is_empty() {
+            return Ok(());
+        }
+        let host = self.hostManager.clone();
+        self.hostManager
+            .hostRuntimeTaskSchedulerHost
+            .as_ref()
+            .ok_or("Runtime scheduler is required to refresh shared MCP")?
+            .scheduleHostRuntimeTask(
+                "operit-shared-mcp-refresh",
+                Box::new(move || {
+                    let starter = MCPStarter::new(host);
+                    for id in sharedIds {
+                        starter.startPlugin(&id, |_| {});
+                    }
+                }),
+            )
+            .map_err(|e| e.to_string())
     }
 
     /// Applies one route-transported Binding operation without moving persistent sync clocks.
@@ -1014,13 +1144,17 @@ impl OperitApplication {
                 let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
                     "RuntimeStorageHost is not registered for persistent sync".to_string()
                 })?;
+                let extensions =
+                    operit_store::ExtensionStore::ExtensionStore::new(storageHost.clone());
+                let previous = extensions.beforeSync(&operation.entityId)?;
                 RuntimeFileSyncStore::applySyncedOperation(
                     storageHost,
                     RUNTIME_SYNC_DIR_PATH.to_string(),
                     &operation.entityId,
                     &operation.operation,
                     operation.payload.clone(),
-                )
+                )?;
+                extensions.afterSync(&operation.entityId, &operation.operation, previous)
             }
             (domain, entityType, operationName) => Err(format!(
                 "unsupported sync operation: {domain}/{entityType}/{operationName}"

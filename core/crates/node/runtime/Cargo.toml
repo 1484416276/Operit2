@@ -8,7 +8,7 @@ publish.workspace = true
 [features]
 default = ["full"]
 peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
-full = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
+full = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util"]
 test-support = []
 
 [dependencies]
@@ -34,8 +34,9 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
 
-operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp"] }
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp", "http"] }

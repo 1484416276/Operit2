@@ -1,3 +1,4 @@
+use operit_store::ExtensionStore::ExtensionStore;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -46,14 +47,73 @@ impl SkillManager {
         skillsDir.to_string_lossy().to_string()
     }
 
-    /// Scans the skills directory and returns loaded packages plus load errors.
+    /// Scans both locations using the same skill parser and rejects conflicting names explicitly.
     #[allow(non_snake_case)]
     pub fn refreshAvailableSkills(
         &self,
     ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
+        let mut skills = BTreeMap::new();
+        let mut errors = BTreeMap::new();
+        let mut conflicts = BTreeSet::new();
+        for scope in ["device", "space"] {
+            let root =
+                ExtensionStore::root("skill", scope).expect("Skill scope constants are valid");
+            let directory = self.paths.runtime_storage_path(&root);
+            let (scanned, scanErrors) = self.scanSkillsDirectory(directory);
+            errors.extend(scanErrors);
+            for (name, skill) in scanned {
+                if skills.contains_key(&name) || conflicts.contains(&name) {
+                    skills.remove(&name);
+                    conflicts.insert(name.clone());
+                    errors.insert(
+                        name.clone(),
+                        format!("Skill ownership conflict: {name} exists in both locations"),
+                    );
+                    continue;
+                }
+                let registration = (|| -> Result<(), String> {
+                    let source = skill
+                        .directory
+                        .file_name()
+                        .ok_or("Skill directory has no name")?
+                        .to_string_lossy();
+                    if scope == "device" {
+                        ExtensionStore::default().registerDevice(
+                            "skill",
+                            &name,
+                            &source,
+                            serde_json::json!({"visible": true}),
+                        )?;
+                    }
+                    let record = ExtensionStore::default().record("skill", &name)?;
+                    if record.scope != scope || record.sourceName != source {
+                        return Err(
+                            "Skill content does not match its registered location".to_string()
+                        );
+                    }
+                    Ok(())
+                })();
+                match registration {
+                    Ok(()) => {
+                        skills.insert(name, skill);
+                    }
+                    Err(error) => {
+                        errors.insert(name, error);
+                    }
+                }
+            }
+        }
+        (skills, errors)
+    }
+
+    /// Scans the skills directory and returns loaded packages plus load errors.
+    #[allow(non_snake_case)]
+    fn scanSkillsDirectory(
+        &self,
+        skillsDir: PathBuf,
+    ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
         let mut availableSkills = BTreeMap::new();
         let mut skillLoadErrors = BTreeMap::new();
-        let skillsDir = self.getSkillsRootDir();
         let skillsPath = hostPath(&skillsDir);
 
         if let Err(error) = self.fileSystemHost.makeDirectory(&skillsPath, true) {
@@ -228,6 +288,11 @@ impl SkillManager {
         skillName: &str,
         runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> Result<SkillPackage, String> {
+        if self.getAvailableSkills().contains_key(skillName) {
+            return Err(format!(
+                "Skill already exists in an installation location: {skillName}"
+            ));
+        }
         let skillAssets = runtimeSupport
             .bundledExternalSkillAssets()
             .iter()
@@ -284,7 +349,13 @@ impl SkillManager {
         &self,
         runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> Result<SkillPackage, String> {
-        self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME, runtimeSupport)
+        let skills = self.getAvailableSkills();
+        match skills.get(QUICK_PLUGIN_CREATOR_SKILL_NAME) {
+            Some(skill) => Ok(skill.clone()),
+            None => {
+                self.importBundledExternalSkill(QUICK_PLUGIN_CREATOR_SKILL_NAME, runtimeSupport)
+            }
+        }
     }
 
     /// Reads the SKILL.md content for one installed skill.
@@ -340,8 +411,8 @@ impl SkillManager {
         let Some(skill) = skills.get(skillName) else {
             return false;
         };
-        self.fileSystemHost
-            .deleteFile(&hostPath(&skill.directory), true)
+        ExtensionStore::default()
+            .delete("skill", &skill.name)
             .is_ok()
     }
 
@@ -496,6 +567,9 @@ impl SkillManager {
         } else {
             baseName.trim().to_string()
         };
+        if self.getAvailableSkills().contains_key(&finalDirName) {
+            return format!("Skill already exists in an installation location: {finalDirName}");
+        }
         let finalDir = skillsRoot.join(&finalDirName);
         let finalDirPath = hostPath(&finalDir);
         let finalDirInfo = match self.fileSystemHost.fileExists(&finalDirPath) {

@@ -206,28 +206,37 @@ pub const RUNTIME_SHARE_IMAGE_EXPORTS: RuntimeStoragePathDefinition =
     );
 pub const RUNTIME_SHARE_IMAGE_EXPORTS_DIR_PATH: &str = RUNTIME_SHARE_IMAGE_EXPORTS.path;
 
-pub const EXTENSIONS_SKILLS: RuntimeStoragePathDefinition =
-    RuntimeStoragePathDefinition::tree("runtime/extensions/skills", RuntimeStorageOwnership::Space);
+/// Owns portable extension installations and configurations shared with the device space.
+pub const EXTENSIONS_SPACE: RuntimeStoragePathDefinition =
+    RuntimeStoragePathDefinition::tree("runtime/extensions/space", RuntimeStorageOwnership::Space);
+/// Owns device-local extension installations, settings and runtime state.
+pub const EXTENSIONS_DEVICE: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/extensions/device",
+    RuntimeStorageOwnership::CoreNode,
+);
+pub const EXTENSIONS_SKILLS: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/extensions/device/skills",
+    RuntimeStorageOwnership::CoreNode,
+);
 pub const EXTENSIONS_SKILLS_DIR_PATH: &str = EXTENSIONS_SKILLS.path;
 pub const EXTENSIONS_PACKAGES: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
-    "runtime/extensions/packages",
-    RuntimeStorageOwnership::Space,
+    "runtime/extensions/device/packages",
+    RuntimeStorageOwnership::CoreNode,
 );
 pub const EXTENSIONS_PACKAGES_DIR_PATH: &str = EXTENSIONS_PACKAGES.path;
 pub const EXTENSIONS_PLUGIN_CONFIGS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree(
-        "runtime/extensions/plugins/configs",
-        RuntimeStorageOwnership::Space,
+        "runtime/extensions/device/plugins/configs",
+        RuntimeStorageOwnership::CoreNode,
     );
 pub const EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH: &str = EXTENSIONS_PLUGIN_CONFIGS.path;
 /// Owns persistent files written through legacy shared-storage paths.
-pub const EXTENSIONS_PLUGIN_DATA: RuntimeStoragePathDefinition =
-    RuntimeStoragePathDefinition::tree(
-        "runtime/extensions/plugins/data",
-        RuntimeStorageOwnership::Space,
-    );
+pub const EXTENSIONS_PLUGIN_DATA: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/extensions/device/plugins/data",
+    RuntimeStorageOwnership::CoreNode,
+);
 pub const EXTENSIONS_PLUGIN_DATA_DIR_PATH: &str = EXTENSIONS_PLUGIN_DATA.path;
-pub const EXTENSIONS_MCP_DIR_PATH: &str = "runtime/extensions/mcp";
+pub const EXTENSIONS_MCP_DIR_PATH: &str = "runtime/extensions/device/mcp";
 
 pub const RUNTIME_CLEAN_ON_EXIT: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
     "runtime/temp/clean_on_exit",
@@ -355,8 +364,8 @@ pub const PERSONA_CARD_CHAT_HISTORY_PREFERENCES_PATH: &str =
     "runtime/config/preferences/persona_card_chat_history.preferences.json";
 pub const CURRENT_CHAT_ID_PREFERENCES_PATH: &str = "runtime/state/current_chat_id.preferences.json";
 pub const SQLITE_DATABASE_PATH: &str = "runtime/data/database/operit2.sqlite";
-pub const MCP_CONFIG_PATH: &str = "runtime/extensions/mcp/mcp_config.json";
-pub const MCP_SERVER_STATUS_PATH: &str = "runtime/extensions/mcp/server_status.json";
+pub const MCP_CONFIG_PATH: &str = "runtime/extensions/device/mcp/mcp_config.json";
+pub const MCP_SERVER_STATUS_PATH: &str = "runtime/extensions/device/mcp/server_status.json";
 pub const OPERIT1_SNAPSHOT_SQLITE_INSPECTION_PATH: &str =
     "runtime/temp/clean_on_exit/operit1_snapshot_import.sqlite";
 pub const OPERIT1_SNAPSHOT_SQLITE_INSPECTION_WAL_PATH: &str =
@@ -386,6 +395,8 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_CLIENT_LOG,
     RUNTIME_SHARE_IMAGE_EXPORTS,
+    EXTENSIONS_SPACE,
+    EXTENSIONS_DEVICE,
     EXTENSIONS_SKILLS,
     EXTENSIONS_PACKAGES,
     EXTENSIONS_PLUGIN_CONFIGS,

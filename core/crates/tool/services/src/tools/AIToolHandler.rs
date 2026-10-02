@@ -1344,26 +1344,54 @@ impl JsExecutionHost for AIToolHandler {
             .writeEnvironmentVariable(key, value)
     }
 
-    /// Returns the plugin configuration directory.
+    /// Resolves unscoped native configuration access explicitly within this device.
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
-        let configDir = OperitPaths::pluginConfigDir(plugin_id)?;
-        let configDirPath = configDir
-            .to_str()
-            .ok_or_else(|| "Plugin config directory is not valid UTF-8".to_string())?;
+        let configDir = operit_util::OperitPaths::pluginConfigDir(plugin_id)?;
+        let path = configDir.to_string_lossy().replace('\\', "/");
+        let absolute = RuntimeStorePaths::default().runtime_storage_path(&path);
         self.getContext()
             .fileSystemHost
-            .clone()
-            .ok_or_else(|| "FileSystemHost is required for plugin configuration".to_string())?
-            .makeDirectory(configDirPath, true)
-            .map_err(|error| error.to_string())?;
-        let runtimeRoot = RuntimeStorePaths::default().runtime_dir().to_path_buf();
-        let relativePath = configDir
-            .strip_prefix(runtimeRoot)
-            .map_err(|_| "Plugin configuration directory is outside runtime storage".to_string())?;
-        let relativePath = relativePath
-            .to_str()
-            .ok_or_else(|| "Plugin configuration directory is not valid UTF-8".to_string())?;
-        PathMapper::joinVfsPath("/app/data", relativePath)
+            .as_ref()
+            .ok_or("FileSystemHost is required for plugin configuration")?
+            .makeDirectory(&absolute.to_string_lossy(), true)
+            .map_err(|e| e.to_string())?;
+        let relative = path
+            .strip_prefix("runtime/")
+            .ok_or("Configuration is outside runtime storage")?;
+        PathMapper::joinVfsPath("/app/data", relative)
+    }
+
+    /// Resolves the executing package owner while keeping arbitrary configuration aliases supported.
+    fn scoped_plugin_config_dir(&self, owner_id: &str, plugin_id: &str) -> Result<String, String> {
+        let manager = self.getOrCreatePackageManager();
+        let manager = manager.lock().map_err(|e| e.to_string())?;
+        let owner = match manager.resolveToolPkgSubpackageRuntimeInternal(owner_id) {
+            Some(child) => child.containerPackageName,
+            None => manager.normalizePackageName(owner_id),
+        };
+        let store = operit_store::ExtensionStore::ExtensionStore::default();
+        let root = store.configPath(&owner)?;
+        let path = if plugin_id == owner {
+            root
+        } else {
+            let alias = operit_util::OperitPaths::pluginConfigDir(plugin_id)?;
+            let name = alias
+                .file_name()
+                .ok_or("Configuration alias is invalid")?
+                .to_string_lossy();
+            format!("{root}/namespaces/{name}")
+        };
+        let configDir = RuntimeStorePaths::default().runtime_storage_path(&path);
+        self.getContext()
+            .fileSystemHost
+            .as_ref()
+            .ok_or("FileSystemHost is required for plugin configuration")?
+            .makeDirectory(&configDir.to_string_lossy(), true)
+            .map_err(|e| e.to_string())?;
+        let relative = path
+            .strip_prefix("runtime/")
+            .ok_or("Configuration is outside runtime storage")?;
+        PathMapper::joinVfsPath("/app/data", relative)
     }
 
     /// Reads one ToolPkg text resource.

@@ -1,3 +1,5 @@
+#[path = "ExtensionStore.rs"]
+pub mod ExtensionStore;
 #[path = "CoreNodeBindingStore.rs"]
 pub mod CoreNodeBindingStore;
 #[path = "CoreNodeIdentityStore.rs"]

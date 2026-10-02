@@ -791,6 +791,7 @@ String _targetOs(BuildInput input) {
   throw StateError('Unsupported build hook target configuration: $config');
 }
 
+/// Configures the shared WASM C toolchain and runtime linker dependencies.
 Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
   final environment = _withRustupProxyEnvironment(
     Map<String, String>.from(Platform.environment),
@@ -820,6 +821,13 @@ Future<Map<String, String>> _wasmCargoEnvironment(Directory repoRoot) async {
   );
 
   environment['QUICKJS_WASM_SYS_WASI_SDK_PATH'] = wasiSdk.path;
+  environment['CC_wasm32_unknown_unknown'] = File.fromUri(
+    wasiSdk.uri.resolve('bin/$clangName'),
+  ).path;
+  final arName = Platform.isWindows ? 'llvm-ar.exe' : 'llvm-ar';
+  environment['AR_wasm32_unknown_unknown'] = File.fromUri(
+    wasiSdk.uri.resolve('bin/$arName'),
+  ).path;
   final clangResourceDir = File.fromUri(
     wasiSdk.uri.resolve('lib/clang/16'),
   ).path.replaceAll(r'\', '/');

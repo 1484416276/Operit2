@@ -29,7 +29,6 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-#[cfg(not(target_arch = "wasm32"))]
 use operit_core_application::CoreApplication;
 use operit_proxy_local::LocalCoreProxy;
 
@@ -193,7 +192,6 @@ pub struct OperitFlutterBridge {
     #[cfg(target_arch = "wasm32")]
     pub(crate) watchSubscriptions: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>>,
     pub(crate) pushStreams: Mutex<HashMap<String, NativePushState>>,
-    #[cfg(not(target_arch = "wasm32"))]
     coreApplication: Mutex<Option<CoreApplication>>,
     #[cfg(any(
         windows,
@@ -310,7 +308,6 @@ impl OperitFlutterBridge {
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
-        #[cfg(not(target_arch = "wasm32"))]
         let coreApplication = CoreApplication::startWithSharedLocalClient(
             localCore.clone(),
             LinkDeviceInfo::native(),
@@ -336,7 +333,6 @@ impl OperitFlutterBridge {
             #[cfg(target_arch = "wasm32")]
             watchSubscriptions: Arc::new(Mutex::new(HashMap::new())),
             pushStreams: Mutex::new(HashMap::new()),
-            #[cfg(not(target_arch = "wasm32"))]
             coreApplication: Mutex::new(Some(coreApplication)),
             #[cfg(not(target_arch = "wasm32"))]
             #[cfg(any(

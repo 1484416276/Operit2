@@ -18,6 +18,7 @@ import '../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../chat/PendingChatDraftHandler.dart';
 import '../components/PackageTab.dart';
+import '../components/ExtensionScopeControls.dart';
 import '../dialogs/MCPImportDialog.dart';
 import '../dialogs/PackageDetailsDialog.dart';
 import '../dialogs/PackageEnvironmentVariablesDialog.dart';
@@ -61,6 +62,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   Timer? _searchDebounce;
   StreamSubscription<void>? _catalogSubscription;
   int _snapshotGeneration = 0;
+  Map<String, String> _scopes = {};
+  StreamSubscription<int>? _scopeSubscription;
 
   GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
       widget.clients.application.packageManager();
@@ -72,6 +75,16 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     _catalogSubscription = ToolPkgCatalogChangeBus.listen(() {
       unawaited(_loadSnapshot(rescan: false));
     });
+    _scopeSubscription = widget.clients.application
+        .extensionCatalogRevisionFlow()
+        .listen((_) {
+          if (!mounted) return;
+          setState(() {
+            _skillReloadRevision += 1;
+            _mcpReloadRevision += 1;
+          });
+          unawaited(_loadSnapshot(rescan: false));
+        });
     _loadSnapshot();
   }
 
@@ -90,6 +103,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _catalogSubscription?.cancel();
+    _scopeSubscription?.cancel();
     super.dispose();
   }
 
@@ -125,6 +139,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       final bundledExternalToolPkgContainers =
           results[5] as List<core_proxy.ToolPkgContainerRuntime>;
       final pluginLoadIssues = await _packageManager.getToolPkgLoadIssues();
+      final scopes = await widget.clients.application.getExtensionScopes(
+        kind: 'package',
+      );
       final bundledExternalPluginCandidates = _mergeBundledExternalCandidates(
         bundledExternalCandidates,
         bundledExternalToolPkgContainers,
@@ -134,6 +151,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
         return;
       }
       setState(() {
+        _scopes = scopes;
         _snapshot = PackageManagerSnapshot(
           availablePackages: availablePackages,
           enabledPackageNames: enabledPackageNameSet,
@@ -448,6 +466,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
           return switch (PackageTab.values[index]) {
             PackageTab.plugins => PluginTabContent(
               plugins: _filteredPlugins,
+              scopes: _scopes,
+              onMoveScope: _movePackageScope,
               morePlugins: _filteredMorePlugins,
               loadIssues: _filteredPluginLoadIssues,
               enabledPluginNames: _snapshot.enabledPluginContainerNames,
@@ -464,6 +484,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
             ),
             PackageTab.packages => PackageTabContent(
               packages: _filteredPackages,
+              scopes: _scopes,
+              onMoveScope: _movePackageScope,
               enabledPackageNames: _snapshot.enabledPackageNames,
               loadIssues: _filteredPackageLoadIssues,
               isLoading: _loading || _searchFiltering,
@@ -929,26 +951,63 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     };
   }
 
+  /// Moves an installed package with its configuration and refreshes all rows.
+  Future<void> _movePackageScope(String id) async {
+    try {
+      final moved = await changeExtensionScope(
+        context: context,
+        clients: widget.clients,
+        kind: 'package',
+        id: id,
+        currentScope: _scopes[id]!,
+      );
+      if (moved) await _loadSnapshot();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      await _loadSnapshot();
+    }
+  }
+
   /// Imports one bundled external ToolPkg container from runtime assets.
   Future<void> _loadBundledExternalPlugin(
     core_proxy.BundledExternalPackageCandidate plugin,
   ) async {
-    await _runAddAction(
-      () => _packageManager.importBundledExternalToolPkgContainer(
-        containerPackageName: plugin.packageName,
-      ),
-    );
+    final scope = await chooseExtensionScope(context);
+    if (scope == null) return;
+    await _runAddAction(() async {
+      final result = await _packageManager
+          .importBundledExternalToolPkgContainer(
+            containerPackageName: plugin.packageName,
+          );
+      await widget.clients.application.setExtensionScope(
+        kind: 'package',
+        id: plugin.packageName,
+        scope: scope,
+      );
+      return result;
+    });
   }
 
   /// Imports one bundled external standalone package from runtime assets.
   Future<void> _loadBundledExternalPackage(
     core_proxy.BundledExternalPackageCandidate package,
   ) async {
-    await _runAddAction(
-      () => _packageManager.importBundledExternalPackage(
+    final scope = await chooseExtensionScope(context);
+    if (scope == null) return;
+    await _runAddAction(() async {
+      final result = await _packageManager.importBundledExternalPackage(
         packageName: package.packageName,
-      ),
-    );
+      );
+      await widget.clients.application.setExtensionScope(
+        kind: 'package',
+        id: package.packageName,
+        scope: scope,
+      );
+      return result;
+    });
   }
 
   /// Opens the plugin-provided interface at an optional initial route.
@@ -1028,11 +1087,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     if (file == null) {
       return;
     }
-    await _runAddAction(
-      () => _packageManager.addPackageFileFromExternalStorageResult(
-        filePath: file.path,
-      ),
-    );
+    final scope = await chooseExtensionScope(context);
+    if (scope == null) return;
+    await _runAddAction(() async {
+      final result = await _packageManager
+          .addPackageFileFromExternalStorageResult(filePath: file.path);
+      await widget.clients.application.setExtensionScope(
+        kind: 'package',
+        id: result.packageName,
+        scope: scope,
+      );
+      return result;
+    });
   }
 
   Future<void> _importPackage() async {
@@ -1047,11 +1113,18 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
     if (file == null) {
       return;
     }
-    await _runAddAction(
-      () => _packageManager.addPackageFileFromExternalStorageResult(
-        filePath: file.path,
-      ),
-    );
+    final scope = await chooseExtensionScope(context);
+    if (scope == null) return;
+    await _runAddAction(() async {
+      final result = await _packageManager
+          .addPackageFileFromExternalStorageResult(filePath: file.path);
+      await widget.clients.application.setExtensionScope(
+        kind: 'package',
+        id: result.packageName,
+        scope: scope,
+      );
+      return result;
+    });
   }
 
   Future<void> _showMcpImportDialog() async {
@@ -1097,6 +1170,9 @@ class _PackageManagerScreenState extends State<PackageManagerScreen> {
       if (!mounted) {
         return;
       }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
       await _loadSnapshot();
     }
   }

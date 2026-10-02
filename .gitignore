@@ -216,3 +216,4 @@ tools/ios-runtime/native/sources
 # Local ESP32 Edge pairing secret
 apps/esp32/.edge-token
 artifacts/*
+apps/flutter/app/web/runtime/generated/*

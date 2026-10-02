@@ -6,7 +6,6 @@ pub(crate) fn render_object_call_dispatch(
     error_types: &HashMap<String, ErrorTypeDefinition>,
 ) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "async fn generated_dispatch_{}_call(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n",
@@ -40,7 +39,6 @@ pub(crate) fn render_object_sync_call_dispatch(
     error_types: &HashMap<String, ErrorTypeDefinition>,
 ) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "fn generated_dispatch_{}_call_sync(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n",
@@ -68,7 +66,6 @@ pub(crate) fn render_object_sync_call_dispatch(
 
 pub(crate) fn render_object_watch_snapshot_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "fn generated_dispatch_{}_watch_snapshot(object: &mut {}, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n",
@@ -95,7 +92,6 @@ pub(crate) fn render_object_watch_snapshot_dispatch(object: &SourceObject) -> St
 
 pub(crate) fn render_object_watch_snapshot_async_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "async fn generated_dispatch_{}_watch_snapshot_async(object: &mut {}, request: &operit_link::CoreWatchRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n",
@@ -121,7 +117,6 @@ pub(crate) fn render_object_watch_snapshot_async_dispatch(object: &SourceObject)
 
 pub(crate) fn render_object_watch_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "fn generated_dispatch_{}_watch(object: &mut {}, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n",
@@ -146,7 +141,6 @@ pub(crate) fn render_object_watch_dispatch(object: &SourceObject) -> String {
 
 pub(crate) fn render_object_watch_async_dispatch(object: &SourceObject) -> String {
     let mut output = String::new();
-    output.push_str(&render_object_item_cfg_attrs(object));
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str(&format!(
         "async fn generated_dispatch_{}_watch_async(object: &mut {}, request: operit_link::CoreWatchRequest, attachmentAdopter: std::sync::Arc<dyn Fn(Vec<operit_link::CoreStreamAttachment>) + Send + Sync>) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {{\n",
@@ -209,7 +203,6 @@ fn render_routed_watch_dispatch(objects: &[SourceObject], snapshot: bool) -> Str
                 continue;
             }
             let value_type = watch.snapshot_type.as_ref().expect("StateFlow must have a snapshot type");
-            output.push_str(&render_object_item_cfg_attrs(object));
             output.push_str(&render_cfg_attrs(method));
             output.push_str(&format!(
                 "                ({}, {:?}) => {{\n                    let mut stream = operit_rslink_runtime::core_route_proxy_watch::<{}>(runtime, request, proxy.streamAttachmentAdopter(), {}).await?;\n",
@@ -322,8 +315,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             && !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. })
     }) {
         output.push_str(&format!(
-            "{}        {} => {{\n{}{}        }}\n",
-            render_object_match_arm_cfg_attrs(object),
+            "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
             render_object_constructor(object, DispatchMode::Call),
             render_constructed_dispatch(object, DispatchMode::Call)
@@ -465,8 +457,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             && !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. })
     }) {
         output.push_str(&format!(
-            "{}        {} => {{\n{}{}        }}\n",
-            render_object_match_arm_cfg_attrs(object),
+            "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
             render_object_constructor(object, DispatchMode::WatchSnapshot),
             render_constructed_dispatch(object, DispatchMode::WatchSnapshot)
@@ -530,8 +521,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             && !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. })
     }) {
         output.push_str(&format!(
-            "{}        {} => {{\n{}{}        }}\n",
-            render_object_match_arm_cfg_attrs(object),
+            "        {} => {{\n{}{}        }}\n",
             format!("{:?}", object.object_id),
             render_object_constructor(object, DispatchMode::Watch),
             render_constructed_dispatch(object, DispatchMode::Watch)
@@ -600,8 +590,7 @@ fn render_constructed_dispatch(object: &SourceObject, mode: DispatchMode) -> Str
 fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMode) -> String {
     let dispatch = render_constructed_dispatch(object, mode);
     format!(
-        "{}        {} => {{\n{}{}        }}\n",
-        render_object_match_arm_cfg_attrs(object),
+        "        {} => {{\n{}{}        }}\n",
         format!("{:?}", object.object_id),
         render_object_constructor(object, mode),
         dispatch
@@ -622,8 +611,7 @@ fn render_async_factory_watch(object: &SourceObject, mode: DispatchMode) -> Stri
         DispatchMode::Call => unreachable!("factory watch requires a watch dispatch mode"),
     };
     format!(
-        "{}    if request.target == {} {{\n{constructor}{body}    }}\n",
-        render_object_item_cfg_attrs(object),
+        "    if request.target == {} {{\n{constructor}{body}    }}\n",
         format!("{:?}", object.object_id)
     )
 }
@@ -635,46 +623,11 @@ fn render_factory_constructible_dispatch(object: &SourceObject, mode: DispatchMo
     }
     let dispatch = render_constructed_dispatch(object, mode);
     format!(
-        "{}        {} => {{\n{}{}        }}\n",
-        render_object_match_arm_cfg_attrs(object),
+        "        {} => {{\n{}{}        }}\n",
         format!("{:?}", object.object_id),
         render_object_constructor(object, mode),
         dispatch
     )
-}
-
-/// Returns item attributes for generated objects that require native server routing.
-fn render_object_item_cfg_attrs(object: &SourceObject) -> String {
-    if object_requires_native_dispatch(object) {
-        "#[cfg(not(target_arch = \"wasm32\"))]\n".to_string()
-    } else {
-        String::new()
-    }
-}
-
-/// Returns match-arm attributes for generated objects that require native server routing.
-fn render_object_match_arm_cfg_attrs(object: &SourceObject) -> String {
-    if object_requires_native_dispatch(object) {
-        "        #[cfg(not(target_arch = \"wasm32\"))]\n".to_string()
-    } else {
-        String::new()
-    }
-}
-
-/// Returns whether one generated object depends on native Core server routing.
-fn object_requires_native_dispatch(object: &SourceObject) -> bool {
-    access_requires_native_dispatch(&object.access)
-}
-
-/// Returns whether one object access strategy depends on native Core server routing.
-fn access_requires_native_dispatch(access: &ObjectAccess) -> bool {
-    match access {
-        ObjectAccess::CoreNodeLocalRuntimeConstruct => true,
-        ObjectAccess::FactoryMethodConstruct { parent_access, .. } => {
-            access_requires_native_dispatch(parent_access)
-        }
-        _ => false,
-    }
 }
 
 fn render_object_constructor(object: &SourceObject, mode: DispatchMode) -> String {
@@ -1034,7 +987,7 @@ fn render_async_call_helper(
         "/// Dispatches generated async call `{}` for `{}`.\n{}#[allow(unused_mut, unused_variables)]\nasync fn generated_dispatch_{}_call_{}(object: &mut {}, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {{\n    let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}{}\n}}\n",
         method.name,
         object.schema_key,
-        render_object_item_cfg_attrs(object) + &render_item_cfg_attrs(method),
+        render_item_cfg_attrs(method),
         object.dispatch_name,
         method.name,
         object.full_type,

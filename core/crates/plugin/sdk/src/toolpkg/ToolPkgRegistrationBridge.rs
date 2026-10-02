@@ -440,18 +440,19 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
 
         function getToolPkgConfigDir(pluginId) {
             var explicitId = String(pluginId || '').trim();
-            var target = explicitId || resolveCurrentToolPkgTarget();
+            var owner = resolveCurrentToolPkgTarget();
+            var target = explicitId || owner;
             if (!target) {
                 throw new Error('package/toolpkg runtime target is empty');
             }
             if (
                 typeof NativeInterface === 'undefined' ||
                 !NativeInterface ||
-                typeof NativeInterface.getPluginConfigDir !== 'function'
+                typeof NativeInterface.getScopedPluginConfigDir !== 'function'
             ) {
-                throw new Error('NativeInterface.getPluginConfigDir is unavailable');
+                throw new Error('NativeInterface.getScopedPluginConfigDir is unavailable');
             }
-            var path = NativeInterface.getPluginConfigDir(target);
+            var path = NativeInterface.getScopedPluginConfigDir(owner, target);
             if (typeof path === 'string' && path.trim()) {
                 return path;
             }

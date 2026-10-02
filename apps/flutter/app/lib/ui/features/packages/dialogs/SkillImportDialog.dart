@@ -2,6 +2,7 @@
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import '../components/ExtensionScopeControls.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 
@@ -263,10 +264,14 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
       );
       return;
     }
+    final scope = await chooseExtensionScope(context);
+    if (scope == null) return;
     setState(() {
       _busy = true;
     });
     try {
+      final repository = widget.clients.application.skillRepository();
+      final before = await repository.getAvailableSkillPackages();
       final result = await switch (_mode) {
         _SkillImportMode.github =>
           widget.clients.application
@@ -290,6 +295,14 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
                     .toList(growable: false),
               ),
       };
+      final after = await repository.getAvailableSkillPackages();
+      final added = after.keys.toSet().difference(before.keys.toSet());
+      if (added.length != 1) throw StateError('导入未产生唯一技能：$result');
+      await widget.clients.application.setExtensionScope(
+        kind: 'skill',
+        id: added.single,
+        scope: scope,
+      );
       if (!mounted) {
         return;
       }

@@ -204,6 +204,9 @@ impl SkillRepository {
             return "Skill content is required".to_string();
         }
 
+        if self.getAvailableSkillPackages().contains_key(trimmedId) {
+            return format!("Skill already exists in an installation location: {trimmedId}");
+        }
         let skillsRootDir = PathBuf::from(self.getSkillsDirectoryPath());
         let skillsRootPath = hostPath(&skillsRootDir);
         if let Err(error) = self.fileSystemHost.makeDirectory(&skillsRootPath, true) {

@@ -475,6 +475,11 @@ mod tests {
             Err("Plugin configuration is not part of this test".to_string())
         }
 
+        /// Resolves scoped configuration through the explicit test contract.
+        fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
+            self.plugin_config_dir(plugin_id)
+        }
+
         /// Rejects ToolPkg text resource access in manager tests.
         fn read_toolpkg_text_resource(
             &self,

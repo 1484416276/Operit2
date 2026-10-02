@@ -451,6 +451,9 @@ pub fn buildRuntimeBootstrapScript() -> String {
             getPluginConfigDir: function(pluginId) {{
                 return __operitNativeGetPluginConfigDir(String(pluginId || ''));
             }},
+            getScopedPluginConfigDir: function(ownerId, pluginId) {{
+                return __operitNativeGetScopedPluginConfigDir(String(ownerId), String(pluginId));
+            }},
             isPackageImported: function(packageName) {{
                 return __operitNativeIsPackageImported(String(packageName || '')) === 'true';
             }},
@@ -1129,21 +1132,21 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 }},
                 getPluginConfigDir: function(pluginId) {{
                     var explicitId = pluginId == null ? '' : __operitText(pluginId).trim();
-                    var resolvedId =
-                        explicitId ||
+                    var ownerId =
                         readCallValue('__operit_ui_package_name', '') ||
                         readCallValue('toolPkgId', '') ||
                         readCallValue('containerPackageName', '') ||
                         readCallValue('__operit_package_name', '');
+                    var resolvedId = explicitId || ownerId;
                     if (
-                        !resolvedId ||
+                        !ownerId ||
                         typeof NativeInterface === 'undefined' ||
                         !NativeInterface ||
-                        typeof NativeInterface.getPluginConfigDir !== 'function'
+                        typeof NativeInterface.getScopedPluginConfigDir !== 'function'
                     ) {{
                         return '';
                     }}
-                    var path = NativeInterface.getPluginConfigDir(resolvedId);
+                    var path = NativeInterface.getScopedPluginConfigDir(ownerId, resolvedId);
                     return typeof path === 'string' ? path : '';
                 }},
                 reportDetailedError: callRuntimeReport,

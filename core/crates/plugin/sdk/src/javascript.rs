@@ -135,6 +135,9 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     /// Returns the writable configuration directory for one plugin.
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String>;
 
+    /// Returns a named configuration directory owned by the executing package.
+    fn scoped_plugin_config_dir(&self, owner_id: &str, plugin_id: &str) -> Result<String, String>;
+
     /// Reads one UTF-8 ToolPkg resource.
     fn read_toolpkg_text_resource(
         &self,

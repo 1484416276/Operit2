@@ -150,8 +150,7 @@ impl LocalCoreProxy {
         Arc::new(LocalApplicationSharedClient::new(Arc::new(self.clone()), "core/application"))
     }
 
-    /// Builds the native server capability container for this local Core.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Builds the shared node capability container over this Core's Host APIs.
     pub fn coreNodeLocalRuntime(
         &self,
     ) -> operit_node_runtime::CoreNodeRouter::CoreNodeLocalRuntime {

@@ -7,6 +7,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageGrid.dart';
+import '../components/ExtensionScopeControls.dart';
 import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
 
@@ -17,6 +18,8 @@ class PackageTabContent extends StatelessWidget {
     required this.packages,
     required this.morePackages,
     required this.loadIssues,
+    required this.scopes,
+    required this.onMoveScope,
     required this.enabledPackageNames,
     required this.isLoading,
     required this.isSearchActive,
@@ -30,6 +33,9 @@ class PackageTabContent extends StatelessWidget {
   final List<core_proxy.ToolPackage> packages;
   final List<core_proxy.BundledExternalPackageCandidate> morePackages;
   final List<core_proxy.ToolPkgLoadIssue> loadIssues;
+  final Map<String, String> scopes;
+  final ValueChanged<String> onMoveScope;
+
   final Set<String> enabledPackageNames;
   final bool isLoading;
   final bool isSearchActive;
@@ -102,10 +108,11 @@ class PackageTabContent extends StatelessWidget {
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                sliver: PackageSliverList(
-                  itemCount: orderedPackages.length,
-                  itemBuilder: (context, index) {
-                    final package = orderedPackages[index];
+                sliver: ScopedExtensionSliver<core_proxy.ToolPackage>(
+                  items: orderedPackages,
+                  scopes: scopes,
+                  identity: (package) => package.name,
+                  itemBuilder: (context, package) {
                     return PackageListItem(
                       key: ValueKey<String>('package:${package.name}'),
                       icon: packageCategoryIcon(package.category),
@@ -119,6 +126,12 @@ class PackageTabContent extends StatelessWidget {
                       ],
                       enabled: enabledPackageNames.contains(package.name),
                       onDetails: () => onPackageTap(package),
+                      trailingActions: <Widget>[
+                        ExtensionScopeAction(
+                          scope: scopes[package.name]!,
+                          onMove: () => onMoveScope(package.name),
+                        ),
+                      ],
                       onEnabledChanged: (enabled) =>
                           onPackageEnabledChanged(package, enabled),
                     );

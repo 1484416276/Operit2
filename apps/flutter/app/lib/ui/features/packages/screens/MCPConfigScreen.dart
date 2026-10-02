@@ -8,6 +8,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageGrid.dart';
+import '../components/ExtensionScopeControls.dart';
 import '../components/PackageListItem.dart';
 import '../dialogs/MCPDetailsDialog.dart';
 import '../utils/MCPCommandRunner.dart';
@@ -32,6 +33,8 @@ class MCPConfigScreen extends StatefulWidget {
 
 class _MCPConfigScreenState extends State<MCPConfigScreen> {
   bool _loading = true;
+  Map<String, String> _scopes = {};
+  int _loadGeneration = 0;
   String? _errorMessage;
   String _configDirectory = '';
   Map<String, core_proxy.ServerConfig> _servers =
@@ -62,6 +65,8 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
 
   /// Loads MCP servers, metadata, and runtime statuses.
   Future<void> _loadMcp() async {
+    if (!mounted) return;
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _errorMessage = null;
@@ -73,10 +78,14 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
         _localServer.getAllPluginMetadata(),
         _localServer.getAllServerStatus(),
       ]);
-      if (!mounted) {
+      final scopes = await widget.clients.application.getExtensionScopes(
+        kind: 'mcp',
+      );
+      if (!mounted || generation != _loadGeneration) {
         return;
       }
       setState(() {
+        _scopes = scopes;
         _configDirectory = results[0] as String;
         _servers = results[1] as Map<String, core_proxy.ServerConfig>;
         _metadata = results[2] as Map<String, core_proxy.PluginMetadata>;
@@ -85,13 +94,33 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load MCP config: $error\n$stackTrace');
-      if (!mounted) {
+      if (!mounted || generation != _loadGeneration) {
         return;
       }
       setState(() {
         _errorMessage = error.toString();
         _loading = false;
       });
+    }
+  }
+
+  /// Transfers an existing extension and reloads its scope-owned settings.
+  Future<void> _moveScope(String id) async {
+    try {
+      final moved = await changeExtensionScope(
+        context: context,
+        clients: widget.clients,
+        kind: 'mcp',
+        id: id,
+        currentScope: _scopes[id]!,
+      );
+      if (moved) await _loadMcp();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      await _loadMcp();
     }
   }
 
@@ -240,10 +269,11 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
               else
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-                  sliver: PackageSliverList(
-                    itemCount: ids.length,
-                    itemBuilder: (context, index) {
-                      final serverId = ids[index];
+                  sliver: ScopedExtensionSliver<String>(
+                    items: ids,
+                    scopes: _scopes,
+                    identity: (serverId) => serverId,
+                    itemBuilder: (context, serverId) {
                       final server = _servers[serverId];
                       final metadata = _metadata[serverId];
                       final status = _statuses[serverId];
@@ -269,6 +299,14 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
                         ],
                         enabled: enabled,
                         onDetails: () => _showDetails(serverId),
+                        trailingActions: <Widget>[
+                          ExtensionScopeAction(
+                            scope: _scopes[serverId]!,
+                            onMove: () => _moveScope(serverId),
+                            localMcp:
+                                server?.command?.trim().isNotEmpty == true,
+                          ),
+                        ],
                         onEnabledChanged: (value) =>
                             _setServerEnabled(serverId, value),
                       );
@@ -286,11 +324,7 @@ class _MCPConfigScreenState extends State<MCPConfigScreen> {
 
   /// Returns MCP server identifiers matching the current search query.
   List<String> get _filteredServerIds {
-    final allIds = <String>{
-      ..._servers.keys,
-      ..._metadata.keys,
-      ..._statuses.keys,
-    };
+    final allIds = <String>{..._servers.keys, ..._metadata.keys};
     final query = widget.searchQuery.trim().toLowerCase();
     final ids = allIds.toList()
       ..sort(

@@ -279,7 +279,45 @@ pub(super) async fn listen(
             }
         })
     });
-    serve(registry, host, &address, PeerTransport::Http, rx, handler).await
+    serve(registry, host, &address, PeerTransport::Http, rx, browserHttpHandler(handler)).await
+}
+
+/// Allows credential-free browser Link requests without bypassing runtime authentication.
+fn browserHttpHandler(handler: HttpServerHandler) -> HttpServerHandler {
+    Arc::new(move |request| {
+        let handler = handler.clone();
+        Box::pin(async move {
+            let mut result = if request.method() == http::Method::OPTIONS {
+                browserPreflight(&request)
+            } else {
+                handler(request).await
+            };
+            // Link authentication is carried in encrypted messages, not cookies.
+            // CORS only grants access to this transport, never to runtime objects.
+            result.headers_mut().insert("access-control-allow-origin", http::HeaderValue::from_static("*"));
+            result
+        })
+    })
+}
+
+/// Validates the exact methods and headers used by the binary HTTP Link carrier.
+fn browserPreflight(request: &ServerRequest) -> ServerResponse {
+    let method = request.headers().get("access-control-request-method").and_then(|value| value.to_str().ok());
+    if !matches!(method, Some("GET" | "POST")) {
+        return response(405);
+    }
+    if let Some(headers) = request.headers().get("access-control-request-headers") {
+        let Ok(headers) = headers.to_str() else { return response(400); };
+        if !headers.split(',').map(str::trim).all(|name| {
+            name.eq_ignore_ascii_case("content-type") || name.eq_ignore_ascii_case(CONNECTION_HEADER)
+        }) {
+            return response(400);
+        }
+    }
+    let mut result = response(204);
+    result.headers_mut().insert("access-control-allow-methods", http::HeaderValue::from_static("GET, POST"));
+    result.headers_mut().insert("access-control-allow-headers", http::HeaderValue::from_static("content-type, x-operit-link-connection"));
+    result
 }
 
 // One Host listener for HTTP + WS at the same address. Owned by the PeerLink instance;
@@ -433,4 +471,62 @@ pub(super) async fn serve(
         server,
         transport,
     }))
+}
+
+
+#[cfg(test)]
+mod browser_cors_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Creates a browser preflight without opening a Link connection.
+    fn preflight(method: &str, headers: &str) -> ServerRequest {
+        http::Request::builder()
+            .method("OPTIONS")
+            .uri("/link")
+            .header("origin", "https://operit.example")
+            .header("access-control-request-method", method)
+            .header("access-control-request-headers", headers)
+            .body(Full::new(Bytes::new()).map_err(|never| match never {}).boxed_unsync())
+            .unwrap()
+    }
+
+    /// Accepts binary Link preflights without invoking runtime or allocating a connection.
+    #[tokio::test]
+    async fn browser_preflight_does_not_dispatch_pairing() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let recorded = calls.clone();
+        let handler = browserHttpHandler(Arc::new(move |_| {
+            recorded.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { response(401) })
+        }));
+        for method in ["GET", "POST"] {
+            let result = handler(preflight(method, "Content-Type, X-Operit-Link-Connection")).await;
+            assert_eq!(result.status(), 204);
+            assert_eq!(result.headers()["access-control-allow-origin"], "*");
+            assert_eq!(result.headers()["access-control-allow-methods"], "GET, POST");
+            assert!(!result.headers().contains_key("access-control-allow-credentials"));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(handler(preflight("DELETE", "content-type")).await.status(), 405);
+        assert_eq!(handler(preflight("POST", "authorization")).await.status(), 400);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// Preserves the observed peer address and authentication rejection for actual requests.
+    #[tokio::test]
+    async fn browser_request_keeps_runtime_authentication_and_remote_address() {
+        let remote = "127.0.0.1:12456".parse().unwrap();
+        let handler = browserHttpHandler(Arc::new(move |request| {
+            assert_eq!(request.extensions().get::<RemoteAddress>().unwrap().0, remote);
+            Box::pin(async { response(401) })
+        }));
+        let mut request = preflight("POST", "content-type");
+        *request.method_mut() = http::Method::POST;
+        request.extensions_mut().insert(RemoteAddress(remote));
+        let result = handler(request).await;
+        assert_eq!(result.status(), 401);
+        assert_eq!(result.headers()["access-control-allow-origin"], "*");
+        assert!(!result.headers().contains_key("access-control-allow-credentials"));
+    }
 }

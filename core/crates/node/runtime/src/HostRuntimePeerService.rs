@@ -47,7 +47,7 @@ struct State {
     advertisements: Mutex<Vec<Box<dyn operit_host_api::ServiceDiscovery::DiscoveryAdvertisement>>>,
     slots: Arc<tokio::sync::Semaphore>,
     active: Mutex<BTreeSet<String>>, changes: broadcast::Sender<()>,
-    availability: AsyncMutex<Option<availability::AvailabilityWorker>>,
+    availability: Mutex<Option<availability::AvailabilityWorker>>,
     lifecycle: AsyncMutex<()>,
     /// 本节点的配对/撤销持久化操作串行化，不持锁执行网络 I/O。
     mutation: Mutex<()>,
@@ -55,17 +55,20 @@ struct State {
 #[derive(Clone)]
 pub struct HostRuntimePeerService { state: Arc<State> }
 impl HostRuntimePeerService {
+    /// Creates shared peer services and starts availability checks on the supplied Host scheduler.
     pub fn new(host: Arc<HostManager>, router: &Arc<CoreNodeRouter>, info: LinkDeviceInfo) -> Result<Arc<Self>, String> {
         let storage = host.runtimeStorageHost.clone().ok_or("Runtime storage Host is not installed")?;
-        Ok(Arc::new(Self { state: Arc::new(State {
+        let service = Arc::new(Self { state: Arc::new(State {
             host, link: HostPeerLink::default(), store: PeerStateStore::new(storage),
             nodeId: router.localNodeId(), info, router: Arc::downgrade(router),
             listeners: AsyncMutex::new(BTreeMap::new()), connections: Mutex::new(BTreeMap::new()),
             advertisements: Mutex::new(Vec::new()), slots: Arc::new(tokio::sync::Semaphore::new(64)),
             active: Mutex::new(BTreeSet::new()), changes: broadcast::channel(32).0,
-            availability: AsyncMutex::new(None), lifecycle: AsyncMutex::new(()),
+            availability: Mutex::new(None), lifecycle: AsyncMutex::new(()),
             mutation: Mutex::new(()),
-        }) }))
+        }) });
+        service.startAvailabilityWorker().map_err(|error| error.to_string())?;
+        Ok(service)
     }
     fn router(&self) -> Result<CoreNodeRouter, CoreLinkError> {
         self.state.router.upgrade().map(|r| (*r).clone()).ok_or_else(|| error("Node application has stopped"))
@@ -439,7 +442,7 @@ impl RuntimePeerService for HostRuntimePeerService {
             Ok(advertisements) => {
                 listeners.extend(opened);
                 if !advertisements.is_empty() { *self.state.advertisements.lock().unwrap() = advertisements; }
-                self.startAvailabilityWorker().await?;
+                self.startAvailabilityWorker()?;
                 self.changed(); Ok(())
             }
             Err(e) => {

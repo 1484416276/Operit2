@@ -1,3 +1,4 @@
+use operit_store::ExtensionStore::ExtensionStore;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -667,31 +668,113 @@ impl MCPLocalServer {
         }
     }
 
+    /// Reads each MCP definition from its independent installation owner.
     #[allow(non_snake_case)]
     fn readMCPConfig(&self) -> Result<MCPConfig, String> {
-        let path = self.getConfigFilePath();
-        if !self
-            .fileSystemHost
-            .fileExists(&path)
-            .map_err(|error| error.to_string())?
-            .exists
-        {
-            return Ok(MCPConfig::default());
+        let mut config = MCPConfig::default();
+        for record in ExtensionStore::default().records("mcp")? {
+            let server = serde_json::from_value(record.settings["server"].clone())
+                .map_err(|e| e.to_string())?;
+            if config
+                .mcpServers
+                .insert(record.id.clone(), server)
+                .is_some()
+            {
+                return Err(format!(
+                    "MCP ownership conflict: {} exists in both locations",
+                    record.id
+                ));
+            }
+            let metadata = serde_json::from_value(record.settings["metadata"].clone())
+                .map_err(|e| e.to_string())?;
+            config.pluginMetadata.insert(record.id, metadata);
         }
-        let text = self
-            .fileSystemHost
-            .readFile(&path)
-            .map_err(|error| error.to_string())?;
-        serde_json::from_str::<MCPConfig>(&text).map_err(|error| error.to_string())
+        Ok(config)
     }
 
+    /// Writes MCP config per owner and never synchronizes a local executable deployment.
     #[allow(non_snake_case)]
     fn writeMCPConfig(&self, config: &MCPConfig) -> Result<(), String> {
-        self.ensureMcpPluginsDirectory()?;
-        let text = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
-        self.fileSystemHost
-            .writeFile(&self.getConfigFilePath(), &text, false)
-            .map_err(|error| error.to_string())
+        let config = self.autoFillMissingMetadata(config.clone());
+        let store = ExtensionStore::default();
+        let records = store.records("mcp")?;
+        for record in &records {
+            if let Some(server) = config.mcpServers.get(&record.id) {
+                if record.scope == "space"
+                    && (server.url.as_ref().is_none_or(|url| url.trim().is_empty())
+                        || !server.command.trim().is_empty())
+                {
+                    return Err(format!(
+                        "Local MCP can only belong to this device: {}",
+                        record.id
+                    ));
+                }
+            }
+        }
+        for (id, server) in &config.mcpServers {
+            let metadata = config
+                .pluginMetadata
+                .get(id)
+                .ok_or("MCP metadata is missing")?;
+            let settings = serde_json::json!({"server": server, "metadata": metadata});
+            if records.iter().any(|record| record.id == *id) {
+                store.setSettings("mcp", id, settings)?;
+            } else {
+                store.registerDevice("mcp", id, "", settings)?;
+            }
+        }
+        for record in &records {
+            if !config.mcpServers.contains_key(&record.id) {
+                store.delete("mcp", &record.id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates all imported entries before adding new servers to the selected installation location.
+    #[allow(non_snake_case)]
+    pub fn mergeConfigFromJsonWithScope(
+        &self,
+        jsonConfig: &str,
+        scope: &str,
+    ) -> Result<usize, String> {
+        ExtensionStore::root("mcp", scope)?;
+        let config: MCPConfig = serde_json::from_str(jsonConfig).map_err(|e| e.to_string())?;
+        if config.mcpServers.is_empty() {
+            return Err("MCP configuration has no servers".to_string());
+        }
+        let current = self.readMCPConfig()?;
+        for (id, server) in &config.mcpServers {
+            if current.mcpServers.contains_key(id) {
+                return Err(format!("MCP already exists: {id}"));
+            }
+            let command = !server.command.trim().is_empty();
+            let remote = server
+                .url
+                .as_ref()
+                .is_some_and(|url| !url.trim().is_empty());
+            if command == remote {
+                return Err(format!(
+                    "MCP must declare exactly one deployment type: {id}"
+                ));
+            }
+            if scope == "space" && command {
+                return Err(format!("Local MCP can only belong to this device: {id}"));
+            }
+        }
+        let config = self.autoFillMissingMetadata(config);
+        let count = config.mcpServers.len();
+        let mut merged = current;
+        merged.mcpServers.extend(config.mcpServers.clone());
+        merged.pluginMetadata.extend(config.pluginMetadata);
+        self.writeMCPConfig(&merged)?;
+        for id in config.mcpServers.keys() {
+            if scope == "space" {
+                ExtensionStore::default().moveScope("mcp", id, scope)?;
+            }
+        }
+        self.initializeMissingServerStatus()?;
+        Ok(count)
     }
 
     #[allow(non_snake_case)]

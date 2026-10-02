@@ -386,3 +386,99 @@ async fn nearest_authorized_reviewer_only_then_offline_transfer_and_remote_decis
     assert_eq!(applicant.deviceSpace().unwrap(), gateway.deviceSpace().unwrap());
     assert!(!gatewayRouter.networkControlStore.nodeHasCapability("mesh-gateway", "network.members.join", None).unwrap());
 }
+
+
+/// Exercises shared pairing with client-only Host capabilities and no TCP or listener on the initiator.
+#[tokio::test]
+async fn outbound_only_hosts_pair_over_http_and_websocket() {
+    use crate::HostRuntimePeerService::HostRuntimePeerService;
+    use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
+    use operit_host_api::HostManager::HostManager;
+    use operit_host_native_common::{NativeHttpHost, NativeHttpServerHost};
+    use operit_link::protocol::LinkDeviceInfo;
+
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    for (transport, scheme) in [(PeerTransport::Http, "http"), (PeerTransport::WebSocket, "ws")] {
+        let (clientRouter, _) = approvalService(&format!("client-only-{scheme}"));
+        let (serverRouter, _) = approvalService(&format!("server-{scheme}"));
+        let clientRouter = Arc::new(clientRouter);
+        let serverRouter = Arc::new(serverRouter);
+        let network = Arc::new(NativeHttpHost::new());
+        let clientHost = Arc::new(HostManager {
+            runtimeStorageHost: Some(clientRouter.localCore.runtimeStorageHost()),
+            httpHost: Some(network.clone()),
+            webSocketHost: Some(network),
+            hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+            ..HostManager::default()
+        });
+        assert!(clientHost.tcpHost.is_none());
+        assert!(clientHost.httpServerHost.is_none());
+        assert!(clientHost.serviceDiscoveryHost.is_none());
+        let serverHost = Arc::new(HostManager {
+            runtimeStorageHost: Some(serverRouter.localCore.runtimeStorageHost()),
+            httpServerHost: Some(Arc::new(NativeHttpServerHost)),
+            hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+            ..HostManager::default()
+        });
+        let info = LinkDeviceInfo { platform: "test".into(), model: scheme.into() };
+        let clientPeer = HostRuntimePeerService::new(clientHost.clone(), &clientRouter, info.clone()).unwrap();
+        let serverPeer = HostRuntimePeerService::new(serverHost, &serverRouter, info).unwrap();
+        clientRouter.installNodeServices(NodeServices::new(clientPeer.clone())).unwrap();
+        serverRouter.installNodeServices(NodeServices::new(serverPeer.clone())).unwrap();
+        let client = RuntimeRemoteLinkService::newWithRouter((*clientRouter.localCore).clone(), (*clientRouter).clone());
+        let server = RuntimeRemoteLinkService::newWithRouter((*serverRouter.localCore).clone(), (*serverRouter).clone());
+        PeerStateStore::new(serverRouter.localCore.runtimeStorageHost()).saveHostConfig(&PeerHostConfig {
+            bindAddress: "127.0.0.1:0".into(), token: "required-test-token".into(),
+            transports: vec![transport], discoveryEnabled: false,
+            portMode: PeerHostPortMode::Automatic, updatedAt: 1,
+        }).unwrap();
+        server.startListening(vec![transport]).await.unwrap();
+        let address = PeerStateStore::new(serverRouter.localCore.runtimeStorageHost())
+            .hostConfig().unwrap().unwrap().bindAddress;
+        let endpoint = format!("{scheme}://{address}/link");
+        let result = tokio::time::timeout(Duration::from_secs(20), async {
+            let promptFlow = server.pairingPromptsFlow().unwrap();
+            let clientPromptFlow = client.pairingPromptsFlow().unwrap();
+            let overview = client.deviceSpaceSnapshotFlow().unwrap();
+            assert!(promptFlow.value().is_empty());
+            assert!(clientPromptFlow.value().is_empty());
+            assert!(client.discoverPeers(1).await.is_err());
+            assert!(client.startPairing(serverRouter.localNodeId(), endpoint.clone(), transport,
+                Some("wrong-token".into())).await.is_err());
+            assert!(server.pairingPrompts().unwrap().is_empty());
+            let pairing = client.startPairing(serverRouter.localNodeId(), endpoint, transport,
+                Some("required-test-token".into())).await.unwrap();
+            let prompts = server.pairingPrompts().unwrap();
+            let code = prompts.iter().find(|prompt| prompt.pairingId == pairing.pairingId)
+                .unwrap().confirmationCode.clone();
+            assert_eq!(code.len(), 6);
+            let wrongCode = if code == "000000" { "111111" } else { "000000" };
+            assert!(client.finishPairing(pairing.pairingId.clone(), wrongCode.into()).await.is_err());
+            assert!(clientPeer.pairedPeers().unwrap().is_empty());
+            let paired = client.finishPairing(pairing.pairingId, code).await.unwrap();
+            assert!(paired.outbound && !paired.inbound);
+            assert_eq!(paired.nodeId, serverRouter.localNodeId());
+            assert!(client.pairedDeviceOnline(serverRouter.localNodeId()).unwrap());
+            assert!(server.pairedDeviceOnline(clientRouter.localNodeId()).unwrap());
+            assert!(server.pairingPrompts().unwrap().is_empty());
+            let stored = clientPeer.pairedPeers().unwrap();
+            assert_eq!(stored.len(), 1);
+            assert!(stored[0].outbound && !stored[0].inbound);
+            assert!(serverPeer.pairedPeers().unwrap()[0].inbound);
+            drop((promptFlow, clientPromptFlow, overview));
+            clientPeer.stop().await.unwrap();
+            let restored = HostRuntimePeerService::new(clientHost.clone(), &clientRouter,
+                LinkDeviceInfo { platform: "test".into(), model: "restored".into() }).unwrap();
+            let mut changed = restored.subscribePeerChanges();
+            while !restored.activePeerNodeIds().unwrap().contains(&serverRouter.localNodeId()) {
+                changed.recv().await.unwrap();
+            }
+            assert!(restored.pairedPeers().unwrap()[0].outbound);
+            restored.stop().await.unwrap();
+        }).await;
+        clientPeer.stop().await.unwrap();
+        serverPeer.stop().await.unwrap();
+        result.unwrap();
+    }
+}

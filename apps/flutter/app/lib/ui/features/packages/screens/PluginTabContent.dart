@@ -6,6 +6,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../components/EmptyState.dart';
 import '../components/PackageGrid.dart';
+import '../components/ExtensionScopeControls.dart';
 import '../components/PackageListItem.dart';
 import '../utils/PackageDisplayUtils.dart';
 
@@ -16,6 +17,8 @@ class PluginTabContent extends StatelessWidget {
     required this.plugins,
     required this.morePlugins,
     required this.loadIssues,
+    required this.scopes,
+    required this.onMoveScope,
     required this.enabledPluginNames,
     required this.isLoading,
     required this.isSearchActive,
@@ -30,6 +33,9 @@ class PluginTabContent extends StatelessWidget {
   final List<core_proxy.ToolPkgContainerRuntime> plugins;
   final List<core_proxy.BundledExternalPackageCandidate> morePlugins;
   final List<core_proxy.ToolPkgLoadIssue> loadIssues;
+  final Map<String, String> scopes;
+  final ValueChanged<String> onMoveScope;
+
   final Set<String> enabledPluginNames;
   final bool isLoading;
   final bool isSearchActive;
@@ -72,12 +78,6 @@ class PluginTabContent extends StatelessWidget {
                 ),
               )
             else ...<Widget>[
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                sliver: const SliverToBoxAdapter(
-                  child: _PluginSectionHeader(title: '当前插件'),
-                ),
-              ),
               if (plugins.isEmpty && loadIssues.isEmpty)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
@@ -90,35 +90,43 @@ class PluginTabContent extends StatelessWidget {
               else
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                  sliver: PackageSliverList(
-                    itemCount: plugins.length,
-                    itemBuilder: (context, index) {
-                      final plugin = plugins[index];
-                      final issueMessage = plugin.dependencyIssues.isEmpty
-                          ? null
-                          : _pluginDependencyIssueMessage(plugin);
-                      final item = PackageListItem(
-                        key: ValueKey<String>('plugin:${plugin.packageName}'),
-                        icon: Icons.extension_outlined,
-                        title: toolPkgContainerDisplayName(plugin),
-                        subtitle: localizedText(plugin.description),
-                        metadata: <String>[
-                          plugin.packageName,
-                          'v${plugin.version}',
-                          '${plugin.subpackages.length} 子包',
-                          if (plugin.dependencyIssues.isNotEmpty)
-                            '${plugin.dependencyIssues.length} 个前置插件问题',
-                        ],
-                        hasError: plugin.dependencyIssues.isNotEmpty,
-                        errorMessage: issueMessage,
-                        enabled: enabledPluginNames.contains(
-                          plugin.packageName,
-                        ),
-                        onDetails: () => onPluginTap(plugin),
-                        onEnabledChanged: (enabled) =>
-                            onPluginEnabledChanged(plugin, enabled),
-                        trailingActions: toolPkgHasUi(plugin)
-                            ? <Widget>[
+                  sliver:
+                      ScopedExtensionSliver<core_proxy.ToolPkgContainerRuntime>(
+                        items: plugins,
+                        scopes: scopes,
+                        identity: (plugin) => plugin.packageName,
+                        itemBuilder: (context, plugin) {
+                          final issueMessage = plugin.dependencyIssues.isEmpty
+                              ? null
+                              : _pluginDependencyIssueMessage(plugin);
+                          final item = PackageListItem(
+                            key: ValueKey<String>(
+                              'plugin:${plugin.packageName}',
+                            ),
+                            icon: Icons.extension_outlined,
+                            title: toolPkgContainerDisplayName(plugin),
+                            subtitle: localizedText(plugin.description),
+                            metadata: <String>[
+                              plugin.packageName,
+                              'v${plugin.version}',
+                              '${plugin.subpackages.length} 子包',
+                              if (plugin.dependencyIssues.isNotEmpty)
+                                '${plugin.dependencyIssues.length} 个前置插件问题',
+                            ],
+                            hasError: plugin.dependencyIssues.isNotEmpty,
+                            errorMessage: issueMessage,
+                            enabled: enabledPluginNames.contains(
+                              plugin.packageName,
+                            ),
+                            onDetails: () => onPluginTap(plugin),
+                            onEnabledChanged: (enabled) =>
+                                onPluginEnabledChanged(plugin, enabled),
+                            trailingActions: <Widget>[
+                              ExtensionScopeAction(
+                                scope: scopes[plugin.packageName]!,
+                                onMove: () => onMoveScope(plugin.packageName),
+                              ),
+                              if (toolPkgHasUi(plugin))
                                 IconButton(
                                   tooltip:
                                       enabledPluginNames.contains(
@@ -134,20 +142,19 @@ class PluginTabContent extends StatelessWidget {
                                       : null,
                                   icon: const Icon(Icons.open_in_new_outlined),
                                 ),
-                              ]
-                            : const <Widget>[],
-                      );
-                      final onReordered = onPluginReordered;
-                      if (onReordered == null) {
-                        return item;
-                      }
-                      return _PluginReorderTarget(
-                        plugin: plugin,
-                        onReordered: onReordered,
-                        child: item,
-                      );
-                    },
-                  ),
+                            ],
+                          );
+                          final onReordered = onPluginReordered;
+                          if (onReordered == null) {
+                            return item;
+                          }
+                          return _PluginReorderTarget(
+                            plugin: plugin,
+                            onReordered: onReordered,
+                            child: item,
+                          );
+                        },
+                      ),
                 ),
               if (loadIssues.isNotEmpty) ...<Widget>[
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),

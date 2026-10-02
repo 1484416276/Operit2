@@ -1007,3 +1007,52 @@ fn unchanged_edit_skips_storage_persistence() {
         .expect("unchanged preferences edit");
     assert_eq!(host.writeCount(), initialWriteCount);
 }
+
+/// A derived sharing job follows its owner's lifetime, not its update callback.
+#[test]
+fn state_flow_upstream_collection_cancels_only_after_last_owner() {
+    let cancellation = super::FlowCancellation::new();
+    let state = mutableStateFlow(1).asStateFlow();
+    let collect = state.upstreamCollector(cancellation.clone());
+    let retained = state.clone();
+    drop(state);
+    assert!(!cancellation.isCancelled());
+    assert!(collect(2));
+    assert_eq!(retained.value(), 2);
+    drop(retained);
+    assert!(cancellation.isCancelled());
+    assert!(!collect(3));
+}
+
+/// stateIn's observation callback must not retain its own resulting StateFlow.
+#[test]
+fn state_in_releases_observation_on_last_state_drop() {
+    let observationCancelled = super::FlowCancellation::new();
+    let cancelledForObservation = observationCancelled.clone();
+    let callbacks = Arc::new(Mutex::new(Vec::new()));
+    let callbacksForObservation = callbacks.clone();
+    let source = super::Flow::newObservedWithObservation(
+        || Ok(7),
+        |_| false,
+        super::FlowObservation {
+            subscribe: Arc::new(move |callback| {
+                callbacksForObservation.lock().unwrap().push(callback);
+                super::FlowObservationSubscription {
+                    _guard: Box::new(super::FlowSubscription {
+                        cancellation: cancelledForObservation.clone(),
+                        _observation: None,
+                    }),
+                }
+            }),
+        },
+    );
+    let state = source.stateIn(super::CoroutineScope, super::SharingStarted::Lazily, 0);
+    assert_eq!(state.value(), 7);
+    let retained = state.clone();
+    drop(state);
+    assert!(!observationCancelled.isCancelled());
+    drop(retained);
+    assert!(observationCancelled.isCancelled());
+    // A late notification from the old source is harmless.
+    for callback in callbacks.lock().unwrap().iter() { callback(); }
+}

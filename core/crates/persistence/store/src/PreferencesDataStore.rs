@@ -480,9 +480,13 @@ impl<T> Flow<T> {
     {
         let stateFlow = StateFlow::new(initialValue);
         let cancellation = FlowCancellation::new();
-        let stateFlowForSubscription = stateFlow.clone();
+        // The sharing subscription belongs to the resulting state, not vice
+        // versa. Its callback must not retain its owner and form a cycle.
+        let target = Arc::downgrade(&stateFlow.inner);
         if let Ok(subscription) = self.subscribeWithCancellation(cancellation, move |value| {
-            stateFlowForSubscription.set_value(value);
+            if let Some(inner) = target.upgrade() {
+                StateFlow { inner }.set_value(value);
+            }
         }) {
             stateFlow.setUpstreamSubscription(subscription);
         }
@@ -594,6 +598,31 @@ where
             .lock()
             .expect("StateFlow upstream state subscription mutex must not be poisoned")
             .push(subscription);
+    }
+
+    /// Binds an upstream collector's cancellation to this derived state's owner.
+    /// Uses the same subscription ownership as `Flow::stateIn`; the returned
+    /// callback updates the state without keeping an abandoned sharing job alive.
+    #[allow(non_snake_case)]
+    pub fn upstreamCollector(
+        &self,
+        cancellation: FlowCancellation,
+    ) -> impl Fn(T) -> bool + Send + Sync + 'static
+    where
+        T: Send + 'static,
+    {
+        self.setUpstreamSubscription(FlowSubscription {
+            cancellation,
+            _observation: None,
+        });
+        let target = Arc::downgrade(&self.inner);
+        move |value| {
+            let Some(inner) = target.upgrade() else {
+                return false;
+            };
+            StateFlow { inner }.set_value(value);
+            true
+        }
     }
 
     /// Returns the current state value.

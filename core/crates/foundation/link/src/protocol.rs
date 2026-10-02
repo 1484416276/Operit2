@@ -637,7 +637,11 @@ impl LinkDeviceInfo {
     }
 
     pub fn displayName(&self) -> String {
-        format!("{}-{}", self.platform, self.model)
+        [self.platform.trim(), self.model.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
     }
 }
 

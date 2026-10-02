@@ -2074,7 +2074,7 @@ class _AiSetupDeviceSpacePage extends StatelessWidget {
                 icon: Icons.cloud_sync_rounded,
                 eyebrow: '设备空间',
                 title: '加入设备空间',
-                description: '扫描附近设备空间并选择一台设备。完成配对后会先同步模型、配置和数据，再结束引导。',
+                description: '点击添加设备，选择附近的设备并完成配对。管理员批准加入后，才会同步配置和数据。',
               ),
               const SizedBox(height: 22),
               DeviceSpaceDiscoveryPanel(

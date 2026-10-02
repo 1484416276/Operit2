@@ -25,6 +25,8 @@ use crate::{
 
 /// Runtime 的 Space 业务对象；仍使用标准 Link Call，不新增握手消息或 HTTP 路径。
 pub(crate) const NODE_SPACE_TARGET: &str = "node.space";
+// Same-Space, authenticated routing only; never available to an unadmitted applicant.
+pub(crate) const NODE_SPACE_APPROVAL_TARGET: &str = "node.space.approval";
 
 #[derive(Serialize, Deserialize)]
 struct PeerSpaceSnapshot {
@@ -32,11 +34,42 @@ struct PeerSpaceSnapshot {
     deviceProfiles: Vec<CoreSpaceDeviceProfile>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct PeerSpaceJoin {
     space: CoreSpace,
     controlOperations: Vec<SyncOperation>,
 }
+
+/// Join approval is separate from pairing and from synchronized membership.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpaceJoinStatus { Pending, Approving, Approved, Rejected, Cancelled, Expired, Joined }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpaceJoinRequest {
+    pub requestId: String,
+    pub targetDeviceId: String,
+    pub applicantDeviceId: String,
+    pub applicantName: String,
+    pub spaceName: String,
+    pub status: SpaceJoinStatus,
+    pub createdAt: i64,
+    pub expiresAt: i64,
+    pub canApprove: bool,
+    #[serde(default)]
+    pub reviewerDeviceId: Option<String>,
+    #[serde(default)]
+    pub reviewerName: Option<String>,
+    #[serde(default)]
+    pub reviewerHops: Option<u32>,
+    #[serde(default)]
+    pub assignmentVersion: u64,
+    #[serde(default)]
+    pub decisionApprove: Option<bool>,
+}
+
+#[path = "peer/space_join.rs"]
+mod space_join;
 
 /// 已配对设备的展示投影；不暴露底层会话、端点或传输选择。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -504,45 +537,46 @@ impl RuntimeRemoteLinkService {
     /// Leaves the current device space while preserving all direct pairing records.
     #[allow(non_snake_case)]
     pub fn leaveDeviceSpace(&self) -> Result<CoreSpace, String> {
-        self.spaceStore.leave()
+        let space = self.spaceStore.leave()?;
+        // Leaving creates a new singleton Space. Its creator must receive the
+        // initial policy here, not only on the next application startup.
+        self.networkControlStore.initializeCurrentSpace()?;
+        Ok(space)
     }
 
     /// 加入直接配对节点的 Space。地址、会话与鉴权由同一个节点通信服务处理。
     pub async fn joinPairedDeviceSpace(&self, deviceId: String) -> Result<CoreSpace, String> {
-        let snapshot: PeerSpaceSnapshot = self.callPeerSpace(
-            &deviceId, "snapshot", CoreValue::Null,
-        ).await?;
-        let peerSpace = snapshot.space;
-        if !peerSpace.members.contains(&deviceId) {
-            return Err("paired device is not present in its advertised device space".into());
+        // Compatibility entry point: never admit a member without local approval.
+        let request = self.requestDeviceSpaceJoin(deviceId).await?;
+        let status = self.refreshDeviceSpaceJoin(request.requestId).await?;
+        if status.status != SpaceJoinStatus::Joined {
+            return Err("SPACE_JOIN_PENDING: Waiting for the target device to approve the join request".into());
         }
-        let localNodeId = self.nodeRouter.localNodeId();
-        let mut proposal = peerSpace.clone();
-        if !proposal.members.contains(&localNodeId) {
-            proposal.members.push(localNodeId);
-            proposal.spaceRevision = proposal.spaceRevision.checked_add(1)
-                .ok_or("Device space revision overflow during join")?;
-        }
-        // CoreSpaceStore persists members in sorted order; compare canonical proposals.
-        proposal.members.sort();
-        // 已有成员重试也取回控制操作，避免上次中断后只留下 Space 而没有权限状态。
-        let accepted: PeerSpaceJoin = self.callPeerSpace(
-            &deviceId, "join", toCoreValue(PeerSpaceSnapshot {
-                space: proposal.clone(),
-                deviceProfiles: self.spaceStore.deviceProfilesForCurrentSpace()?,
-            }).map_err(|error| error.to_string())?,
-        ).await?;
-        if accepted.space != proposal {
-            return Err("peer accepted a different Space join proposal".into());
-        }
-        self.spaceStore.adopt(accepted.space)?;
-        self.spaceStore.importDeviceProfiles(snapshot.deviceProfiles)?;
-        for operation in accepted.controlOperations {
-            self.networkControlStore.applyBootstrapOperation(&operation)?;
-        }
-        self.persistenceSyncService()
-            .synchronizeReachablePeer(deviceId, 512, true).await?;
         self.spaceStore.space()
+    }
+
+    pub async fn requestDeviceSpaceJoin(&self, deviceId: String) -> Result<SpaceJoinRequest, String> {
+        space_join::request(self, deviceId).await
+    }
+
+    pub fn outgoingDeviceSpaceJoins(&self) -> Result<Vec<SpaceJoinRequest>, String> {
+        space_join::outgoing(self)
+    }
+
+    pub async fn incomingDeviceSpaceJoins(&self) -> Result<Vec<SpaceJoinRequest>, String> {
+        space_join::incoming(self).await
+    }
+
+    pub async fn refreshDeviceSpaceJoin(&self, requestId: String) -> Result<SpaceJoinRequest, String> {
+        space_join::refresh(self, requestId).await
+    }
+
+    pub async fn decideDeviceSpaceJoin(&self, requestId: String, assignmentVersion: u64, approve: bool) -> Result<SpaceJoinRequest, String> {
+        space_join::decide(self, requestId, assignmentVersion, approve).await
+    }
+
+    pub async fn cancelDeviceSpaceJoin(&self, requestId: String) -> Result<SpaceJoinRequest, String> {
+        space_join::cancel(self, requestId).await
     }
 
     async fn callPeerSpace<T: serde::de::DeserializeOwned>(
@@ -571,25 +605,14 @@ impl RuntimeRemoteLinkService {
                 toCoreValue(self.spaceStore.observePairedDeviceSpace(peerNodeId.to_string(), space)?)
                     .map_err(|error| error.to_string())
             },
-            "join" => {
-                let proposal: PeerSpaceSnapshot = fromCoreValue(request.args)
-                    .map_err(|error| error.to_string())?;
-                let current = self.spaceStore.initialize()?;
-                validateSpaceJoin(&current, peerNodeId, &proposal.space)?;
-                if !current.members.iter().any(|nodeId| nodeId == peerNodeId) {
-                    self.networkControlStore.admitMember(peerNodeId.to_string())?;
-                }
-                let controlOperations = self.networkControlStore.currentSpaceOperations()?;
-                // 对端只能提供自己的资料，不能借加入操作覆盖别的成员资料。
-                self.spaceStore.importDeviceProfiles(proposal.deviceProfiles.into_iter()
-                    .filter(|profile| profile.nodeId == peerNodeId).collect())?;
-                toCoreValue(PeerSpaceJoin {
-                    space: self.spaceStore.adopt(proposal.space)?,
-                    controlOperations,
-                }).map_err(|error| error.to_string())
-            },
+            "requestJoin" | "joinStatus" | "cancelJoin" => space_join::receive(self, peerNodeId, request),
+            "join" => Err("SPACE_JOIN_APPROVAL_REQUIRED: Submit a join request for local approval first".into()),
             _ => Err("Unknown node Space method".into()),
         }
+    }
+
+    pub(crate) async fn acceptSpaceApprovalCall(&self, origin: &str, request: CoreCallRequest) -> Result<CoreValue, String> {
+        space_join::receiveApproval(self, origin, request)
     }
 
     /// Returns one device-indexed projection from the preserved state files, without exposing sessions.

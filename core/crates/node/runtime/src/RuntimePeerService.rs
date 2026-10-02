@@ -101,7 +101,8 @@ pub trait RuntimePeerService: Send + Sync {
     /// 多个传输渠道属于同一个身份；调用方看不到端点、会话或密钥。
     fn outboundPeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
-    /// 当前可用于本节点发送请求的已鉴权相邻节点，不包含匿名连接或仅有入站授权的节点。
+    /// 当前有已认证在线证据的相邻节点，不包含匿名连接。
+    /// 同空间回连通过独立的空间凭证建立，不修改普通配对方向。
     fn activePeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
     /// 订阅待确认配对、授权或可用性变化；先订阅再读取快照，避免启动时漏掉变化。

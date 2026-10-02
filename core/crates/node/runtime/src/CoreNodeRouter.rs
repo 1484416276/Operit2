@@ -23,7 +23,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::GeneratedCoreRoute;
 use crate::SpaceRuntime::SpaceRuntime;
-use crate::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, NODE_SPACE_TARGET};
+use crate::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, NODE_SPACE_TARGET, NODE_SPACE_APPROVAL_TARGET};
 
 #[path = "peer/sync_dispatch.rs"]
 mod sync_dispatch;
@@ -550,6 +550,21 @@ impl CoreNodeRouter {
         };
         self.requireRoutePermission(&route, callerNodeId, targetNodeId)
     }
+    /// A transport grant is usable only after both memberships have been
+    /// admitted by the current Space control log; mere pairing is insufficient.
+    pub(crate) fn spaceChannelScope(&self, peer: &str) -> Result<Option<String>, CoreLinkError> {
+        let space = self.spaceStore.space().map_err(CoreLinkError::internal)?;
+        let control = self.networkControlStore.currentState().map_err(CoreLinkError::internal)?;
+        let members = [&self.localNodeId, &peer.to_string()];
+        if peer == self.localNodeId || !control.initialized || control.spaceId != space.spaceId
+            || members.iter().any(|node| !space.members.contains(node)
+                || !control.memberNodeIds.contains(*node) || control.removedNodeIds.contains(*node)
+                || control.disconnectedNodeIds.contains(*node)) {
+            return Ok(None);
+        }
+        Ok(Some(space.spaceId))
+    }
+
     /// Reports whether the active Peer Link graph currently proves one device reachable.
     #[allow(non_snake_case)]
     pub fn nodeIsReachable(&self, targetNodeId: &str) -> Result<bool, String> {
@@ -1354,7 +1369,11 @@ impl CoreNodeRouter {
         let applicationObjectId = self.localCore.targetForSchema("application");
         let isApplicationCall =
             applicationObjectId.is_some_and(|objectId| objectId == request.target);
-        let response = if isApplicationCall {
+        let response = if request.target == NODE_SPACE_APPROVAL_TARGET {
+            let result = RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone())
+                .acceptSpaceApprovalCall(&self.localNodeId, request).await.map_err(CoreLinkError::internal);
+            CoreCallResponse { requestId: requestId.clone(), result }
+        } else if isApplicationCall {
             self.localCore.callApplication(request).await
         } else {
             operit_link::withCoreForceLocal(self.localCore.call(request)).await
@@ -2041,6 +2060,14 @@ impl CoreNodeRouter {
         }
         match self.validateIncomingRoute(&previousNodeId, &request) {
             Ok(true) => {
+                if request.payload.target == NODE_SPACE_APPROVAL_TARGET {
+                    if request.routeKind != RoutedCoreRequestKind::Target {
+                        return CoreCallResponse::err(requestId, CoreLinkError::new("APPROVAL_ROUTE_INVALID", "Approval requires explicit same-Space routing"));
+                    }
+                    let result = RuntimeRemoteLinkService::newWithRouter((*self.localCore).clone(), self.clone())
+                        .acceptSpaceApprovalCall(&request.originNodeId, request.payload).await.map_err(CoreLinkError::internal);
+                    return CoreCallResponse { requestId, result };
+                }
                 if request.routeKind == RoutedCoreRequestKind::SpaceBinding {
                     return self
                     .callSpaceWithOrigin(request.payload, request.originNodeId)
@@ -5115,4 +5142,6 @@ mod tests {
             .await;
         assert!(flow.value().is_empty());
     }
+    mod space_join_tests { use super::*; include!("router_space_join_tests.rs"); }
+
 }

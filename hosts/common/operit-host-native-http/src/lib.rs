@@ -145,7 +145,6 @@ fn executeNativeWebSocket(
     onOpened: WebSocketOpenedCallback,
     onMessage: WebSocketMessageCallback,
 ) -> HostResult<()> {
-    let readTimeoutSeconds = request.connectTimeoutSeconds;
     let mut websocketRequest = request
         .url
         .into_client_request()
@@ -161,7 +160,7 @@ fn executeNativeWebSocket(
     }
     let (mut socket, _) = tungstenite::connect(websocketRequest)
         .map_err(|error| HostError::new(format!("WebSocket connect failed: {error}")))?;
-    setWebSocketReadTimeout(&mut socket, readTimeoutSeconds);
+    setWebSocketReadTimeout(&mut socket);
     onOpened();
     loop {
         while let Ok(command) = commandReceiver.try_recv() {
@@ -197,10 +196,11 @@ fn executeNativeWebSocket(
 /// Applies a short polling timeout so sends and closes are observed promptly.
 fn setWebSocketReadTimeout(
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
-    connectTimeoutSeconds: u64,
 ) {
-    let timeout =
-        Duration::from_millis(connectTimeoutSeconds.saturating_mul(1000).clamp(100, 1000));
+    // This is the command-queue polling interval, not a connect/read deadline.
+    // A one-second tick delays every outbound handshake and call frame while
+    // the peer is waiting for us, multiplying into multi-second sync exchanges.
+    let timeout = Duration::from_millis(20);
     if let tungstenite::stream::MaybeTlsStream::Plain(stream) = socket.get_mut() {
         let _ = stream.set_read_timeout(Some(timeout));
     } else if let tungstenite::stream::MaybeTlsStream::Rustls(stream) = socket.get_mut() {
@@ -1202,6 +1202,46 @@ mod tests {
             .unwrap()
             .is_ok());
         server.join().unwrap();
+    }
+
+    /// An idle inbound socket must not delay a newly queued outbound frame by
+    /// the connection timeout (the Link handshake waits for this very frame).
+    #[test]
+    fn websocketSendsPromptlyWhileWaitingForAnInboundMessage() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            assert_eq!(socket.read().unwrap(), tungstenite::Message::Binary(b"queued-message".to_vec()));
+            socket.send(tungstenite::Message::Binary(b"received".to_vec())).unwrap();
+            let _ = socket.close(None);
+        });
+        let host = NativeHttpHost::new();
+        let (openedSender, openedReceiver) = mpsc::channel();
+        let (messageSender, messageReceiver) = mpsc::channel();
+        let (closedSender, closedReceiver) = mpsc::channel();
+        host.openWebSocket(
+            "websocket-send-latency-test".into(),
+            WebSocketRequestData {
+                url: format!("ws://{address}"), headers: Vec::new(),
+                connectTimeoutSeconds: 15, ignoreSsl: false,
+            },
+            Arc::new(move || { openedSender.send(()).unwrap(); }),
+            Arc::new(move |message| { let _ = messageSender.send(message); }),
+            Arc::new(move |result| { let _ = closedSender.send(result); }),
+        ).unwrap();
+        openedReceiver.recv_timeout(Duration::from_secs(3)).unwrap();
+        // Let the network thread enter its read before sending a command.
+        std::thread::sleep(Duration::from_millis(100));
+        host.sendWebSocketMessage("websocket-send-latency-test", b"queued-message".to_vec()).unwrap();
+        let message = messageReceiver.recv_timeout(Duration::from_millis(750));
+        // Close even on a timing assertion failure, so no host thread leaks.
+        let _ = host.closeWebSocket("websocket-send-latency-test");
+        server.join().unwrap();
+        assert_eq!(message.unwrap(), b"received");
+        assert!(closedReceiver.recv_timeout(Duration::from_secs(3)).unwrap().is_ok());
     }
 
     /// Verifies two files enter the server concurrently and publish aggregate progress.

@@ -39,7 +39,7 @@ impl CoreLinkClient for RoutedClient {
         self.router.routedOpenPush(self.peer.clone(), r).await
     }
 }
-pub(super) async fn serve(service: HostRuntimePeerService, channel: Arc<Channel>, peer: String, sessionId: String) -> Result<(), CoreLinkError> {
+pub(super) async fn serve(service: HostRuntimePeerService, channel: Arc<Channel>, peer: String, sessionId: String, spaceChannel: bool) -> Result<(), CoreLinkError> {
     let mut session = CoreLinkSession::new(RoutedClient { router: service.router()?, peer: peer.clone() }, 32);
     loop {
         enum Incoming { Message(Option<PeerMessage>), Event(Option<CoreLinkResponse>) }
@@ -50,12 +50,23 @@ pub(super) async fn serve(service: HostRuntimePeerService, channel: Arc<Channel>
             }
         } else { Incoming::Message(channel.receive().await?) };
         // 每次业务入口重新确认入站授权。撤销不能被存活中的旧连接绕过。
-        let valid = service.inboundCredentials()?
-            .get(&sessionId).is_some_and(|c| c.deviceId == peer && c.pairingServiceVersion == PAIRING_SERVICE_VERSION);
+        let valid = if spaceChannel {
+            service.spaceInbound(&sessionId, &peer).is_ok()
+        } else {
+            service.inboundCredentials()?.get(&sessionId)
+                .is_some_and(|c| c.deviceId == peer && c.pairingServiceVersion == PAIRING_SERVICE_VERSION)
+        };
         if !valid { return Err(error("Inbound authorization revoked")); }
         match incoming {
             Incoming::Message(Some(PeerMessage::Request(request))) => {
-                let response = session.dispatch(request).await;
+                let response = match request {
+                    CoreLinkRequest::Call(request) if request.target == space_channel::TARGET => {
+                        let result = if spaceChannel { Err(error("Return channels cannot issue pairing-scoped offers")) }
+                            else { service.acceptSpaceChannel(&peer, &sessionId, &channel.raw, &request) };
+                        CoreLinkResponse::Call(CoreCallResponse { requestId: request.requestId, result })
+                    }
+                    request => session.dispatch(request).await,
+                };
                 channel.send(PeerMessage::Response(response)).await?;
             },
             Incoming::Event(Some(event)) => channel.send(PeerMessage::Response(event)).await?,

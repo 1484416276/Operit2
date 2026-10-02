@@ -203,6 +203,21 @@ class CoreApplicationService with WidgetsBindingObserver {
       final peerService = _coreClients.server.runtimeRemoteLinkService;
       final config = await peerService.localHostConfig();
       if (config != null && config.transports.isNotEmpty) {
+        // The Flutter listener panel previously wrote Fixed unconditionally,
+        // although it offered no fixed-port option. Migrate those saved configs
+        // so existing installations also recover from port collisions on launch.
+        if (config.portMode == PeerHostPortMode.fixed) {
+          await peerService.saveLocalHostConfig(
+            config: PeerHostConfig(
+              bindAddress: config.bindAddress,
+              token: config.token,
+              transports: config.transports,
+              discoveryEnabled: config.discoveryEnabled,
+              portMode: PeerHostPortMode.automatic,
+              updatedAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+        }
         await peerService.startListening(transports: config.transports);
       }
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();

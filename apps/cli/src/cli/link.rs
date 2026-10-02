@@ -43,6 +43,7 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("token") => Err("usage: operit2 cli link token show".into()),
+        Some("session") => run_link_session(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
         Some("control") => run_link_control_command(&args[1..]).await,
@@ -78,7 +79,7 @@ async fn run_node_pairing_command(args: &[String]) -> Result<(), String> {
 }
 
 /// 管理配置仍保存原路径；监听由统一 RuntimePeerService 拥有。
-async fn run_node_listen(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+async fn start_node_listener(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<Option<u64>, String> {
     use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::{PeerHostConfig, PeerHostPortMode}};
     let mut transports = Vec::new();
     let mut config = application.accessServices().localHostConfig()?.unwrap_or(PeerHostConfig {
@@ -86,6 +87,8 @@ async fn run_node_listen(application: &operit_core_application::CoreApplication,
         transports: Vec::new(), discoveryEnabled: true, portMode: PeerHostPortMode::Fixed,
         updatedAt: operit_host_api::TimeUtils::currentTimeMillis(),
     });
+    // Automatic port avoidance is the default, including for older saved configs.
+    config.portMode = PeerHostPortMode::Automatic;
     let mut duration = None;
     let mut index = 0;
     while index < args.len() {
@@ -100,6 +103,7 @@ async fn run_node_listen(application: &operit_core_application::CoreApplication,
                 }
             },
             "--no-discovery" => config.discoveryEnabled = false,
+            "--fixed-port" => config.portMode = PeerHostPortMode::Fixed,
             value => for mode in value.split(',') {
                 let transport = match mode {
                     "http" => PeerTransport::Http, "ws" => PeerTransport::WebSocket, "tcp" => PeerTransport::Tcp,
@@ -117,9 +121,15 @@ async fn run_node_listen(application: &operit_core_application::CoreApplication,
     config.updatedAt = operit_host_api::TimeUtils::currentTimeMillis();
     application.accessServices().saveLocalHostConfig(config.clone())?;
     application.accessServices().startListening(transports).await?;
+    let config = application.accessServices().localHostConfig()?.ok_or("Listener config missing after startup")?;
     let ready = serde_json::json!({"listening": true, "nodeId": application.localNodeId(), "bindAddress": config.bindAddress, "transports": config.transports});
     if cli_json_mode() { emit_cli_json(ready); } else { println!("{ready}"); }
     io::stdout().flush().map_err(|e| e.to_string())?;
+    Ok(duration)
+}
+
+async fn run_node_listen(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    let duration = start_node_listener(application, args).await?;
     // 本机验证码通过普通管理命令 `link prompts` 查看，不放入匿名协议响应。
     match duration {
         Some(ms) => application.localClient().hostManager().hostRuntimeTaskSchedulerHost.as_ref()
@@ -128,6 +138,109 @@ async fn run_node_listen(application: &operit_core_application::CoreApplication,
     }
     application.accessServices().stopListening().await?;
     Ok(())
+}
+
+/// One live Core application for interactive network management. No per-command
+/// restart, hidden approval, or private test storage path/protocol.
+async fn run_link_session(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--duration-ms") {
+        return Err("link session does not accept --duration-ms; use quit or Ctrl-C".into());
+    }
+    let application = create_cli_core_application_configured("session", configure_link_core).await?;
+    let result = run_link_session_inner(&application, args).await;
+    application.shutdown().await;
+    result
+}
+
+fn parse_session_command(line: &str) -> Result<Vec<String>, String> {
+    if line.trim_start().starts_with('[') {
+        serde_json::from_str(line).map_err(|e| format!("Expected a JSON array of command arguments: {e}"))
+    } else {
+        Ok(line.split_whitespace().map(str::to_owned).collect())
+    }
+}
+
+async fn run_link_session_inner(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    start_node_listener(application, args).await?;
+    if !cli_json_mode() {
+        println!("Commands: pair-start/pair-finish/prompts/peers, space ..., control ..., core ..., quit");
+        println!("For arguments containing spaces, enter a JSON array, e.g. [\"space\",\"rename\",\"My Space\"]");
+    }
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
+    // stdin must not block the executor that owns live peer sessions and sync.
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in io::stdin().lock().lines() {
+            let failed = line.is_err();
+            if sender.blocking_send(line.map_err(|e| e.to_string())).is_err() || failed { break; }
+        }
+    });
+    loop {
+        let line = tokio::select! {
+            line = receiver.recv() => match line { Some(line) => line?, None => break },
+            signal = tokio::signal::ctrl_c() => { signal.map_err(|e| e.to_string())?; break; }
+        };
+        let result = match parse_session_command(&line) {
+            Ok(command) if command.is_empty() => continue,
+            Ok(command) if command.as_slice() == ["quit"] || command.as_slice() == ["exit"] => break,
+            Ok(command) => execute_link_session_command(application, &command).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"error": error})); }
+            else { eprintln!("{error}"); }
+        }
+        io::stdout().flush().map_err(|e| e.to_string())?;
+    }
+    application.accessServices().stopListening().await?;
+    if cli_json_mode() { emit_cli_json(serde_json::json!({"stopped": true})); }
+    Ok(())
+}
+
+async fn execute_link_session_command(application: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("space") => execute_link_space_command(application, &args[1..]).await,
+        Some("control") => execute_link_control_command(application, &args[1..]).await,
+        Some("token") if args.len() == 2 && args[1] == "show" => {
+            let token = application.localPairingToken()?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"token": token})); }
+            else { println!("{token}"); }
+            Ok(())
+        }
+        Some("pair-start" | "pair-finish" | "pair-cancel" | "unpair" | "peers" | "prompts") =>
+            execute_node_pairing_command(application.nodeServices()?.peers().as_ref(), args).await,
+        Some("chat-watch") if args.len() == 2 => {
+            let target = operit_proxy_local::LocalCoreProxy::generatedTargetForSchema("chatRuntimeHolderMain")
+                .ok_or("Chat schema missing")?;
+            let mut snapshots = serde_json::Map::new();
+            for property in ["chatMessagesFlow", "chatStateFlow"] {
+                let event = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    let mut stream = application.localClient().watch(CoreWatchRequest::new(
+                        format!("session-{property}-{}", link_probe_unix_millis()), target, property,
+                        operit_link::toCoreValue(serde_json::json!({"chatId": args[1]})).map_err(|e| e.to_string())?,
+                    )).await.map_err(|e| e.to_string())?;
+                    stream.recv().await.ok_or_else(|| "Chat watch ended before snapshot".to_string())
+                }).await.map_err(|_| format!("Chat watch timed out: {property}"))??;
+                let value: serde_json::Value = operit_link::fromCoreValue(event.value).map_err(|e| e.to_string())?;
+                snapshots.insert(property.into(), value);
+            }
+            snapshots.insert("route".into(), serde_json::to_value(
+                application.nodeRouter().bindingRouteStatus(args[1].clone())?
+            ).map_err(|e| e.to_string())?);
+            emit_cli_json(serde_json::Value::Object(snapshots));
+            Ok(())
+        }
+        Some("core") if args.len() > 1 => {
+            let mut proxy = operit_proxy_local::GeneratedCoreProxy::new(crate::core_proxy::SharedLocalCore(application.localClient()));
+            let mut command = args[1..].to_vec();
+            if cli_json_mode() { command.push("--json".into()); }
+            let output = proxy.runCoreCommand(&command).await.map_err(core_command_error_message)?;
+            if !output.stdout.is_empty() { ::std::println!("{}", output.stdout); }
+            if !output.stderr.is_empty() { eprint!("{}", output.stderr); }
+            Ok(())
+        }
+        _ => Err("session commands: pair-start|pair-finish|pair-cancel|unpair|prompts|peers|token show|space|control|core|chat-watch <chat-id>|quit".into()),
+    }
 }
 
 async fn execute_node_pairing_command(
@@ -328,13 +441,19 @@ async fn run_link_discover_command(args: &[String]) -> Result<(), String> {
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     let ownsSpaceMutation = matches!(
         args,
-        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "remove" | "join" | "leave")
+        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync")
     );
     let coreApplication = if ownsSpaceMutation {
         create_cli_core_application("client").await?
     } else {
         create_cli_core_application_without_space_sync("client").await?
     };
+    let result = execute_link_space_command(&coreApplication, args).await;
+    coreApplication.shutdown().await;
+    result
+}
+
+async fn execute_link_space_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
     let service = coreApplication.accessServices();
     match args.first().map(String::as_str) {
         None | Some("show") if args.len() <= 1 => {
@@ -354,9 +473,16 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("status") if args.len() == 2 => {
-            let topology = service.deviceSpaceTopology()?;
-            let device_id = network_device_id(&topology, &args[1])?;
-            let device_label = network_device_label_by_id(&topology, &device_id)?;
+            // Paired devices in independent Spaces are not in the current
+            // Space topology yet, but their connection status is still inspectable.
+            let (device_id, device_label) = if service.pairedDevicesSnapshot()?.contains_key(&args[1]) {
+                (args[1].clone(), args[1].clone())
+            } else {
+                let topology = service.deviceSpaceTopology()?;
+                let id = network_device_id(&topology, &args[1])?;
+                let label = network_device_label_by_id(&topology, &id)?;
+                (id, label)
+            };
             let status = service.pairedDeviceStatus(device_id).await?;
             if cli_json_mode() { emit_cli_json(serde_json::json!({ "status": format!("{status:?}") })); }
             else { println!("{device_label}: {status:?}"); }
@@ -381,9 +507,38 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("join") if args.len() == 2 => {
-            let space = service.joinPairedDeviceSpace(args[1].clone()).await?;
-            if cli_json_mode() { emit_cli_json(serde_json::json!(space)); }
-            else { println!("Joined device space {} ({} devices)", space.spaceName, space.members.len()); }
+            let request = service.requestDeviceSpaceJoin(args[1].clone()).await?;
+            print_space_join_request(&request)?;
+            Ok(())
+        }
+        Some("requests") if args.len() == 2 => {
+            let requests = match args[1].as_str() {
+                "incoming" => service.incomingDeviceSpaceJoins().await?,
+                "outgoing" => service.outgoingDeviceSpaceJoins()?,
+                _ => return Err("usage: link space requests <incoming|outgoing>".into()),
+            };
+            if cli_json_mode() { emit_cli_json(serde_json::json!(requests)); }
+            else if requests.is_empty() { println!("No join requests"); }
+            else { for request in requests { print_space_join_request(&request)?; } }
+            Ok(())
+        }
+        Some("refresh") if args.len() == 2 => {
+            print_space_join_request(&service.refreshDeviceSpaceJoin(args[1].clone()).await?)
+        }
+        Some("approve" | "reject") if args.len() == 3 => {
+            let version = args[2].parse::<u64>().map_err(|_| "assignment-version must be a non-negative integer")?;
+            print_space_join_request(&service.decideDeviceSpaceJoin(args[1].clone(), version, args[0] == "approve").await?)
+        }
+        Some("cancel") if args.len() == 2 => {
+            print_space_join_request(&service.cancelDeviceSpaceJoin(args[1].clone()).await?)
+        }
+        Some("sync") if args.len() == 1 => {
+            operit_node_runtime::SpacePersistenceSyncService::SpacePersistenceSyncService::new(
+                Arc::new(coreApplication.nodeRuntime()), coreApplication.nodeRouter(),
+                operit_store::CoreSpaceStore::CoreSpaceStore::new(coreApplication.nodeRuntime().runtimeStorageHost()),
+            ).synchronizeOnce().await?;
+            if cli_json_mode() { emit_cli_json(serde_json::json!({"synchronized": true})); }
+            else { println!("Space synchronization completed"); }
             Ok(())
         }
         Some("leave") if args.len() == 1 => {
@@ -392,14 +547,23 @@ async fn run_link_space_command(args: &[String]) -> Result<(), String> {
             else { println!("Left device space; current space: {}", space.spaceName); }
             Ok(())
         }
-        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|remove <device-name>|leave>".to_string()),
+        _ => Err("usage: operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|requests <incoming|outgoing>|refresh <request-id>|approve <request-id> <assignment-version>|reject <request-id> <assignment-version>|cancel <request-id>|sync|disconnect <device-name>|remove <device-name>|leave>".to_string()),
     }
+}
+
+fn print_space_join_request(request: &operit_node_runtime::RuntimeRemoteLinkService::SpaceJoinRequest) -> Result<(), String> {
+    if cli_json_mode() {
+        emit_cli_json(serde_json::to_value(request).map_err(|e| e.to_string())?);
+    } else {
+        println!("Join request {}: {:?} · Space: {} · reviewer: {} · assignment-version: {}",
+            request.requestId, request.status, request.spaceName,
+            request.reviewerName.as_deref().unwrap_or("not assigned"), request.assignmentVersion);
+    }
+    Ok(())
 }
 
 /// Runs authoritative Space control policy commands through the shared runtime service.
 async fn run_link_control_command(args: &[String]) -> Result<(), String> {
-    const USAGE: &str =
-        "usage: operit2 cli link control <show|bootstrap|audit|identity|device|policy>";
     let mutatesPolicy = matches!(
         args.first().map(String::as_str),
         Some("bootstrap") | Some("identity") | Some("device") | Some("policy")
@@ -409,6 +573,13 @@ async fn run_link_control_command(args: &[String]) -> Result<(), String> {
     } else {
         create_cli_core_application_without_space_sync("client").await?
     };
+    let result = execute_link_control_command(&coreApplication, args).await;
+    coreApplication.shutdown().await;
+    result
+}
+
+async fn execute_link_control_command(coreApplication: &operit_core_application::CoreApplication, args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link control <show|bootstrap|audit|identity|device|policy>";
     let service = coreApplication.accessServices();
     match args.first().map(String::as_str) {
         Some("show") if args.len() == 1 => {
@@ -458,7 +629,7 @@ async fn run_link_control_command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("identity") => {
-            run_link_control_identity_command(&service, &coreApplication, &args[1..])
+            run_link_control_identity_command(&service, coreApplication, &args[1..])
         }
         Some("device") => run_link_control_device_command(&service, &args[1..]).await,
         Some("policy") => run_link_control_policy_command(&service, &args[1..]),
@@ -472,7 +643,7 @@ fn run_link_control_identity_command(
     coreApplication: &operit_core_application::CoreApplication,
     args: &[String],
 ) -> Result<(), String> {
-    const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve>...|set <device-name> <identity-name>|clear <device-name>>";
+    const USAGE: &str = "usage: operit2 cli link control identity <list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>>";
     match args {
         [command] if command == "list" => {
             let state = service.deviceSpaceControl()?;
@@ -802,7 +973,7 @@ fn find_core_stream_descriptor(value: &CoreValue) -> Option<CoreStreamDescriptor
 fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|space|control|stream-probe|edge-plugin>" }),
+            serde_json::json!({ "usage": "operit2 cli link <discover|token|pair-start|pair-finish|pair-cancel|unpair|peers|listen|session|space|control|stream-probe|edge-plugin>" }),
         );
         return;
     }
@@ -813,10 +984,31 @@ fn print_link_usage() {
     println!("operit2 cli link pair-cancel <pairing-id> | unpair <node-id> | peers");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth>");
     println!("operit2 cli link space <show|status <device-name>|rename <name>|join <node-id>|disconnect <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space requests <incoming|outgoing> | refresh <request-id> | cancel <request-id>");
+    println!("operit2 cli link space approve|reject <request-id> <assignment-version> | sync");
+    println!("operit2 cli link session <http|ws|tcp> [--bind <host:port>] [--no-discovery]  # live interactive management");
     println!("operit2 cli link control <show|bootstrap|audit|identity|device|policy>");
-    println!("  identity list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve>...|set <device-name> <identity-name>|clear <device-name>");
+    println!("  identity list|define <name> <all|audit|relay|storage|execute|network|view|manage-identities|assign-identity|approve|join>...|set <device-name> <identity-name>|clear <device-name>");
     println!("  device list|admit <device-name>|remove <device-name>|disconnect <device-name>");
     println!("operit2 cli link stream-probe <node-id>");
     println!("operit2 cli link edge-plugin <device> list");
     println!("operit2 cli link edge-plugin <device> invoke <plugin-id> <action> [json-args]");
+}
+
+#[cfg(test)]
+mod session_command_tests {
+    use super::parse_session_command;
+
+    #[test]
+    fn accepts_simple_commands_and_json_arguments_with_spaces() {
+        assert_eq!(parse_session_command("space requests incoming").unwrap(), vec!["space", "requests", "incoming"]);
+        assert_eq!(parse_session_command(r#"["space", "rename", "My Space"]"#).unwrap(), vec!["space", "rename", "My Space"]);
+        assert!(parse_session_command("  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_json_or_non_string_arguments_are_rejected() {
+        assert!(parse_session_command("[broken").is_err());
+        assert!(parse_session_command(r#"["space", 1]"#).is_err());
+    }
 }

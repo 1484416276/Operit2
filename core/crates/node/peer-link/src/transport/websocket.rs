@@ -182,6 +182,12 @@ pub(super) async fn listen(
                     }
                     Ok(())
                 }.await;
+                // Pairing and one-shot calls send their last response and close.
+                // Dropping the upgraded socket without a Close frame reports a
+                // protocol reset, which can hide that already-buffered response.
+                if result.is_ok() {
+                    let _ = socket.send(WebSocketMessage::Close(None)).await;
+                }
                 inbox.finish(result);
             }))).unwrap_or_else(|_| super::http::response(500))
         })

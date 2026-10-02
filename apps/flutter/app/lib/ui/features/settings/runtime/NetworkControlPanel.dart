@@ -154,7 +154,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
 }
 
 /// Shows current device identities and administrator-only identity controls.
-class _NetworkControlDialog extends StatelessWidget {
+class _NetworkControlDialog extends StatefulWidget {
   /// Creates the current-state dialog.
   const _NetworkControlDialog({
     required this.state,
@@ -186,6 +186,17 @@ class _NetworkControlDialog extends StatelessWidget {
       ),
     );
   }
+
+  @override
+  State<_NetworkControlDialog> createState() => _NetworkControlDialogState();
+}
+
+class _NetworkControlDialogState extends State<_NetworkControlDialog> {
+  generated.NetworkControlState get state => widget.state;
+  generated.RuntimeDeviceSpaceTopology get topology => widget.topology;
+  GeneratedCoreProxyClients get clients => widget.clients;
+  Future<void> Function() get onChanged => widget.onChanged;
+  Future<List<generated.NetworkControlAuditRecord>>? _auditFuture;
 
   /// Builds the tabs visible to the current device identity.
   @override
@@ -447,8 +458,17 @@ class _NetworkControlDialog extends StatelessWidget {
   /// Builds the administrator audit view for authorization history.
   Widget _auditTab(BuildContext context, AppLocalizations l10n) {
     return FutureBuilder<List<generated.NetworkControlAuditRecord>>(
-      future: clients.server.runtimeRemoteLinkService.deviceSpaceControlAudit(),
+      future: _auditFuture ??= clients.server.runtimeRemoteLinkService
+          .deviceSpaceControlAudit(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(snapshot.error.toString()),
+            ),
+          );
+        }
         if (!snapshot.hasData) {
           return const Center(child: M3LoadingIndicator(size: 20));
         }

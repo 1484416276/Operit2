@@ -148,7 +148,9 @@ fn render_reverse_stream_dispatch(objects: &[SourceObject]) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            output.push_str(&format!("        ({:?}, {:?}) => {{\n            let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}            let (sender, input) = operit_rslink_runtime::core_reverse_stream_channel::<{}>();\n            let (completionSender, completionReceiver) = tokio::sync::oneshot::channel();\n            let hostManager = proxy.hostManager.clone();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(), \"core-rslinkrs-reverse-stream\", Box::new(move || Box::pin(async move {{\n{}                let result = match object {{\n                    Ok(object) => object.{}({}).await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),\n                    Err(error) => Err(error),\n                }};\n                let _ = completionSender.send(result);\n            }}))).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(operit_rslink_runtime::CoreReverseStreamSession::new(sender, completionReceiver))\n        }}\n", format!("{:?}", object.object_id), method.name, decode_args, reverse.item_type, construct_object, method.name, call_args));
+            // Quote the raw target once. Debug-formatting an already formatted
+            // string embeds literal quotes and disagrees with the recognizer.
+            output.push_str(&format!("        ({:?}, {:?}) => {{\n            let mut __core_args = operit_rslink_runtime::object_args(request.args)?;\n{}            let (sender, input) = operit_rslink_runtime::core_reverse_stream_channel::<{}>();\n            let (completionSender, completionReceiver) = tokio::sync::oneshot::channel();\n            let hostManager = proxy.hostManager.clone();\n            operit_host_api::HostRuntimeTaskSchedulerHost::scheduleHostRuntimeAsyncTask(operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost().as_ref(), \"core-rslinkrs-reverse-stream\", Box::new(move || Box::pin(async move {{\n{}                let result = match object {{\n                    Ok(object) => object.{}({}).await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())),\n                    Err(error) => Err(error),\n                }};\n                let _ = completionSender.send(result);\n            }}))).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))?;\n            Ok(operit_rslink_runtime::CoreReverseStreamSession::new(sender, completionReceiver))\n        }}\n", object.object_id, method.name, decode_args, reverse.item_type, construct_object, method.name, call_args));
         }
     }
     output.push_str("        _ => Err(operit_link::CoreLinkError::new(\"REVERSE_STREAM_NOT_FOUND\", \"reverse stream method is not declared by this proxy\")),\n    }\n}\n\n");
@@ -338,4 +340,41 @@ fn is_json_direct_error_field_type(ty: &str) -> bool {
             | "f64"
             | "serde_json::Value"
     )
+}
+
+#[cfg(test)]
+mod reverse_stream_target_tests {
+    use super::*;
+
+    #[test]
+    fn reverse_stream_recognition_and_dispatch_use_same_unquoted_target() {
+        for (schema, method, access) in [
+            ("services.syncBlobTransferManager", "syncReceiveBlob", ObjectAccess::ResultContextRefGetInstanceConstruct),
+            ("services.archiveTransferManager", "writeArchiveUpload", ObjectAccess::ResultContextRefGetInstanceConstruct),
+            ("services.runtimeBrowserService", "submitBrowserInteractions", ObjectAccess::ContextRefGetInstanceConstruct),
+        ] {
+            let target = format!("core/{schema}");
+            let object = SourceObject {
+                object_id: target.clone(), schema_key: schema.into(),
+                dispatch_name: "test_dispatch".into(), full_type: "TestService".into(),
+                access, path_match: ObjectPathMatch::Exact,
+                methods: vec![SourceMethod {
+                    name: method.into(), sdk_exposed: false,
+                    args: vec![SourceArg { name: "chunks".into(), ty: "ReverseStream<Vec<u8>>".into() }],
+                    rust_return_type: "Result<(), String>".into(), is_async: true,
+                    cfg_attrs: vec![], doc_lines: vec![],
+                    protocol: MethodProtocol::ReverseStream(ReverseStreamProtocol {
+                        argument_name: "chunks".into(), item_type: "Vec<u8>".into(),
+                    }),
+                }],
+            };
+            let generated = render_reverse_stream_dispatch(&[object]);
+            let pattern = format!("({target:?}, {method:?})");
+            assert_eq!(generated.matches(&pattern).count(), 2,
+                "recognizer and opener must use the same target: {generated}");
+            assert!(generated.contains(&format!("{pattern} => {{")));
+            assert!(!generated.contains(&format!("{:?}", format!("{target:?}"))),
+                "target must not contain embedded quotation marks");
+        }
+    }
 }

@@ -7,7 +7,13 @@ impl CoreNodeRouter {
         previousNodeId: &str,
         request: &RoutedCoreRequest<T>,
     ) -> Result<bool, CoreLinkError> {
-        self.requireDirectPeer(previousNodeId, true)?;
+        // Synchronization is a same-Space operation, unlike pre-admission
+        // join calls. A member may arrive over its admitted return channel.
+        let peers = self.nodeServices().map_err(CoreLinkError::internal)?.peers().pairedPeers()?;
+        if !peers.iter().any(|p| p.nodeId == previousNodeId && (p.inbound || p.outbound))
+            || self.spaceChannelScope(previousNodeId)?.is_none() {
+            return Err(CoreLinkError::new("PEER_NOT_AUTHORIZED", "Synchronization requires an authenticated admitted Space member"));
+        }
         if request.routeKind != RoutedCoreRequestKind::Target {
             return Err(CoreLinkError::new(
                 "PEER_SYNC_INVALID_ROUTE",

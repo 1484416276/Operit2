@@ -2,20 +2,18 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/application/CoreApplicationService.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/host/ComposeWebViewControllerBridge.dart';
-import '../../core/logging/ClientLogger.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
-import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgComposeDslWebView.dart';
 import '../theme/OperitTheme.dart';
+import '../common/AppPeerDialogHost.dart';
 import 'navigation/AppStartupRouteCatalog.dart';
 
 class OperitApp extends StatefulWidget {
@@ -114,14 +112,10 @@ class _AppDialogHost extends StatefulWidget {
 }
 
 class _AppDialogHostState extends State<_AppDialogHost> {
-  static const String _logTag = 'AppDialogHost';
   static const GeneratedCoreProxyClients _coreClients =
       GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   bool _shownStartupWebAccessError = false;
-  StreamSubscription<List<core_proxy.PairingPrompt>>?
-  _pairingSubscription;
-  Future<void> _pairingDialogQueue = Future<void>.value();
   final RuntimeBootstrapManager _runtimeManager =
       RuntimeBootstrapManager.instance;
 
@@ -133,27 +127,14 @@ class _AppDialogHostState extends State<_AppDialogHost> {
     _syncPairingSubscription();
   }
 
-  /// Opens pairing event monitoring after runtime storage configuration.
+  /// Runtime configuration controls the injected, independently tested dialog host.
   void _syncPairingSubscription() {
-    if (!_runtimeManager.runtimeConfigured ||
-        _pairingSubscription != null) {
-      return;
-    }
-    _pairingSubscription = _coreClients.server.runtimeRemoteLinkService
-        .pairingPromptsFlow().listen(
-          _handlePairingPrompts,
-          onError: (Object error, StackTrace stackTrace) {
-            ClientLogger.e('node pairing prompt stream failed', tag: _logTag,
-              error: error, stackTrace: stackTrace);
-          },
-        );
+    if (mounted) setState(() {});
   }
 
-  /// Cancels runtime node pairing prompt monitoring.
   @override
   void dispose() {
     _runtimeManager.removeListener(_syncPairingSubscription);
-    unawaited(_pairingSubscription?.cancel());
     super.dispose();
   }
 
@@ -204,29 +185,10 @@ class _AppDialogHostState extends State<_AppDialogHost> {
     });
   }
 
-  final Set<String> _shownPairings = <String>{};
-
-  /// 观察同一个 runtime 的待确认快照；验证码只显示给本机用户。
-  void _handlePairingPrompts(List<core_proxy.PairingPrompt> prompts) {
-    _shownPairings.retainAll(prompts.map((prompt) => prompt.pairingId));
-    for (final prompt in prompts) {
-      if (!_shownPairings.add(prompt.pairingId)) continue;
-      _pairingDialogQueue = _pairingDialogQueue.then((_) async {
-        if (!mounted || !_shownPairings.contains(prompt.pairingId)) return;
-        final l10n = AppLocalizations.of(context)!;
-        await showDialog<void>(context: context, builder: (context) => AlertDialog(
-          title: Text(l10n.settingsRuntimePairRemote),
-          content: SelectableText('${prompt.displayName}\n${prompt.confirmationCode}'),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text(l10n.ok))],
-        ));
-      }).catchError((Object error, StackTrace stackTrace) {
-        ClientLogger.e('node pairing prompt failed', tag: _logTag, error: error, stackTrace: stackTrace);
-      });
-    }
-  }
-
   @override
-  Widget build(BuildContext context) {
-    return widget.child;
-  }
+  Widget build(BuildContext context) => AppPeerDialogHost(
+    clients: _coreClients,
+    enabled: _runtimeManager.runtimeConfigured,
+    child: widget.child,
+  );
 }

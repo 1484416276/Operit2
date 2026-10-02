@@ -871,6 +871,10 @@ impl ChatServiceCore {
         setAsCurrentChat: bool,
         characterGroupId: Option<String>,
     ) {
+        operit_util::AppLogger::AppLogger::i("ChatCreate", &format!(
+            "chat_create.start currentChatId={:?} setAsCurrentChat={}",
+            self.chatHistoryDelegate.currentChatIdFlow.value(), setAsCurrentChat,
+        ));
         if self
             .chatHistoryDelegate
             .shouldKeepCurrentEmptyChatForNewChatRequest(
@@ -882,6 +886,7 @@ impl ChatServiceCore {
                 None,
             )
         {
+            operit_util::AppLogger::AppLogger::i("ChatCreate", "chat_create.reused_empty_chat");
             return;
         }
         self.chatHistoryDelegate.createNewChat(
@@ -893,6 +898,10 @@ impl ChatServiceCore {
             None,
         );
         self.syncTokenStatisticsForCurrentChat();
+        operit_util::AppLogger::AppLogger::i("ChatCreate", &format!(
+            "chat_create.completed currentChatId={:?}",
+            self.chatHistoryDelegate.currentChatIdFlow.value(),
+        ));
     }
 
     /// Switches the active chat and refreshes its runtime state.

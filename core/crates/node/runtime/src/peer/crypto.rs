@@ -44,9 +44,21 @@ pub(super) fn verify(key: &[u8], context: &[u8], role: &[u8], supplied: &[u8]) -
     hmac::verify(&hmac::Key::new(hmac::HMAC_SHA256, key), &message, supplied)
         .map_err(|_| error("Key/token proof rejected"))
 }
-pub(super) fn code(root: &[u8]) -> String {
-    let digest = proof(root, b"operit-pairing-sas-v1", b"confirmation");
-    format!("{:08}", u32::from_be_bytes(digest[..4].try_into().unwrap()) % 100_000_000)
+/// A receiver-only, fixed-width code; leading zeroes are significant.
+pub(super) fn pairingCode() -> Result<String, CoreLinkError> {
+    Ok(format!("{:06}", u32::from_be_bytes(random()?[..4].try_into().unwrap()) % 1_000_000))
+}
+
+#[cfg(test)]
+mod pairing_code_tests {
+    #[test]
+    fn receiver_code_is_six_ascii_digits() {
+        for _ in 0..100 {
+            let code = super::pairingCode().unwrap();
+            assert_eq!(code.len(), 6);
+            assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        }
+    }
 }
 /// 整个 transcript 编码绑定版本、双方身份、两份公钥和服务端随机挑战。
 #[derive(Serialize, Deserialize)]

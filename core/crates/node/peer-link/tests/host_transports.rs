@@ -256,3 +256,27 @@ async fn http_and_websocket_share_one_host_listener() {
         ws.close().await;
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn websocket_final_response_survives_immediate_server_close() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        for _ in 0..20 {
+            let (client, server, listener, _) = pair(PeerTransport::WebSocket).await;
+            let response = CoreLinkResponse::Call(CoreCallResponse::ok(
+                CoreRequestId::new("last-response"), CoreValue::String("confirmed".into()),
+            ));
+            server.send(PeerMessage::Response(response.clone())).await.unwrap();
+            server.close().await;
+            // Reproduce pairing's send-and-close: let the Host observe socket
+            // closure before the application consumes its buffered response.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            match client.receive().await.unwrap().unwrap() {
+                PeerMessage::Response(value) => assert_eq!(value, response),
+                _ => panic!("final response was not preserved"),
+            }
+            assert!(client.receive().await.unwrap().is_none());
+            client.close().await;
+            listener.close().await;
+        }
+    }).await.unwrap();
+}

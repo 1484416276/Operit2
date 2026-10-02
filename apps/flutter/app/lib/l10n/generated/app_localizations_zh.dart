@@ -3907,4 +3907,154 @@ class AppLocalizationsZh extends AppLocalizations {
   String chatMessageCacheHitRate(String rate) {
     return '缓存命中率: $rate';
   }
+
+  @override
+  String get settingsPeerAdvanced => '高级选项';
+
+  @override
+  String get settingsPeerTransportHelp =>
+      '暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。';
+
+  @override
+  String get settingsPeerBindAddress => '监听地址';
+
+  @override
+  String get settingsPeerBindAddressHelp => '例如 0.0.0.0:37195，允许局域网访问';
+
+  @override
+  String get settingsPeerDiscoveryNeedsTransport => '开启允许被搜索前，请至少选择一种暴露方式。';
+
+  @override
+  String get settingsPeerPortConflict =>
+      '当前 TCP 不能与 HTTP/WebSocket 共用监听端口，请选择 TCP 或 HTTP/WebSocket。';
+
+  @override
+  String get settingsPeerAddressRequired => '请输入监听地址。';
+
+  @override
+  String get settingsPeerApplied => '监听设置已生效。';
+
+  @override
+  String settingsPeerRestoreFailed(String error) {
+    return '恢复原监听配置失败：$error';
+  }
+
+  @override
+  String get settingsPeerCodeInstructions =>
+      '在另一台设备上输入此验证码以完成配对。验证码五分钟内有效，请勿提供给陌生人。';
+
+  @override
+  String get settingsPeerSixDigitCode => '请输入接收设备上显示的六位配对码。';
+
+  @override
+  String get spaceJoinRequests => '空间加入申请';
+
+  @override
+  String spaceJoinReviewer(String name) {
+    return '审批人：$name';
+  }
+
+  @override
+  String get spaceJoinWaitingReviewer => '等待有审批权限的设备上线';
+
+  @override
+  String get spaceJoinPending => '等待批准';
+
+  @override
+  String get spaceJoinApproving => '正在处理审批结果';
+
+  @override
+  String get spaceJoinApproved => '已批准，正在完成加入';
+
+  @override
+  String get spaceJoinJoined => '已加入';
+
+  @override
+  String get spaceJoinRejected => '已拒绝';
+
+  @override
+  String get spaceJoinCancelled => '已取消';
+
+  @override
+  String get spaceJoinExpired => '已过期';
+
+  @override
+  String get spaceJoinSubmit => '提交申请';
+
+  @override
+  String get spaceJoinApprovalTitle => '空间加入申请';
+
+  @override
+  String spaceJoinApprovalDescription(String name, String space) {
+    return '$name 申请加入「$space」。批准前不会共享空间数据。';
+  }
+
+  @override
+  String get spaceJoinApprove => '批准';
+
+  @override
+  String get spaceJoinReject => '拒绝';
+
+  @override
+  String get spaceJoinRetry => '重新申请';
+
+  @override
+  String get spaceJoinKeepWaiting => '后台等待';
+
+  @override
+  String get spaceJoinCancel => '取消申请';
+
+  @override
+  String get spaceJoinRefreshingFailed => '暂时无法联系设备。申请已保留，会继续重试。';
+
+  @override
+  String get spaceJoinAssignmentChanged => '该申请已转交或已处理。';
+
+  @override
+  String get spaceJoinProgressTitle => '申请加入空间';
+
+  @override
+  String get spaceJoinSending => '正在提交申请…';
+
+  @override
+  String get spaceJoinSubmitFailed => '申请暂时未能提交，请检查连接后重试。';
+
+  @override
+  String get spaceJoinNoDataYet => '批准前，你当前的空间不会改变。关闭窗口后，申请仍会在后台等待。';
+
+  @override
+  String get deviceSpaceAddDevice => '添加设备';
+
+  @override
+  String get deviceSpaceDevices => '设备';
+
+  @override
+  String get deviceSpaceMore => '更多设备操作';
+
+  @override
+  String get deviceSpaceConnectionSettings => '连接设置';
+
+  @override
+  String get deviceSpaceViewRequest => '查看申请';
+
+  @override
+  String get devicePickerNearby => '附近设备';
+
+  @override
+  String get devicePickerEmpty => '暂未发现附近设备';
+
+  @override
+  String get devicePickerHint => '请让两台设备连接同一网络，并在对方设备开启允许被搜索。';
+
+  @override
+  String get devicePickerManual => '通过地址连接';
+
+  @override
+  String get deviceSpaceMyRequests => '我发出的';
+
+  @override
+  String get deviceSpaceMyReviews => '待我审批';
+
+  @override
+  String get deviceSpaceNoRequests => '暂无申请';
 }

@@ -515,6 +515,11 @@ fn cli_storage_config_path() -> PathBuf {
 
 /// Returns the CLI configuration directory.
 fn cli_config_dir() -> PathBuf {
+    // Isolate CLI profiles without changing HOME (which also selects the
+    // macOS login Keychain and unrelated platform credentials).
+    if let Some(path) = env::var_os("OPERIT_CLI_CONFIG_DIR").filter(|path| !path.is_empty()) {
+        return PathBuf::from(path);
+    }
     #[cfg(windows)]
     {
         let appdata = env::var_os("APPDATA").expect("APPDATA is required for Operit2 CLI config");

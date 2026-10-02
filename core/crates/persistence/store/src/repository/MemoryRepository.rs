@@ -99,7 +99,7 @@ impl MemoryRepository {
         }
     }
 
-    /// Searches memories by lexical relevance, folder, and creation-time filters.
+    /// Searches a read-only memory snapshot without changing timestamps or recording sync operations.
     pub fn searchMemories(
         &self,
         query: &str,
@@ -108,54 +108,50 @@ impl MemoryRepository {
         createdAtStartMs: Option<i64>,
         createdAtEndMs: Option<i64>,
     ) -> Result<Vec<Memory>, String> {
-        let mut changed = false;
         let normalizedFolder = Self::normalizeFolderPath(folderPath);
         let query = query.trim();
-        let wildcard = query == "*";
-        let tokens = lexicalTokens(query);
-        let mut scored = Vec::<(f64, Memory)>::new();
-
-        self.memoryBox
-            .editEntities(|memories| {
-                for memory in memories.iter_mut() {
-                    if normalizedFolder.as_deref() != memory.folderPath.as_deref()
-                        && normalizedFolder.is_some()
-                    {
-                        continue;
-                    }
-                    if let Some(start) = createdAtStartMs {
-                        if memory.createdAt < start {
-                            continue;
-                        }
-                    }
-                    if let Some(end) = createdAtEndMs {
-                        if memory.createdAt > end {
-                            continue;
-                        }
-                    }
-                    let score = if wildcard {
-                        1.0
-                    } else {
-                        lexicalScore(memory, &tokens)
-                    };
-                    if score >= relevanceThreshold {
-                        memory.lastAccessedAt = nowMillis();
-                        changed = true;
-                        scored.push((score, memory.clone()));
+        // Kotlin searches only read entities; routing a search through editEntities
+        // would rewrite the collection and replay stale full-record sync states.
+        let memories = self
+            .memoryBox
+            .all()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|memory| {
+                if normalizedFolder.is_some()
+                    && normalizedFolder.as_deref() != memory.folderPath.as_deref()
+                {
+                    return false;
+                }
+                if let Some(start) = createdAtStartMs {
+                    if memory.createdAt < start {
+                        return false;
                     }
                 }
+                if let Some(end) = createdAtEndMs {
+                    if memory.createdAt > end {
+                        return false;
+                    }
+                }
+                true
             })
-            .map_err(|error| error.to_string())?;
+            .collect::<Vec<_>>();
+        // Kotlin returns the scoped snapshot directly for wildcard and blank searches.
+        if query == "*" || query.is_empty() {
+            return Ok(memories);
+        }
+        let tokens = lexicalTokens(query);
+        let mut scored = memories
+            .into_iter()
+            .map(|memory| (lexicalScore(&memory, &tokens), memory))
+            .filter(|(score, _)| *score >= relevanceThreshold)
+            .collect::<Vec<_>>();
         scored.sort_by(|left, right| {
             right
                 .0
-                .partial_cmp(&left.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(&left.0)
                 .then_with(|| right.1.updatedAt.cmp(&left.1.updatedAt))
         });
-        if !changed {
-            return Ok(Vec::new());
-        }
         Ok(scored.into_iter().map(|(_, memory)| memory).collect())
     }
 

@@ -40,6 +40,15 @@ helpers, and sync operation logs.
 extensions, MCP configuration, caches, logs, exports, and the SQLite database
 path. Workspace directories are rooted at `workspaces/` beside `runtime/`.
 
+## Memory Search Read Semantics
+
+Like the Kotlin memory repository, memory searches read a snapshot without
+updating `lastAccessedAt` or `updatedAt`, rewriting entities, or recording sync
+operations. Wildcard (`*`) and blank queries return the folder- and time-filtered
+snapshot directly; nonblank queries use the existing lexical relevance ranking.
+This keeps reads separate from content edits and prevents searches from emitting
+stale full-record sync states. Synchronization conflict resolution is unchanged.
+
 ## Host Boundary
 
 Runtime business logic uses relative storage paths. The installed

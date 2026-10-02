@@ -4086,6 +4086,38 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsPeerToken => 'Connection token';
+
+  @override
+  String get settingsPeerTokenHelp => 'Remote connections require this token.';
+
+  @override
+  String get settingsPeerCopyToken => 'Copy token';
+
+  @override
+  String get settingsPeerRefreshToken => 'Refresh token';
+
+  @override
+  String get settingsPeerTokenCopied => 'Connection token copied.';
+
+  @override
+  String get settingsPeerTokenRequired =>
+      'Enter or refresh a connection token.';
+
+  @override
+  String get settingsPeerPortModeHelp =>
+      'Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.';
+
+  @override
+  String get settingsPeerPortMode => 'Port allocation';
+
+  @override
+  String get settingsPeerPortModeFixed => 'Fixed address and port';
+
+  @override
+  String get settingsPeerPortModeAutomatic => 'Automatic port';
+
+  @override
   String get settingsPeerAdvanced => 'Advanced options';
 
   @override

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = ["full"]
-peer-state = ["dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
+peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
 full = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
 test-support = []
 

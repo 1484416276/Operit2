@@ -10,8 +10,9 @@ import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../core/runtime/PeerEndpointTransport.dart';
 import '../../l10n/generated/app_localizations.dart';
-import '../theme/OperitFormStyles.dart';
 import '../features/settings/runtime/PeerListenerSettings.dart';
+import '../theme/OperitFormStyles.dart';
+import 'components/OperitDialog.dart';
 
 enum _DeviceSpaceAction { requests, settings }
 
@@ -76,30 +77,14 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     }
   }
 
+  /// Opens the focused device discovery and pairing dialog.
   Future<void> _addDevice() async {
-    final l10n = AppLocalizations.of(context)!;
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.deviceSpaceAddDevice),
-        content: SizedBox(
-          width: 440,
-          height: (MediaQuery.sizeOf(dialogContext).height * .5).clamp(
-            240.0,
-            420.0,
-          ),
-          child: _DeviceSpacePicker(
-            clients: widget.clients,
-            autoScan: widget.autoScan,
-            onJoined: widget.onJoined,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(l10n.cancel),
-          ),
-        ],
+      builder: (_) => _AddDeviceDialog(
+        clients: widget.clients,
+        autoScan: widget.autoScan,
+        onJoined: widget.onJoined,
       ),
     );
     await _loadRequests();
@@ -204,8 +189,9 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
   }
 }
 
-class _DeviceSpacePicker extends StatefulWidget {
-  const _DeviceSpacePicker({
+class _AddDeviceDialog extends StatefulWidget {
+  /// Creates the dialog with the shared discovery and pairing service.
+  const _AddDeviceDialog({
     required this.clients,
     required this.onJoined,
     this.autoScan = true,
@@ -213,14 +199,19 @@ class _DeviceSpacePicker extends StatefulWidget {
   final GeneratedCoreProxyClients clients;
   final Future<void> Function(generated.CoreSpace) onJoined;
   final bool autoScan;
+
+  /// Creates state that owns discovery results and pairing interactions.
   @override
-  State<_DeviceSpacePicker> createState() => _DeviceSpacePickerState();
+  State<_AddDeviceDialog> createState() => _AddDeviceDialogState();
 }
 
-class _DeviceSpacePickerState extends State<_DeviceSpacePicker> {
+class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   bool _busy = false;
+  bool _scanning = false;
   String? _error;
   List<generated.DiscoveredPeer> _peers = [];
+
+  /// Starts discovery after the dialog has entered the widget tree.
   @override
   void initState() {
     super.initState();
@@ -231,13 +222,20 @@ class _DeviceSpacePickerState extends State<_DeviceSpacePicker> {
     }
   }
 
-  void _setBusy(bool busy) {
+  /// Updates action availability and the explicit discovery status.
+  void _setBusy(bool busy, {bool scanning = false}) {
     if (!mounted) return;
-    setState(() => _busy = busy);
+    setState(() {
+      _busy = busy;
+      _scanning = scanning;
+      if (busy) _error = null;
+    });
   }
 
+  /// Refreshes nearby devices without displaying a progress bar.
   Future<void> _scan() async {
-    _setBusy(true);
+    if (_busy) return;
+    _setBusy(true, scanning: true);
     try {
       final peers = await widget.clients.server.runtimeRemoteLinkService
           .discoverPeers(timeoutMs: 2000);
@@ -254,7 +252,9 @@ class _DeviceSpacePickerState extends State<_DeviceSpacePicker> {
     }
   }
 
+  /// Pairs the selected device or opens explicit address entry.
   Future<void> _pair([generated.DiscoveredPeer? peer]) async {
+    if (_busy) return;
     _setBusy(true);
     try {
       final _RemotePairResult? result;
@@ -306,96 +306,202 @@ class _DeviceSpacePickerState extends State<_DeviceSpacePicker> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
+  /// Builds a compact device card with a single pairing action.
+  Widget _buildDeviceCard(BuildContext context, generated.DiscoveredPeer peer) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final radius = BorderRadius.circular(16);
+    return Material(
+      color: colors.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: colors.outlineVariant.withValues(alpha: .6)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: _busy ? null : () => _pair(peer),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colors.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.devices_rounded,
+                  color: colors.onPrimaryContainer,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      peer.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      peer.address,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: colors.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Shows the scan status or empty result without a second section title.
+  Widget _buildEmptyState(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: Text(
-                l10n.devicePickerNearby,
-                style: Theme.of(context).textTheme.titleSmall,
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerLow,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.devices_rounded,
+                size: 30,
+                color: colors.onSurfaceVariant,
               ),
             ),
-            IconButton(
-              tooltip: l10n.settingsRuntimeScan,
-              onPressed: _busy ? null : _scan,
-              icon: const Icon(Icons.refresh_rounded),
+            const SizedBox(height: 16),
+            Text(
+              _scanning ? l10n.settingsRuntimeScanning : l10n.devicePickerEmpty,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
             ),
           ],
         ),
-        if (_busy) const LinearProgressIndicator(),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        Expanded(
-          child: _peers.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.devices_other_outlined,
-                          size: 40,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _busy
-                              ? l10n.settingsRuntimeScanning
-                              : l10n.devicePickerEmpty,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          l10n.devicePickerHint,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : ListView.separated(
-                  itemCount: _peers.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final peer = _peers[index];
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.devices_outlined),
-                      title: Text(peer.displayName),
-                      subtitle: Text(
-                        peer.address,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: _busy ? null : () => _pair(peer),
-                    );
-                  },
-                ),
+      ),
+    );
+  }
+
+  /// Keeps discovery errors readable inside the scrollable device content.
+  Widget _buildError(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.errorContainer,
+          borderRadius: BorderRadius.circular(12),
         ),
-        const Divider(height: 24),
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: TextButton.icon(
-            onPressed: _busy ? null : () => _pair(),
-            icon: const Icon(Icons.link_outlined, size: 18),
-            label: Text(l10n.devicePickerManual),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.error_outline_rounded, color: colors.onErrorContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _error!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Builds the shared dialog shell with one header and a unified action bar.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    return OperitDialogScaffold(
+      title: l10n.deviceSpaceAddDevice,
+      maxWidth: 480,
+      maxHeight: (MediaQuery.sizeOf(context).height * .8).clamp(0.0, 520.0),
+      expandContent: false,
+      contentPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      titleActions: [
+        IconButton(
+          tooltip: l10n.refresh,
+          onPressed: _busy ? null : _scan,
+          icon: const Icon(Icons.refresh_rounded),
         ),
       ],
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(l10n.cancel),
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _pair(),
+          icon: const Icon(Icons.link_rounded, size: 18),
+          label: Text(l10n.devicePickerManual),
+        ),
+      ],
+      child: CustomScrollView(
+        shrinkWrap: true,
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(
+                l10n.devicePickerHint,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
+          if (_error != null) SliverToBoxAdapter(child: _buildError(context)),
+          if (_peers.isEmpty && _error == null)
+            SliverToBoxAdapter(child: _buildEmptyState(context)),
+          if (_peers.isNotEmpty)
+            SliverList.separated(
+              itemCount: _peers.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              itemBuilder: (context, index) =>
+                  _buildDeviceCard(context, _peers[index]),
+            ),
+        ],
+      ),
     );
   }
 }

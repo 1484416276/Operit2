@@ -3929,6 +3929,37 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get settingsPeerToken => '连接 token';
+
+  @override
+  String get settingsPeerTokenHelp => '远程连接必须使用这个 token。';
+
+  @override
+  String get settingsPeerCopyToken => '复制 token';
+
+  @override
+  String get settingsPeerRefreshToken => '刷新 token';
+
+  @override
+  String get settingsPeerTokenCopied => '连接 token 已复制。';
+
+  @override
+  String get settingsPeerTokenRequired => '请输入或刷新连接 token。';
+
+  @override
+  String get settingsPeerPortModeHelp =>
+      '固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。';
+
+  @override
+  String get settingsPeerPortMode => '端口分配方式';
+
+  @override
+  String get settingsPeerPortModeFixed => '固定 IP 和端口';
+
+  @override
+  String get settingsPeerPortModeAutomatic => '自动分配端口';
+
+  @override
   String get settingsPeerAdvanced => '高级选项';
 
   @override

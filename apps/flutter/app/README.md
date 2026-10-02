@@ -16,3 +16,12 @@ fvm flutter run
 
 Configure the IDE Flutter SDK path to `.fvm/flutter_sdk`.
 The build scripts use this same SDK for every platform, including OpenHarmony.
+
+## Web debugging
+
+`web_dev_config.yaml` configures Flutter's native Web development server with
+cross-origin isolation headers for local threaded STT/TTS. Run
+`fvm flutter run -d edge` or `fvm flutter run -d chrome` directly, or select
+`Operit2: Web (isolated)` in VS Code. The development origin is
+`http://127.0.0.1:4835`; no separate proxy process is needed.
+See `web/README.md` for deployment requirements.

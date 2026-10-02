@@ -17,16 +17,7 @@
             "program": "${workspaceFolder}/apps/flutter/app/lib/main.dart",
             "request": "launch",
             "type": "dart",
-            "deviceId": "edge",
-            "preLaunchTask": "Operit2: Web isolation proxy",
-            "toolArgs": [
-                "--web-hostname",
-                "127.0.0.1",
-                "--web-port",
-                "4835",
-                "--web-launch-url",
-                "http://127.0.0.1:4836"
-            ]
+            "deviceId": "edge"
         },
         {
             "name": "app (profile mode)",

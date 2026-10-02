@@ -15,28 +15,29 @@ The deployment server or reverse proxy for `web.operit.app` must emit these head
 
 ## Flutter Web development
 
-`fvm flutter run -d edge` uses Flutter's built-in development server, which
-does not provide the required response headers. Run Flutter as a Web Server and
-open the isolated proxy origin instead:
+The FVM-pinned Flutter SDK natively reads `web_dev_config.yaml` from the
+Flutter app root. It configures the built-in development server at
+`http://127.0.0.1:4835` and sends the three cross-origin isolation headers above.
+No separate Node process or proxy port is required.
+
+Run from `apps/flutter/app`:
 
 ```powershell
-cd apps/flutter/app
-fvm flutter run -d web-server --web-hostname 127.0.0.1 --web-port 4835
+fvm flutter run -d edge
 ```
 
-In a second terminal at the repository root:
-
-```powershell
-node tools/dev_web_access_proxy.mjs --upstream-port 4835 --listen-port 4836
-```
-
-Open `http://127.0.0.1:4836`. The proxy forwards Flutter's HTTP and debug
-WebSocket traffic, and sends the cross-origin isolation headers for every
-response. Flutter hot reload remains available through the Web Server session.
+For Chrome, use `fvm flutter run -d chrome`. To open a browser manually, use
+`fvm flutter run -d web-server` and open `http://127.0.0.1:4835`.
+These devices share the same native server configuration; Flutter's debug
+connection and hot reload use that origin directly.
 
 For VS Code, select `Operit2: Web (isolated)` from Run and Debug and press F5.
-That launch configuration starts the proxy task, runs Edge through the FVM
-Flutter SDK, and opens the isolated origin automatically.
+It launches Edge through the FVM Flutter SDK without a pre-launch proxy task.
+
+These headers enable cross-origin isolation, not unrestricted CORS access to
+remote APIs. Remote API servers must still authorize the development origin
+through their own CORS policies. `web_dev_config.yaml` only configures Flutter's
+development server; deployed hosting must send the headers independently.
 
 ## Runtime layout
 

@@ -2142,6 +2142,17 @@
     }
   },
 
+  "settingsPeerToken": "连接 token",
+  "settingsPeerTokenHelp": "远程连接必须使用这个 token。",
+  "settingsPeerCopyToken": "复制 token",
+  "settingsPeerRefreshToken": "刷新 token",
+  "settingsPeerTokenCopied": "连接 token 已复制。",
+  "settingsPeerTokenRequired": "请输入或刷新连接 token。",
+  "settingsPeerPortModeHelp": "固定模式使用填写的 IP 和端口，适用于内网穿透和端口映射。固定端口被占用时会报错，不会改变监听地址。",
+  "settingsPeerPortMode": "端口分配方式",
+  "settingsPeerPortModeFixed": "固定 IP 和端口",
+  "settingsPeerPortModeAutomatic": "自动分配端口",
+
   "settingsPeerAdvanced": "高级选项",
   "settingsPeerTransportHelp": "暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。",
   "settingsPeerBindAddress": "监听地址",

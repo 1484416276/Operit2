@@ -2149,6 +2149,17 @@
     }
   },
 
+  "settingsPeerToken": "Connection token",
+  "settingsPeerTokenHelp": "Remote connections require this token.",
+  "settingsPeerCopyToken": "Copy token",
+  "settingsPeerRefreshToken": "Refresh token",
+  "settingsPeerTokenCopied": "Connection token copied.",
+  "settingsPeerTokenRequired": "Enter or refresh a connection token.",
+  "settingsPeerPortModeHelp": "Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.",
+  "settingsPeerPortMode": "Port allocation",
+  "settingsPeerPortModeFixed": "Fixed address and port",
+  "settingsPeerPortModeAutomatic": "Automatic port",
+
   "settingsPeerAdvanced": "Advanced options",
   "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
   "settingsPeerBindAddress": "Listen address",

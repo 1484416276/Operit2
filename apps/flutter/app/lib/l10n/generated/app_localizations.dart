@@ -7279,6 +7279,66 @@ abstract class AppLocalizations {
   /// **'Cache hit rate: {rate}'**
   String chatMessageCacheHitRate(String rate);
 
+  /// No description provided for @settingsPeerToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection token'**
+  String get settingsPeerToken;
+
+  /// No description provided for @settingsPeerTokenHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote connections require this token.'**
+  String get settingsPeerTokenHelp;
+
+  /// No description provided for @settingsPeerCopyToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy token'**
+  String get settingsPeerCopyToken;
+
+  /// No description provided for @settingsPeerRefreshToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh token'**
+  String get settingsPeerRefreshToken;
+
+  /// No description provided for @settingsPeerTokenCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection token copied.'**
+  String get settingsPeerTokenCopied;
+
+  /// No description provided for @settingsPeerTokenRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter or refresh a connection token.'**
+  String get settingsPeerTokenRequired;
+
+  /// No description provided for @settingsPeerPortModeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed mode keeps the entered IP and port for tunnels and port forwarding. A busy fixed port reports an error without changing the address.'**
+  String get settingsPeerPortModeHelp;
+
+  /// No description provided for @settingsPeerPortMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Port allocation'**
+  String get settingsPeerPortMode;
+
+  /// No description provided for @settingsPeerPortModeFixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed address and port'**
+  String get settingsPeerPortModeFixed;
+
+  /// No description provided for @settingsPeerPortModeAutomatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic port'**
+  String get settingsPeerPortModeAutomatic;
+
   /// No description provided for @settingsPeerAdvanced.
   ///
   /// In en, this message translates to:

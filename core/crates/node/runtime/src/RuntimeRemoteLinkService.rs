@@ -228,6 +228,11 @@ impl RuntimeRemoteLinkService {
     pub fn localPairingToken(&self) -> Result<String, String> {
         crate::PeerStateStore::PeerStateStore::new(self.localRuntime.runtimeStorageHost()).localPairingToken()
     }
+    /// Rotates the node-local listener credential through its preference transaction.
+    pub fn refreshLocalPairingToken(&self) -> Result<String, String> {
+        crate::PeerStateStore::PeerStateStore::new(self.localRuntime.runtimeStorageHost())
+            .refreshLocalPairingToken()
+    }
     /// 复用原身份文件并刷新 Space 资料；通信会话不参与设备资料初始化。
     pub fn initializeDeviceInfo(&self, supplied: LinkDeviceInfo) -> Result<LinkDeviceInfo, String> {
         let info = crate::PeerStateStore::PeerStateStore::new(self.localRuntime.runtimeStorageHost())

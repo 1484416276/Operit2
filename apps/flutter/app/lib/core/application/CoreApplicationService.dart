@@ -31,6 +31,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       StreamController<Object>.broadcast();
 
   bool _initialized = false;
+  AppLifecycleState? _lastEmittedLifecycleState;
   bool _localBackgroundServiceStartAttempted = false;
   Future<void>? _runtimeServicesStart;
   Object? _pendingStartupError;
@@ -78,9 +79,11 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   /// Emits one lifecycle event after the selected runtime becomes callable.
   Future<void> _emitLifecycleEvent(AppLifecycleState state) async {
-    if (!_runtimeManager.runtimeConfigured) {
+    if (!_runtimeManager.runtimeConfigured ||
+        _lastEmittedLifecycleState == state) {
       return;
     }
+    _lastEmittedLifecycleState = state;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final topic = switch (state) {
       AppLifecycleState.resumed => RuntimeEventTopic.appLifecycleResumed,
@@ -202,22 +205,10 @@ class CoreApplicationService with WidgetsBindingObserver {
       // 配置和监听生命周期归 runtime；Dart 只调用生成的类型化 Proxy。
       final peerService = _coreClients.server.runtimeRemoteLinkService;
       final config = await peerService.localHostConfig();
-      if (config != null && config.transports.isNotEmpty) {
-        // The Flutter listener panel previously wrote Fixed unconditionally,
-        // although it offered no fixed-port option. Migrate those saved configs
-        // so existing installations also recover from port collisions on launch.
-        if (config.portMode == PeerHostPortMode.fixed) {
-          await peerService.saveLocalHostConfig(
-            config: PeerHostConfig(
-              bindAddress: config.bindAddress,
-              token: config.token,
-              transports: config.transports,
-              discoveryEnabled: config.discoveryEnabled,
-              portMode: PeerHostPortMode.automatic,
-              updatedAt: DateTime.now().millisecondsSinceEpoch,
-            ),
-          );
-        }
+      if (config == null) {
+        throw StateError('Runtime listener preferences were not initialized');
+      }
+      if (config.transports.isNotEmpty) {
         await peerService.startListening(transports: config.transports);
       }
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();

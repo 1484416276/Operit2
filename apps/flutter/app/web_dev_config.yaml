@@ -1,0 +1,12 @@
+# Flutter reads this configuration for all Web development devices.
+# Local STT/TTS workers need cross-origin isolation for SharedArrayBuffer.
+server:
+  host: 127.0.0.1
+  port: 4835
+  headers:
+    - name: Cross-Origin-Opener-Policy
+      value: same-origin
+    - name: Cross-Origin-Embedder-Policy
+      value: require-corp
+    - name: Cross-Origin-Resource-Policy
+      value: same-origin

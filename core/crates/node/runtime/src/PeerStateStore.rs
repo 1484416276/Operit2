@@ -2,6 +2,8 @@
 use crate::NodeServices::{PairedPeer, PeerTransport};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use operit_host_api::RuntimeStorageHost;
+use operit_host_api::TimeUtils::currentTimeMillis;
+use ring::rand::{SecureRandom, SystemRandom};
 use operit_link::protocol::LinkDeviceInfo;
 use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, Preferences, PreferencesDataStoreError, PREFERENCES_SCHEMA_VERSION_KEY_NAME};
 use operit_util::RuntimeStorageLayout::*;
@@ -63,13 +65,21 @@ pub struct PeerStateStore {
 }
 impl PeerStateStore {
     const OUTBOUND_PREFERENCES_VERSION: u32 = 1;
+    const HOST_CONFIG_PREFERENCES_VERSION: u32 = 1;
 
+    /// Creates the node-local peer preference store over the supplied storage host.
     pub fn new(storage: Arc<dyn RuntimeStorageHost>) -> Self {
         Self { storage }
     }
+    /// Opens peer preferences with their declared storage schema.
     fn store(&self, path: &str) -> CoreNodeStateStore {
         let store = CoreNodeStateStore::newWithStorage(self.storage.clone(), path);
-        if path == RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH {
+        if path == RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH {
+            store.withSchema(
+                Self::HOST_CONFIG_PREFERENCES_VERSION,
+                Self::migrateHostConfigPreferences,
+            )
+        } else if path == RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH {
             store.withSchema(
                 Self::OUTBOUND_PREFERENCES_VERSION,
                 Self::migrateOutboundPreferences,
@@ -78,6 +88,39 @@ impl PeerStateStore {
             store
         }
     }
+    /// Initializes listener defaults in the preference schema transaction.
+    fn migrateHostConfigPreferences(
+        version: u32,
+        preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
+        match version {
+            0 => {
+                if preferences.entries().is_empty() {
+                    let initial = PeerHostConfig {
+                        bindAddress: "0.0.0.0:37195".into(),
+                        token: newHostPairingToken()?,
+                        transports: vec![PeerTransport::Http, PeerTransport::WebSocket],
+                        discoveryEnabled: true,
+                        portMode: PeerHostPortMode::Fixed,
+                        updatedAt: currentTimeMillis(),
+                    };
+                    writeHostConfigPreferences(preferences, &initial)?;
+                } else {
+                    // Legacy exposure flags do not declare any active transport.
+                    if preferences.get(&stringPreferencesKey("transports")).is_none() {
+                        preferences.set(&stringPreferencesKey("transports"), "[]".into());
+                    }
+                    decodeHostConfig(preferences).map_err(PreferencesDataStoreError::Message)?;
+                }
+                Ok(())
+            }
+            from => Err(PreferencesDataStoreError::MissingMigration {
+                from,
+                to: from + 1,
+            }),
+        }
+    }
+
     /// Migrates outbound preferences one schema version at a time.
     fn migrateOutboundPreferences(
         version: u32,
@@ -186,15 +229,12 @@ impl PeerStateStore {
         }).map_err(|error| error.to_string())
     }
 
-    /// 不创建第二份配置；文件缺失返回 None，已存在但损坏则报错，不能用默认值覆盖。
+    /// Reads listener preferences after their versioned initialization.
     pub fn hostConfig(&self) -> Result<Option<PeerHostConfig>, String> {
         let preferences = self.preferences(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)?;
-        if preferences.entries().is_empty() {
-            return Ok(None);
-        }
         decodeHostConfig(&preferences).map(Some)
     }
-    /// 仅供本机管理界面主动显示/复制；缺失时不临时生成一个监听器尚未采用的 token。
+    /// Reads the listener token persisted by the declared preference schema.
     pub fn localPairingToken(&self) -> Result<String, String> {
         let config = self.hostConfig()?.ok_or("Node listener is not configured")?;
         if config.token.trim().is_empty() {
@@ -203,30 +243,24 @@ impl PeerStateStore {
         Ok(config.token)
     }
 
-    /// 更新同一份配置，并保留文件中未来或外围组件增加的字段。
+    /// Saves explicit listener settings without removing unrelated preference keys.
     pub fn saveHostConfig(&self, config: &PeerHostConfig) -> Result<(), String> {
-        let transports = serde_json::to_string(&config.transports).map_err(|error| error.to_string())?;
         self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
-            .edit(|preferences| {
-                for (key, value) in [
-                    ("bindAddress", config.bindAddress.clone()),
-                    ("token", config.token.clone()),
-                    ("discoveryEnabled", config.discoveryEnabled.to_string()),
-                    ("transports", transports.clone()),
-                    (
-                        "portMode",
-                        match config.portMode {
-                            PeerHostPortMode::Automatic => "automatic",
-                            PeerHostPortMode::Fixed => "fixed",
-                        }
-                        .into(),
-                    ),
-                    ("updatedAt", config.updatedAt.to_string()),
-                ] {
-                    preferences.set(&stringPreferencesKey(key), value);
-                }
+            .try_edit_result(|preferences| writeHostConfigPreferences(preferences, config))
+            .map_err(|error: PreferencesDataStoreError| error.to_string())
+    }
+
+    /// Rotates the stored listener token in one node-local preference transaction.
+    pub fn refreshLocalPairingToken(&self) -> Result<String, String> {
+        self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
+            .try_edit_result(|preferences| {
+                decodeHostConfig(preferences).map_err(PreferencesDataStoreError::Message)?;
+                let token = newHostPairingToken()?;
+                preferences.set(&stringPreferencesKey("token"), token.clone());
+                preferences.set(&stringPreferencesKey("updatedAt"), currentTimeMillis().to_string());
+                Ok::<String, PreferencesDataStoreError>(token)
             })
-            .map_err(|error| error.to_string())
+            .map_err(|error: PreferencesDataStoreError| error.to_string())
     }
 
     /// 从原入站/出站文件分别读取授权，只在 UI 投影中按节点归并，不合并凭证或反向授权。
@@ -329,6 +363,37 @@ impl PeerStateStore {
         })
     }
 }
+/// Generates a listener credential using the runtime secure random source.
+fn newHostPairingToken() -> Result<String, PreferencesDataStoreError> {
+    let mut bytes = [0; 32];
+    SystemRandom::new().fill(&mut bytes).map_err(|_| {
+        PreferencesDataStoreError::Message("Listener token random source failed".into())
+    })?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Writes listener fields into the existing node-local preference snapshot.
+fn writeHostConfigPreferences(
+    preferences: &mut Preferences,
+    config: &PeerHostConfig,
+) -> Result<(), PreferencesDataStoreError> {
+    for (key, value) in [
+        ("bindAddress", config.bindAddress.clone()),
+        ("token", config.token.clone()),
+        ("discoveryEnabled", config.discoveryEnabled.to_string()),
+        ("transports", serde_json::to_string(&config.transports)?),
+        ("portMode", match config.portMode {
+            PeerHostPortMode::Automatic => "automatic",
+            PeerHostPortMode::Fixed => "fixed",
+        }.into()),
+        ("updatedAt", config.updatedAt.to_string()),
+    ] {
+        preferences.set(&stringPreferencesKey(key), value);
+    }
+    Ok(())
+}
+
+/// Decodes all listener fields strictly after preference schema migration.
 fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String> {
     let get = |key| {
         preferences
@@ -345,10 +410,8 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
         bindAddress: get("bindAddress")?,
         token: get("token")?,
         discoveryEnabled: parseBool("discoveryEnabled")?,
-        transports: match preferences.get(&stringPreferencesKey("transports")) {
-            Some(value) => serde_json::from_str(value).map_err(|error| format!("Invalid peer host config field transports: {error}"))?,
-            None => Vec::new(),
-        },
+        transports: serde_json::from_str(&get("transports")?)
+            .map_err(|error| format!("Invalid peer host config field transports: {error}"))?,
         portMode: match get("portMode")?.as_str() {
             "automatic" => PeerHostPortMode::Automatic,
             "fixed" => PeerHostPortMode::Fixed,
@@ -557,11 +620,95 @@ mod tests {
         assert_eq!(before, store.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap().entries());
     }
 
+    /// Verifies first reads initialize listener defaults exactly once through the schema.
     #[test]
-    fn local_token_is_explicit_and_does_not_create_or_rewrite_configuration() {
+    fn listener_schema_initializes_http_websocket_discovery_and_fixed_binding_once() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let first = store.hostConfig().unwrap().unwrap();
+        assert_eq!(first.bindAddress, "0.0.0.0:37195");
+        assert_eq!(first.transports, vec![PeerTransport::Http, PeerTransport::WebSocket]);
+        assert!(first.discoveryEnabled);
+        assert_eq!(first.portMode, PeerHostPortMode::Fixed);
+        assert_eq!(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&first.token).unwrap().len(), 32);
+        assert_eq!(store.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH).schemaVersion().unwrap(), 1);
+        let before = storage.0.lock().unwrap().clone();
+        let second = PeerStateStore::new(storage.clone()).hostConfig().unwrap().unwrap();
+        assert_eq!(first.token, second.token);
+        assert_eq!(first.updatedAt, second.updatedAt);
+        assert_eq!(before, *storage.0.lock().unwrap());
+    }
+
+    /// Verifies simultaneous first reads share one persisted listener credential.
+    #[test]
+    fn concurrent_listener_reads_share_the_schema_initialization_transaction() {
+        let storage = Arc::new(Storage::default());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers = (0..8).map(|_| {
+            let storage = storage.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let store = PeerStateStore::new(storage);
+                barrier.wait();
+                store.hostConfig().unwrap().unwrap().token
+            })
+        }).collect::<Vec<_>>();
+        let tokens = workers.into_iter().map(|worker| worker.join().unwrap()).collect::<Vec<_>>();
+        assert!(tokens.iter().all(|token| token == &tokens[0]));
+        assert_eq!(storage.0.lock().unwrap().len(), 1);
+    }
+
+    /// Verifies token rotation only changes authentication data and its update timestamp.
+    #[test]
+    fn listener_token_rotation_preserves_binding_transports_discovery_and_unknown_keys() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let mut config = store.hostConfig().unwrap().unwrap();
+        config.bindAddress = "127.0.0.1:48123".into();
+        config.transports = vec![PeerTransport::Tcp];
+        config.discoveryEnabled = false;
+        store.saveHostConfig(&config).unwrap();
+        store.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH).edit(|preferences| {
+            preferences.set(&stringPreferencesKey("extra"), "preserved".into());
+        }).unwrap();
+        let before = store.preferences(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH).unwrap();
+        let newToken = store.refreshLocalPairingToken().unwrap();
+        assert_ne!(newToken, config.token);
+        assert_eq!(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&newToken).unwrap().len(), 32);
+        let after = store.preferences(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH).unwrap();
+        for (key, value) in before.entries() {
+            if key != "token" && key != "updatedAt" {
+                assert_eq!(after.get(&stringPreferencesKey(&key)), Some(&value));
+            }
+        }
+        assert_eq!(after.get(&stringPreferencesKey("token")), Some(&newToken));
+        assert_eq!(store.hostConfig().unwrap().unwrap().portMode, PeerHostPortMode::Fixed);
+    }
+
+    /// Verifies missing current-schema fields and unknown future versions fail unchanged.
+    #[test]
+    fn listener_schema_rejects_incomplete_current_and_newer_preferences() {
+        for version in [1, 2] {
+            let storage = Arc::new(Storage::default());
+            let mut preferences = emptyPreferences();
+            preferences.set(&stringPreferencesKey(PREFERENCES_SCHEMA_VERSION_KEY_NAME), version.to_string());
+            preferences.set(&stringPreferencesKey("token"), "original-token".into());
+            CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
+                .replace(preferences).unwrap();
+            let before = storage.0.lock().unwrap().clone();
+            let store = PeerStateStore::new(storage.clone());
+            assert!(store.hostConfig().is_err());
+            assert!(store.refreshLocalPairingToken().is_err());
+            assert_eq!(before, *storage.0.lock().unwrap());
+        }
+    }
+
+    /// Verifies that reading a token preserves initialized listener preferences.
+    #[test]
+    fn local_token_reads_the_persisted_configuration_without_rewriting_it() {
         let store = PeerStateStore::new(Arc::new(Storage::default()));
-        assert!(store.localPairingToken().is_err());
-        assert!(store.hostConfig().unwrap().is_none());
+        let initialized = store.hostConfig().unwrap().unwrap();
+        assert_eq!(store.localPairingToken().unwrap(), initialized.token);
         let mut config = PeerHostConfig {
             bindAddress: "0.0.0.0:37194".into(), token: "saved-token".into(),
             discoveryEnabled: false, transports: vec![PeerTransport::Tcp],
@@ -576,11 +723,11 @@ mod tests {
         assert!(store.localPairingToken().is_err());
     }
 
+    /// Verifies version-zero listener preferences retain explicit settings and unknown fields.
     #[test]
     fn original_host_config_is_read_and_updated_in_place_without_losing_fields() {
         let storage = Arc::new(Storage::default());
         let store = PeerStateStore::new(storage.clone());
-        assert!(store.hostConfig().unwrap().is_none());
         let mut preferences = emptyPreferences();
         for (key, value) in [
             ("bindAddress", "127.0.0.1:37194"),
@@ -593,12 +740,12 @@ mod tests {
         ] {
             preferences.set(&stringPreferencesKey(key), value.into());
         }
-        store
-            .store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
+        CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .replace(preferences)
             .unwrap();
-        let before = storage.0.lock().unwrap().clone();
         let mut config = store.hostConfig().unwrap().unwrap();
+        let before = storage.0.lock().unwrap().clone();
+        store.hostConfig().unwrap().unwrap();
         assert!(config.transports.is_empty(), "obsolete flags must not enable listeners");
         assert_eq!(config.token, "old-token");
         assert_eq!(config.portMode, PeerHostPortMode::Fixed);
@@ -709,14 +856,14 @@ mod tests {
         );
     }
 
+    /// Verifies invalid listener preferences fail without modifying stored records.
     #[test]
     fn malformed_config_is_not_replaced_and_pending_records_are_retained() {
         let storage = Arc::new(Storage::default());
         let store = PeerStateStore::new(storage.clone());
         let mut p = emptyPreferences();
         p.set(&stringPreferencesKey("token"), "secret".into());
-        store
-            .store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
+        CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .replace(p)
             .unwrap();
         for (direction, path) in [

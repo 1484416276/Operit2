@@ -16121,3 +16121,4 @@ lv_font_t operit_font_emoji_16 = {
 
 
 #endif /*#if OPERIT_FONT_EMOJI_16*/
+

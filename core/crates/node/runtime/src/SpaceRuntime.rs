@@ -1,8 +1,4 @@
-use operit_link::{
-    CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError,
-    CoreStreamAttachment, CoreStreamSource, CoreValue, CoreWatchRequest,
-    CORE_STREAM_TARGET,
-};
+use operit_link::{CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream, CoreLinkError, CoreStreamAttachment, CoreStreamSource, CoreValue, CoreWatchRequest, CORE_STREAM_TARGET};
 use operit_runtime::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use serde::de::DeserializeOwned;

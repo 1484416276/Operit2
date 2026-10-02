@@ -23,14 +23,14 @@ futures-util = "0.3"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 mdns-sd = "0.12"
+operit-proxy-edge = { path = "../../core/crates/proxy/edge" }
 operit-proxy-local = { path = "../../core/crates/proxy/local" }
 operit-node-runtime = { path = "../../core/crates/node/runtime" }
 operit-core-application = { path = "../../core/crates/application/core" }
 operit-command-core = { path = "../../core/crates/command/core" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }
-operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["serial", "storage"] }
+operit-host-native-common = { path = "../../hosts/common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "storage"] }
 operit-link = { path = "../../core/crates/foundation/link" }
-operit-access-runtime = { path = "../../core/crates/access/runtime" }
 operit-model = { path = "../../core/crates/foundation/model" }
 operit-providers = { path = "../../core/crates/provider/services" }
 operit-runtime = { path = "../../core/crates/runtime/application" }
@@ -45,7 +45,7 @@ serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }

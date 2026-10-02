@@ -9,8 +9,27 @@ use crate::{
     LocalInferenceHost, ManagedRuntimeHost, PluginSdkIpc::PluginSdkIpcHost, RobotFaceHost,
     RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost, SystemOperationHost,
     TerminalHost, ToastHost, TtsPlaybackHost, TtsSynthesisHost, WebSocketHost, WebVisitHost,
-    SerialPortHost,
+    SerialPortHost, TcpHost,
 };
+
+static DEFAULT_HTTP_SERVER_HOST: OnceLock<Arc<dyn crate::HttpServer::HttpServerHost>> = OnceLock::new();
+pub fn setDefaultHttpServerHost(host: Arc<dyn crate::HttpServer::HttpServerHost>) {
+    let _ = DEFAULT_HTTP_SERVER_HOST.set(host);
+}
+pub fn defaultHttpServerHost() -> crate::HostResult<Arc<dyn crate::HttpServer::HttpServerHost>> {
+    DEFAULT_HTTP_SERVER_HOST.get().cloned()
+        .ok_or_else(|| crate::HostError::new("The active Host has not registered an HTTP server provider"))
+}
+static DEFAULT_TCP_HOST: OnceLock<Arc<dyn TcpHost>> = OnceLock::new();
+
+pub fn setDefaultTcpHost(host: Arc<dyn TcpHost>) {
+    let _ = DEFAULT_TCP_HOST.set(host);
+}
+
+pub fn defaultTcpHost() -> crate::HostResult<Arc<dyn TcpHost>> {
+    DEFAULT_TCP_HOST.get().cloned()
+        .ok_or_else(|| crate::HostError::new("The active Host has not registered a TCP provider"))
+}
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
 static DEFAULT_SERIAL_PORT_HOST: OnceLock<Arc<dyn SerialPortHost>> = OnceLock::new();
@@ -111,6 +130,8 @@ pub fn defaultHostRuntimeTaskSchedulerHost() -> Arc<dyn HostRuntimeTaskScheduler
 #[derive(Clone, Default)]
 pub struct HostManager {
     pub serviceDiscoveryHost: Option<Arc<dyn ServiceDiscoveryHost>>,
+    pub httpServerHost: Option<Arc<dyn crate::HttpServer::HttpServerHost>>,
+    pub tcpHost: Option<Arc<dyn TcpHost>>,
     pub serialPortHost: Option<Arc<dyn SerialPortHost>>,
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
@@ -161,6 +182,8 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
+            tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
@@ -201,6 +224,8 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
+            tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
@@ -244,6 +269,8 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
+            tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
             systemOperationHost: None,
@@ -288,6 +315,8 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            httpServerHost: None,
+            tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
@@ -336,6 +365,8 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             webSocketHost: None,
+            httpServerHost: None,
+            tcpHost: None,
             serialPortHost: None,
             serviceDiscoveryHost: None,
             systemOperationHost: Some(systemOperationHost),
@@ -389,6 +420,15 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withWebSocketHost(mut self, webSocketHost: Arc<dyn WebSocketHost>) -> Self {
         self.webSocketHost = Some(webSocketHost);
+        self
+    }
+
+    pub fn withHttpServerHost(mut self, host: Arc<dyn crate::HttpServer::HttpServerHost>) -> Self {
+        self.httpServerHost = Some(host);
+        self
+    }
+    pub fn withTcpHost(mut self, host: Arc<dyn TcpHost>) -> Self {
+        self.tcpHost = Some(host);
         self
     }
 

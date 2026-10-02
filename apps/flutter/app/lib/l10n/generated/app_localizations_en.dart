@@ -4084,4 +4084,163 @@ class AppLocalizationsEn extends AppLocalizations {
   String chatMessageCacheHitRate(String rate) {
     return 'Cache hit rate: $rate';
   }
+
+  @override
+  String get settingsPeerAdvanced => 'Advanced options';
+
+  @override
+  String get settingsPeerTransportHelp =>
+      'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.';
+
+  @override
+  String get settingsPeerBindAddress => 'Listen address';
+
+  @override
+  String get settingsPeerBindAddressHelp =>
+      'Example: 0.0.0.0:37195 for LAN access';
+
+  @override
+  String get settingsPeerDiscoveryNeedsTransport =>
+      'Select at least one transport before enabling discovery.';
+
+  @override
+  String get settingsPeerPortConflict =>
+      'TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.';
+
+  @override
+  String get settingsPeerAddressRequired => 'Enter a listen address.';
+
+  @override
+  String get settingsPeerApplied => 'Listener settings applied.';
+
+  @override
+  String settingsPeerRestoreFailed(String error) {
+    return 'Failed to restore previous listeners: $error';
+  }
+
+  @override
+  String get settingsPeerCodeInstructions =>
+      'Enter this code on the other device to finish pairing. It expires in five minutes. Do not share it with strangers.';
+
+  @override
+  String get settingsPeerSixDigitCode =>
+      'Enter the six-digit pairing code shown on the receiving device.';
+
+  @override
+  String get spaceJoinRequests => 'Space join requests';
+
+  @override
+  String spaceJoinReviewer(String name) {
+    return 'Reviewer: $name';
+  }
+
+  @override
+  String get spaceJoinWaitingReviewer =>
+      'Waiting for an authorized reviewer to come online';
+
+  @override
+  String get spaceJoinPending => 'Waiting for approval';
+
+  @override
+  String get spaceJoinApproving => 'Decision is being processed';
+
+  @override
+  String get spaceJoinApproved => 'Approved · completing join';
+
+  @override
+  String get spaceJoinJoined => 'Joined';
+
+  @override
+  String get spaceJoinRejected => 'Rejected';
+
+  @override
+  String get spaceJoinCancelled => 'Cancelled';
+
+  @override
+  String get spaceJoinExpired => 'Expired';
+
+  @override
+  String get spaceJoinSubmit => 'Submit request';
+
+  @override
+  String get spaceJoinApprovalTitle => 'Space join request';
+
+  @override
+  String spaceJoinApprovalDescription(String name, String space) {
+    return '$name wants to join “$space”. No Space data is shared before approval.';
+  }
+
+  @override
+  String get spaceJoinApprove => 'Approve';
+
+  @override
+  String get spaceJoinReject => 'Reject';
+
+  @override
+  String get spaceJoinRetry => 'Submit again';
+
+  @override
+  String get spaceJoinKeepWaiting => 'Keep waiting in background';
+
+  @override
+  String get spaceJoinCancel => 'Cancel request';
+
+  @override
+  String get spaceJoinRefreshingFailed =>
+      'Cannot reach the device right now. The request is saved and will retry.';
+
+  @override
+  String get spaceJoinAssignmentChanged =>
+      'This request has been transferred or already processed.';
+
+  @override
+  String get spaceJoinProgressTitle => 'Space join request';
+
+  @override
+  String get spaceJoinSending => 'Submitting request…';
+
+  @override
+  String get spaceJoinSubmitFailed =>
+      'Could not submit the request. Check the connection and try again.';
+
+  @override
+  String get spaceJoinNoDataYet =>
+      'Your current Space remains unchanged until approval. You can close this window and keep waiting in the background.';
+
+  @override
+  String get deviceSpaceAddDevice => 'Add device';
+
+  @override
+  String get deviceSpaceDevices => 'Devices';
+
+  @override
+  String get deviceSpaceMore => 'More device actions';
+
+  @override
+  String get deviceSpaceConnectionSettings => 'Connection settings';
+
+  @override
+  String get deviceSpaceViewRequest => 'View request';
+
+  @override
+  String get devicePickerNearby => 'Nearby devices';
+
+  @override
+  String get devicePickerEmpty => 'No nearby devices found';
+
+  @override
+  String get devicePickerHint =>
+      'Connect both devices to the same network and enable discovery on the other device.';
+
+  @override
+  String get devicePickerManual => 'Connect using an address';
+
+  @override
+  String get deviceSpaceMyRequests => 'My requests';
+
+  @override
+  String get deviceSpaceMyReviews => 'Awaiting my review';
+
+  @override
+  String get deviceSpaceNoRequests => 'No requests';
 }

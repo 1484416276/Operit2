@@ -3,16 +3,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'SpaceJoinWidgets.dart';
+import 'package:flutter/services.dart';
 
-import '../../core/link_access/LinkAccessHost.dart';
-import '../../core/link_access/LinkAccessHostConfig.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
-import '../../core/runtime/RemotePairingBridge.dart';
+import '../../core/runtime/PeerEndpointTransport.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../theme/OperitFormStyles.dart';
-import 'components/M3LoadingIndicator.dart';
+import '../features/settings/runtime/PeerListenerSettings.dart';
 
+enum _DeviceSpaceAction { requests, settings }
+
+/// One primary action; technical controls and history live in secondary dialogs.
 class DeviceSpaceDiscoveryPanel extends StatefulWidget {
   const DeviceSpaceDiscoveryPanel({
     super.key,
@@ -21,614 +24,429 @@ class DeviceSpaceDiscoveryPanel extends StatefulWidget {
     this.enabled = true,
     this.autoScan = true,
     this.onBusyChanged,
+    this.onRequestsChanged,
   });
-
   final GeneratedCoreProxyClients clients;
-  final Future<void> Function(generated.CoreSpace deviceSpace) onJoined;
-  final bool enabled;
-  final bool autoScan;
+  final Future<void> Function(generated.CoreSpace) onJoined;
+  final bool enabled, autoScan;
   final ValueChanged<bool>? onBusyChanged;
-
-  /// Creates the shared discovery and device-space joining state.
+  final ValueChanged<List<generated.SpaceJoinRequest>>? onRequestsChanged;
   @override
   State<DeviceSpaceDiscoveryPanel> createState() =>
       _DeviceSpaceDiscoveryPanelState();
 }
 
 class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
-  bool _busy = false;
-  bool _discoverable = false;
-  bool _scanning = false;
-  String? _scanError;
-  String? _edgeScanError;
-  List<generated.RuntimeEdgeDiscoveredDevice> _discoveredEdges =
-      <generated.RuntimeEdgeDiscoveredDevice>[];
-  String? _connectionMessage;
-  bool _connectionFailed = false;
-  List<generated.RuntimeRemoteDiscoveredSpace> _discoveredDeviceSpaces =
-      <generated.RuntimeRemoteDiscoveredSpace>[];
-
-  /// Reports whether this panel can start another discovery operation.
-  bool get _controlsEnabled => widget.enabled && !_busy;
-
-  /// Reports whether the active host can browse native nearby announcements.
-  bool get _supportsDeviceSpaceDiscovery =>
-      LinkAccessHost.instance.supportsDeviceSpaceDiscovery;
-
-  /// Loads discovery configuration and starts the initial nearby-space scan.
+  Timer? _timer;
+  int _pending = 0;
+  bool _loadingRequests = false;
   @override
   void initState() {
     super.initState();
-    unawaited(_loadDiscoverable());
-    if (widget.autoScan && _supportsDeviceSpaceDiscovery) {
+    _timer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(_loadRequests()),
+    );
+    unawaited(_loadRequests());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadRequests() async {
+    if (_loadingRequests || !widget.enabled) return;
+    _loadingRequests = true;
+    try {
+      final service = widget.clients.server.runtimeRemoteLinkService;
+      final outgoing = await service.outgoingDeviceSpaceJoins();
+      final incoming = await service.incomingDeviceSpaceJoins();
+      if (!mounted) return;
+      final count =
+          outgoing.where((r) => spaceJoinIsActive(r.status)).length +
+          incoming.length;
+      if (_pending != count) setState(() => _pending = count);
+      widget.onRequestsChanged?.call(outgoing);
+    } catch (_) {
+      /* No new error section on the landing page. */
+    } finally {
+      _loadingRequests = false;
+    }
+  }
+
+  Future<void> _addDevice() async {
+    final l10n = AppLocalizations.of(context)!;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.deviceSpaceAddDevice),
+        content: SizedBox(
+          width: 440,
+          height: (MediaQuery.sizeOf(dialogContext).height * .5).clamp(
+            240.0,
+            420.0,
+          ),
+          child: _DeviceSpacePicker(
+            clients: widget.clients,
+            autoScan: widget.autoScan,
+            onJoined: widget.onJoined,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(l10n.cancel),
+          ),
+        ],
+      ),
+    );
+    await _loadRequests();
+  }
+
+  Future<void> _secondary(_DeviceSpaceAction action) async {
+    final l10n = AppLocalizations.of(context)!;
+    if (action == _DeviceSpaceAction.requests) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(l10n.spaceJoinRequests),
+          content: SpaceJoinRequestsPanel(
+            clients: widget.clients,
+            onJoined: widget.onJoined,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(l10n.ok),
+            ),
+          ],
+        ),
+      );
+      await _loadRequests();
+    } else {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(l10n.deviceSpaceConnectionSettings),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: PeerListenerSettings(
+                clients: widget.clients,
+                onBusyChanged: widget.onBusyChanged,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(l10n.ok),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FilledButton.icon(
+          onPressed: widget.enabled ? _addDevice : null,
+          icon: const Icon(Icons.add_rounded, size: 20),
+          label: Text(l10n.deviceSpaceAddDevice),
+        ),
+        const SizedBox(width: 4),
+        PopupMenuButton<_DeviceSpaceAction>(
+          enabled: widget.enabled,
+          tooltip: l10n.deviceSpaceMore,
+          onSelected: _secondary,
+          icon: Badge(
+            isLabelVisible: _pending > 0,
+            label: Text('$_pending'),
+            child: const Icon(Icons.more_horiz_rounded),
+          ),
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: _DeviceSpaceAction.requests,
+              child: Row(
+                children: [
+                  const Icon(Icons.pending_actions_outlined, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(l10n.spaceJoinRequests)),
+                  if (_pending > 0)
+                    Text(
+                      '$_pending',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: _DeviceSpaceAction.settings,
+              child: Row(
+                children: [
+                  const Icon(Icons.tune_rounded, size: 20),
+                  const SizedBox(width: 12),
+                  Text(l10n.deviceSpaceConnectionSettings),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _DeviceSpacePicker extends StatefulWidget {
+  const _DeviceSpacePicker({
+    required this.clients,
+    required this.onJoined,
+    this.autoScan = true,
+  });
+  final GeneratedCoreProxyClients clients;
+  final Future<void> Function(generated.CoreSpace) onJoined;
+  final bool autoScan;
+  @override
+  State<_DeviceSpacePicker> createState() => _DeviceSpacePickerState();
+}
+
+class _DeviceSpacePickerState extends State<_DeviceSpacePicker> {
+  bool _busy = false;
+  String? _error;
+  List<generated.DiscoveredPeer> _peers = [];
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoScan) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          unawaited(_scanAllDevices());
-        }
+        if (mounted) unawaited(_scan());
       });
     }
   }
 
-  /// Builds the reusable scan, pairing, and discovery controls.
+  void _setBusy(bool busy) {
+    if (!mounted) return;
+    setState(() => _busy = busy);
+  }
+
+  Future<void> _scan() async {
+    _setBusy(true);
+    try {
+      final peers = await widget.clients.server.runtimeRemoteLinkService
+          .discoverPeers(timeoutMs: 2000);
+      if (mounted) {
+        setState(() {
+          _peers = peers;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<void> _pair([generated.DiscoveredPeer? peer]) async {
+    _setBusy(true);
+    try {
+      final _RemotePairResult? result;
+      if (peer == null) {
+        result = await _RemotePairDialog.show(context, clients: widget.clients);
+      } else {
+        // LAN 候选不携带 token；免 token 准入由 runtime/Host 实际来源判断。
+        final pending = await widget.clients.server.runtimeRemoteLinkService
+            .startPairing(
+              address: peer.address,
+              nodeId: peer.nodeId,
+              transport: peerEndpointTransport(peer.address),
+              token: null,
+            );
+        if (!mounted) {
+          await widget.clients.server.runtimeRemoteLinkService.cancelPairing(
+            pairingId: pending.pairingId,
+          );
+          return;
+        }
+        result = await _RemotePairCodeDialog.show(
+          context,
+          pairing: pending,
+          clients: widget.clients,
+        );
+        if (result == null) {
+          await widget.clients.server.runtimeRemoteLinkService.cancelPairing(
+            pairingId: pending.pairingId,
+          );
+        }
+      }
+      if (result != null) {
+        if (!mounted) return;
+        final space = await showSpaceJoinRequest(
+          context,
+          clients: widget.clients,
+          deviceId: result.peer.nodeId,
+          deviceName: result.peer.displayName,
+        );
+        if (mounted) {
+          if (space != null) await widget.onJoined(space);
+          if (mounted) Navigator.pop(context);
+        }
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      _setBusy(false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Text(
-          _supportsDeviceSpaceDiscovery
-              ? l10n.settingsRuntimeDiscoverSpacesDescription
-              : l10n.settingsRuntimeWebPairDescription,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            if (_supportsDeviceSpaceDiscovery)
-              FilledButton.tonalIcon(
-                onPressed: !_controlsEnabled || _scanning
-                    ? null
-                    : _scanAllDevices,
-                icon: _scanning
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: M3LoadingIndicator(size: 18),
-                      )
-                    : const Icon(Icons.search_outlined, size: 18),
-                label: Text(
-                  _scanning
-                      ? l10n.settingsRuntimeScanning
-                      : l10n.settingsRuntimeScan,
-                ),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                l10n.devicePickerNearby,
+                style: Theme.of(context).textTheme.titleSmall,
               ),
-            TextButton.icon(
-              onPressed: _controlsEnabled ? _pairRemoteManually : null,
-              icon: const Icon(Icons.add_outlined, size: 18),
-              label: Text(l10n.settingsRuntimeEnterManually),
+            ),
+            IconButton(
+              tooltip: l10n.settingsRuntimeScan,
+              onPressed: _busy ? null : _scan,
+              icon: const Icon(Icons.refresh_rounded),
             ),
           ],
         ),
-        if (_edgeScanError != null) ...<Widget>[
-          const SizedBox(height: 8),
-          _DiscoveryStatus(message: _edgeScanError!, failed: true),
-        ],
-        if (_discoveredEdges.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 12),
-          Divider(
-            height: 1,
-            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 4),
-          for (final edge in _discoveredEdges)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.memory_outlined),
-              title: Text(edge.displayName),
-              subtitle: Text('${edge.deviceId} · ${edge.model}\n${edge.endpoint}'),
-              isThreeLine: true,
-              trailing: IconButton(
-                icon: const Icon(Icons.link_outlined),
-                tooltip: l10n.settingsRuntimeConnect,
-                onPressed: _controlsEnabled
-                    ? () => _pairDiscoveredEdge(edge)
-                    : null,
-              ),
+        if (_busy) const LinearProgressIndicator(),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
-        ],
-        if (_scanError != null) ...<Widget>[
-          const SizedBox(height: 8),
-          _DiscoveryStatus(message: _scanError!, failed: true),
-        ],
-        if (_connectionMessage != null) ...<Widget>[
-          const SizedBox(height: 8),
-          _DiscoveryStatus(
-            message: _connectionMessage!,
-            failed: _connectionFailed,
           ),
-        ],
-        if (_discoveredDeviceSpaces.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 12),
-          Divider(
-            height: 1,
-            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 4),
-          for (final deviceSpace in _discoveredDeviceSpaces)
-            ExpansionTile(
-              dense: true,
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(left: 20),
-              leading: const Icon(Icons.hub_outlined),
-              title: Text(
-                deviceSpace.spaceName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                l10n.settingsRuntimeDiscoveredSpaceSummary(
-                  deviceSpace.memberCount,
-                  deviceSpace.devices.length,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              children: <Widget>[
-                for (final device in deviceSpace.devices)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.devices_other_outlined),
-                    title: Text(
-                      _configuredUserName(context, device.userName),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${device.displayName}\n${device.baseUrl}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.group_add_outlined),
-                      tooltip: l10n.settingsRuntimeJoinSpace,
-                      onPressed: _controlsEnabled
-                          ? () => _pairDiscoveredDevice(device)
-                          : null,
+        Expanded(
+          child: _peers.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.devices_other_outlined,
+                          size: 40,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _busy
+                              ? l10n.settingsRuntimeScanning
+                              : l10n.devicePickerEmpty,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          l10n.devicePickerHint,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                     ),
                   ),
-              ],
-            ),
-        ],
-        if (_supportsDeviceSpaceDiscovery) ...<Widget>[
-          const SizedBox(height: 12),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            title: Text(l10n.settingsRuntimeEnableDiscovery),
-            subtitle: Text(l10n.settingsRuntimeEnableDiscoveryDescription),
-            value: _discoverable,
-            onChanged: _controlsEnabled ? _setDiscoverable : null,
+                )
+              : ListView.separated(
+                  itemCount: _peers.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final peer = _peers[index];
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.devices_outlined),
+                      title: Text(peer.displayName),
+                      subtitle: Text(
+                        peer.address,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: _busy ? null : () => _pair(peer),
+                    );
+                  },
+                ),
+        ),
+        const Divider(height: 24),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: TextButton.icon(
+            onPressed: _busy ? null : () => _pair(),
+            icon: const Icon(Icons.link_outlined, size: 18),
+            label: Text(l10n.devicePickerManual),
           ),
-        ],
+        ),
       ],
     );
   }
-
-  /// Reads whether this device currently advertises itself on the LAN.
-  Future<void> _loadDiscoverable() async {
-    try {
-      final config = await LinkAccessHostConfigStore.read();
-      if (mounted) {
-        setState(() => _discoverable = config.discoveryEnabled);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = error.toString();
-          _connectionFailed = true;
-        });
-      }
-    }
-  }
-
-  /// Enables or disables LAN discovery through the shared link-access host.
-  Future<void> _setDiscoverable(bool value) async {
-    final l10n = AppLocalizations.of(context)!;
-    _setBusy(true);
-    try {
-      final config = await LinkAccessHostConfigStore.read();
-      final server = LinkAccessHost.instance;
-      final next = _linkHostConfigForDiscovery(config, value);
-      if (value || config.webAccessEnabled) {
-        await server.start(next);
-      } else {
-        await server.stop(updateConfig: false);
-      }
-      await LinkAccessHostConfigStore.write(next);
-      if (mounted) {
-        setState(() => _discoverable = value);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = value
-              ? l10n.settingsRuntimeEnableDiscoveryFailed(error.toString())
-              : l10n.settingsRuntimeDisableDiscoveryFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  /// Scans Core spaces and Edge advertisements through the same scan action.
-  Future<void> _scanAllDevices() async {
-    setState(() {
-      _scanning = true;
-      _scanError = null;
-      _edgeScanError = null;
-      _discoveredDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
-      _discoveredEdges = <generated.RuntimeEdgeDiscoveredDevice>[];
-    });
-    await Future.wait<void>([_scanCoreSpaces(), _scanEdges()]);
-    if (mounted) {
-      setState(() => _scanning = false);
-    }
-  }
-
-  /// Requests Edge discovery through the host-owned runtime capability.
-  Future<void> _scanEdges() async {
-    try {
-      final edges = await widget.clients.server.runtimeRemoteLinkService
-          .discoverEdges(timeoutMs: 2000);
-      if (mounted) {
-        setState(() => _discoveredEdges = edges);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _edgeScanError = error.toString());
-      }
-    }
-  }
-
-  /// Pairs a discovered Edge without depending on its board model.
-  Future<void> _pairDiscoveredEdge(
-    generated.RuntimeEdgeDiscoveredDevice edge,
-  ) async {
-    _setBusy(true);
-    try {
-      final pairing = await const RemotePairingBridge().startEdgeWithTokenHash(
-        endpoint: edge.endpoint,
-        tokenHash: edge.tokenHash,
-      );
-      if (!mounted) return;
-      final code = await _EdgeCodeDialog.show(context, edge.displayName);
-      if (code == null || !mounted) return;
-      await const RemotePairingBridge().finishEdge(
-        pairingId: pairing.pairingId,
-        pairingCode: code,
-        name: 'edge-${pairing.edgeDeviceId}',
-      );
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimePairingComplete;
-          _connectionFailed = false;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimeConnectionFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  /// Scans the LAN and groups directly connectable Core devices by Space.
-  Future<void> _scanCoreSpaces() async {
-    try {
-      final pairedDevices = await widget.clients.server.runtimeRemoteLinkService
-          .pairedDevicesFlow()
-          .first;
-      final spaces = await widget.clients.server.runtimeRemoteLinkService
-          .discoverSpaces(timeoutMs: 2000);
-      final visibleDeviceSpaces = await _visibleDiscoveredDeviceSpaces(
-        spaces,
-        pairedDevices,
-      );
-      if (mounted) {
-        setState(() => _discoveredDeviceSpaces = visibleDeviceSpaces);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _scanError = error.toString());
-      }
-    }
-  }
-
-  /// Removes this device and still-valid paired devices from scan results.
-  Future<List<generated.RuntimeRemoteDiscoveredSpace>>
-  _visibleDiscoveredDeviceSpaces(
-    List<generated.RuntimeRemoteDiscoveredSpace> spaces,
-    Map<String, generated.RuntimePairedDevice> pairedDevices,
-  ) async {
-    final localDeviceId = LinkAccessHost.instance.deviceId;
-    final visibleDeviceSpaces = <generated.RuntimeRemoteDiscoveredSpace>[];
-    for (final deviceSpace in spaces) {
-      final visibleDevices = <generated.RuntimeRemoteDiscoveredDevice>[];
-      for (final device in deviceSpace.devices) {
-        if (device.deviceId == localDeviceId) {
-          continue;
-        }
-        if (!pairedDevices.containsKey(device.deviceId)) {
-          visibleDevices.add(device);
-          continue;
-        }
-        final status = await widget.clients.server.runtimeRemoteLinkService
-            .pairedDeviceStatus(deviceId: device.deviceId);
-        final showPairedDevice = switch (status) {
-          generated.RuntimePairedDeviceStatus.online => false,
-          generated.RuntimePairedDeviceStatus.offline => false,
-          generated.RuntimePairedDeviceStatus.invalid => true,
-          generated.RuntimePairedDeviceStatus.removedFromSpace => true,
-        };
-        if (showPairedDevice) {
-          visibleDevices.add(device);
-        }
-      }
-      if (visibleDevices.isNotEmpty) {
-        visibleDeviceSpaces.add(
-          generated.RuntimeRemoteDiscoveredSpace(
-            spaceId: deviceSpace.spaceId,
-            spaceName: deviceSpace.spaceName,
-            spaceRevision: deviceSpace.spaceRevision,
-            memberCount: deviceSpace.memberCount,
-            devices: visibleDevices,
-          ),
-        );
-      }
-    }
-    return visibleDeviceSpaces;
-  }
-
-  /// Opens the explicit address and connection-token pairing dialog.
-  Future<void> _pairRemoteManually() async {
-    _setBusy(true);
-    try {
-      final result = await _RemotePairDialog.show(context);
-      if (result != null && mounted) {
-        await _offerJoiningPairedDeviceSpace(result);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimeConnectionFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  /// Starts pairing with one device selected from a discovered device space.
-  Future<void> _pairDiscoveredDevice(
-    generated.RuntimeRemoteDiscoveredDevice device,
-  ) async {
-    _setBusy(true);
-    try {
-      final pairing = await const RemotePairingBridge().startWithTokenHash(
-        baseUrl: device.baseUrl,
-        tokenHash: device.tokenHash,
-      );
-      if (!mounted) {
-        return;
-      }
-      final result = await _RemotePairCodeDialog.show(
-        context,
-        pairing: pairing,
-      );
-      if (result != null && mounted) {
-        await _offerJoiningPairedDeviceSpace(result);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = AppLocalizations.of(
-            context,
-          )!.settingsRuntimeConnectionFailed(error.toString());
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  /// Joins the paired device's Space as the completion of pairing.
-  Future<void> _offerJoiningPairedDeviceSpace(_RemotePairResult result) async {
-    final joined = await widget.clients.server.runtimeRemoteLinkService
-        .joinPairedDeviceSpace(name: result.name);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _connectionMessage = null;
-      _connectionFailed = false;
-    });
-    await widget.onJoined(joined);
-  }
-
-  /// Publishes internal pairing activity to the embedding workflow.
-  void _setBusy(bool value) {
-    if (mounted && _busy != value) {
-      setState(() => _busy = value);
-      widget.onBusyChanged?.call(value);
-    }
-  }
 }
 
-/// Confirms and joins a directly paired device space through the shared Core API.
 Future<generated.CoreSpace?> confirmAndJoinPairedDeviceSpace({
   required BuildContext context,
   required GeneratedCoreProxyClients clients,
-  required String sessionName,
+  required String deviceId,
   required String deviceName,
 }) async {
   final l10n = AppLocalizations.of(context)!;
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (context) => AlertDialog(
       title: Text(l10n.settingsRuntimeJoinSpaceTitle(deviceName)),
       content: Text(l10n.settingsRuntimeJoinSpaceDescription),
-      actions: <Widget>[
+      actions: [
         TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
+          onPressed: () => Navigator.pop(context, false),
           child: Text(l10n.cancel),
         ),
-        FilledButton.icon(
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          icon: const Icon(Icons.group_add_outlined),
-          label: Text(l10n.settingsRuntimeJoinSpace),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(l10n.settingsRuntimeJoinSpace),
         ),
       ],
     ),
   );
-  if (confirmed != true) {
-    return null;
-  }
-  return clients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(
-    name: sessionName,
+  if (confirmed != true) return null;
+  if (!context.mounted) return null;
+  return showSpaceJoinRequest(
+    context,
+    clients: clients,
+    deviceId: deviceId,
+    deviceName: deviceName,
   );
-}
-
-/// Returns a normalized host config with the requested discovery capability.
-LinkAccessHostConfig _linkHostConfigForDiscovery(
-  LinkAccessHostConfig config,
-  bool discoveryEnabled,
-) {
-  final next = config.copyWith(
-    discoveryEnabled: discoveryEnabled,
-    updatedAt: DateTime.now().millisecondsSinceEpoch,
-  );
-  if (next.portMode == LinkAccessHostPortMode.automatic) {
-    return next.copyWith(
-      bindAddress: LinkAccessHostConfig.automaticBindAddress,
-    );
-  }
-  return next;
-}
-
-class _DiscoveryStatus extends StatelessWidget {
-  const _DiscoveryStatus({required this.message, required this.failed});
-
-  final String message;
-  final bool failed;
-
-  /// Builds one compact discovery or pairing result message.
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Text(
-      message,
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-        color: failed ? colorScheme.error : colorScheme.primary,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-}
-
-class _EdgeCodeDialog extends StatefulWidget {
-  const _EdgeCodeDialog({required this.deviceName});
-
-  final String deviceName;
-
-  /// Opens the protocol-level pairing code prompt.
-  static Future<String?> show(BuildContext context, String deviceName) {
-    return showDialog<String>(
-      context: context,
-      builder: (_) => _EdgeCodeDialog(deviceName: deviceName),
-    );
-  }
-
-  /// Creates state for the pairing input.
-  @override
-  State<_EdgeCodeDialog> createState() => _EdgeCodeDialogState();
-}
-
-class _EdgeCodeDialogState extends State<_EdgeCodeDialog> {
-  final _code = TextEditingController();
-
-  /// Releases the pairing code controller.
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  /// Builds a device-neutral, localized pairing prompt.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return AlertDialog(
-      title: Text(l10n.edgePairingCodeTitle(widget.deviceName)),
-      content: TextField(
-        controller: _code,
-        autofocus: true,
-        keyboardType: TextInputType.number,
-        maxLength: 6,
-        decoration: InputDecoration(
-          labelText: l10n.settingsRuntimePairCode,
-          hintText: l10n.edgePairingCodeHint,
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-        FilledButton(
-          onPressed: () {
-            final code = _code.text.trim();
-            if (RegExp(r'^[0-9]{6}$').hasMatch(code)) {
-              Navigator.of(context).pop(code);
-            }
-          },
-          child: Text(l10n.settingsRuntimeConnect),
-        ),
-      ],
-    );
-  }
 }
 
 class _RemotePairDialog extends StatefulWidget {
-  const _RemotePairDialog();
+  const _RemotePairDialog({required this.clients});
+
+  final GeneratedCoreProxyClients clients;
 
   /// Displays the manual remote pairing dialog.
-  static Future<_RemotePairResult?> show(BuildContext context) {
+  static Future<_RemotePairResult?> show(
+    BuildContext context, {
+    required GeneratedCoreProxyClients clients,
+  }) {
     return showDialog<_RemotePairResult>(
       context: context,
-      builder: (_) => const _RemotePairDialog(),
+      builder: (_) => _RemotePairDialog(clients: clients),
     );
   }
 
@@ -641,9 +459,8 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
   final TextEditingController _baseUrlController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _codeController = TextEditingController();
-  generated.LinkTransportPreference _transport =
-      generated.LinkTransportPreference.http;
-  RemotePairStartResult? _pairing;
+  generated.PeerTransport _transport = generated.PeerTransport.http;
+  generated.PendingPairing? _pairing;
   bool _busy = false;
   String? _error;
 
@@ -673,10 +490,13 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       _error = null;
     });
     try {
-      final pairing = await const RemotePairingBridge().startWithToken(
-        baseUrl: baseUrl,
-        token: token,
-      );
+      final pairing = await widget.clients.server.runtimeRemoteLinkService
+          .startPairing(
+            address: baseUrl,
+            nodeId: '',
+            token: token,
+            transport: _transport,
+          );
       if (mounted) {
         setState(() => _pairing = pairing);
       }
@@ -699,9 +519,9 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
     }
     final l10n = AppLocalizations.of(context)!;
     final pairingCode = _codeController.text.trim();
-    if (pairingCode.isEmpty) {
+    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
       setState(() {
-        _error = '${l10n.settingsRuntimePairCode}: ${l10n.required}';
+        _error = l10n.settingsPeerSixDigitCode;
       });
       return;
     }
@@ -710,20 +530,13 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       _error = null;
     });
     try {
-      final session = await const RemotePairingBridge().finish(
-        pairingId: pairing.pairingId,
-        pairingCode: pairingCode,
-        name: remotePairingSessionName(pairing),
-        transport: _transport,
-      );
+      final session = await widget.clients.server.runtimeRemoteLinkService
+          .finishPairing(
+            pairingId: pairing.pairingId,
+            confirmationCode: pairingCode,
+          );
       if (mounted) {
-        Navigator.of(context).pop(
-          _RemotePairResult(
-            name: remotePairingSessionName(pairing),
-            session: session,
-            userName: pairing.coreUserName,
-          ),
-        );
+        Navigator.of(context).pop(_RemotePairResult(peer: session));
       }
     } catch (error) {
       if (mounted) {
@@ -761,26 +574,34 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
             TextField(
               controller: _tokenController,
               enabled: pairing == null,
+              obscureText: true,
               decoration: InputDecoration(
                 labelText: l10n.settingsRuntimePairToken,
                 border: const OutlineInputBorder(),
                 isDense: true,
               ),
             ),
+            if (pairing == null) ...<Widget>[
+              const SizedBox(height: 10),
+              _LinkTransportSelector(
+                value: _transport,
+                onChanged: (value) => setState(() => _transport = value),
+              ),
+            ],
             if (pairing != null) ...<Widget>[
               const SizedBox(height: 10),
               TextField(
                 controller: _codeController,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
                 decoration: InputDecoration(
                   labelText: l10n.settingsRuntimePairCode,
                   border: const OutlineInputBorder(),
                   isDense: true,
                 ),
-              ),
-              const SizedBox(height: 10),
-              _LinkTransportSelector(
-                value: _transport,
-                onChanged: (value) => setState(() => _transport = value),
               ),
             ],
             if (_error != null) ...<Widget>[
@@ -815,18 +636,21 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
 }
 
 class _RemotePairCodeDialog extends StatefulWidget {
-  const _RemotePairCodeDialog({required this.pairing});
+  const _RemotePairCodeDialog({required this.pairing, required this.clients});
 
-  final RemotePairStartResult pairing;
+  final GeneratedCoreProxyClients clients;
+
+  final generated.PendingPairing pairing;
 
   /// Displays the one-time code dialog for a discovered device.
   static Future<_RemotePairResult?> show(
     BuildContext context, {
-    required RemotePairStartResult pairing,
+    required generated.PendingPairing pairing,
+    required GeneratedCoreProxyClients clients,
   }) {
     return showDialog<_RemotePairResult>(
       context: context,
-      builder: (_) => _RemotePairCodeDialog(pairing: pairing),
+      builder: (_) => _RemotePairCodeDialog(pairing: pairing, clients: clients),
     );
   }
 
@@ -837,8 +661,6 @@ class _RemotePairCodeDialog extends StatefulWidget {
 
 class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
   final TextEditingController _codeController = TextEditingController();
-  generated.LinkTransportPreference _transport =
-      generated.LinkTransportPreference.http;
   bool _busy = false;
   String? _error;
 
@@ -853,9 +675,9 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
   Future<void> _finish() async {
     final l10n = AppLocalizations.of(context)!;
     final pairingCode = _codeController.text.trim();
-    if (pairingCode.isEmpty) {
+    if (!RegExp(r'^\d{6}$').hasMatch(pairingCode)) {
       setState(() {
-        _error = '${l10n.settingsRuntimePairCode}: ${l10n.required}';
+        _error = l10n.settingsPeerSixDigitCode;
       });
       return;
     }
@@ -864,20 +686,13 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       _error = null;
     });
     try {
-      final session = await const RemotePairingBridge().finish(
-        pairingId: widget.pairing.pairingId,
-        pairingCode: pairingCode,
-        name: remotePairingSessionName(widget.pairing),
-        transport: _transport,
-      );
+      final session = await widget.clients.server.runtimeRemoteLinkService
+          .finishPairing(
+            pairingId: widget.pairing.pairingId,
+            confirmationCode: pairingCode,
+          );
       if (mounted) {
-        Navigator.of(context).pop(
-          _RemotePairResult(
-            name: remotePairingSessionName(widget.pairing),
-            session: session,
-            userName: widget.pairing.coreUserName,
-          ),
-        );
+        Navigator.of(context).pop(_RemotePairResult(peer: session));
       }
     } catch (error) {
       if (mounted) {
@@ -903,6 +718,11 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
           children: <Widget>[
             TextField(
               controller: _codeController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
               autofocus: true,
               decoration: InputDecoration(
                 labelText: l10n.settingsRuntimePairCode,
@@ -911,10 +731,6 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
               ),
             ),
             const SizedBox(height: 10),
-            _LinkTransportSelector(
-              value: _transport,
-              onChanged: (value) => setState(() => _transport = value),
-            ),
             if (_error != null) ...<Widget>[
               const SizedBox(height: 10),
               Align(
@@ -943,29 +759,20 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
 }
 
 class _RemotePairResult {
-  const _RemotePairResult({
-    required this.name,
-    required this.session,
-    required this.userName,
-  });
-
-  final String name;
-  final generated.PairedRemoteSessionRecord session;
-  final String userName;
+  const _RemotePairResult({required this.peer});
+  final generated.PairedPeer peer;
 }
 
 class _LinkTransportSelector extends StatelessWidget {
   const _LinkTransportSelector({required this.value, required this.onChanged});
 
-  final generated.LinkTransportPreference value;
-  final ValueChanged<generated.LinkTransportPreference> onChanged;
+  final generated.PeerTransport value;
+  final ValueChanged<generated.PeerTransport> onChanged;
 
   /// Builds the explicit Link carrier selector shared by pairing dialogs.
   @override
   Widget build(BuildContext context) {
-    return OperitFormStyles.dropdownButtonFormField<
-      generated.LinkTransportPreference
-    >(
+    return OperitFormStyles.dropdownButtonFormField<generated.PeerTransport>(
       context,
       initialValue: value,
       decoration: const InputDecoration(
@@ -973,13 +780,13 @@ class _LinkTransportSelector extends StatelessWidget {
         border: OutlineInputBorder(),
         isDense: true,
       ),
-      items: const <DropdownMenuItem<generated.LinkTransportPreference>>[
+      items: const <DropdownMenuItem<generated.PeerTransport>>[
         DropdownMenuItem(
-          value: generated.LinkTransportPreference.http,
+          value: generated.PeerTransport.http,
           child: Text('HTTP'),
         ),
         DropdownMenuItem(
-          value: generated.LinkTransportPreference.webSocket,
+          value: generated.PeerTransport.webSocket,
           child: Text('WebSocket'),
         ),
       ],
@@ -990,12 +797,4 @@ class _LinkTransportSelector extends StatelessWidget {
       },
     );
   }
-}
-
-/// Returns the configured user name or the explicit unconfigured label.
-String _configuredUserName(BuildContext context, String userName) {
-  final normalized = userName.trim();
-  return normalized.isEmpty
-      ? AppLocalizations.of(context)!.settingsUserProfileUnnamed
-      : normalized;
 }

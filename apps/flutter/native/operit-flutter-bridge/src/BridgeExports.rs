@@ -697,107 +697,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_close_watch_stream(
     bytes_to_buffer(native_result_vec(Ok::<(), CoreLinkError>(())))
 }
 
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_start_web_access_server(
-    handle: *mut OperitFlutterBridge,
-    bind_address: *const c_char,
-    token: *const c_char,
-    shutdown_token: *const c_char,
-    web_root: *const c_char,
-    device_info_json: *const c_char,
-    enable_web_access: *const c_char,
-    enable_discovery: *const c_char,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
-    }
-    let args = [
-        ("bind address", bind_address),
-        ("token", token),
-        ("shutdown token", shutdown_token),
-        ("web root", web_root),
-        ("device info", device_info_json),
-        ("enable web access", enable_web_access),
-        ("enable discovery", enable_discovery),
-    ];
-    let mut values = Vec::new();
-    for (name, ptr) in args {
-        if ptr.is_null() {
-            return string_to_ptr(
-                serde_json::to_string(&CoreLinkError::new(
-                    "INVALID_ARGS",
-                    format!("{name} pointer is null"),
-                ))
-                .expect("CoreLinkError must serialize"),
-            );
-        }
-        let value = match CStr::from_ptr(ptr).to_str() {
-            Ok(value) => value.to_string(),
-            Err(error) => {
-                return string_to_ptr(
-                    serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("{name} is not valid UTF-8: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        };
-        values.push(value);
-    }
-    match (*handle).startWebAccessServer(
-        values[0].clone(),
-        values[1].clone(),
-        values[2].clone(),
-        PathBuf::from(&values[3]),
-        match serde_json::from_str::<RemoteDeviceInfo>(&values[4]) {
-            Ok(value) => value,
-            Err(error) => {
-                return string_to_ptr(
-                    serde_json::to_string(&CoreLinkError::new(
-                        "INVALID_ARGS",
-                        format!("device info is invalid: {error}"),
-                    ))
-                    .expect("CoreLinkError must serialize"),
-                );
-            }
-        },
-        values[5] == "true",
-        values[6] == "true",
-    ) {
-        Ok(deviceId) => {
-            string_to_ptr(&serde_json::json!({"ok": true, "deviceId": deviceId}).to_string())
-        }
-        Err(error) => string_to_ptr(
-            &serde_json::to_string(&CoreLinkError::internal(error))
-                .expect("CoreLinkError must serialize"),
-        ),
-    }
-}
-
-#[no_mangle]
-#[cfg(not(target_arch = "wasm32"))]
-pub unsafe extern "C" fn operit_flutter_bridge_stop_web_access_server(
-    handle: *mut OperitFlutterBridge,
-) -> *mut c_char {
-    if handle.is_null() {
-        return string_to_ptr(
-            serde_json::to_string(&CoreLinkError::internal(
-                "runtime bridge is not initialized",
-            ))
-            .expect("CoreLinkError must serialize"),
-        );
-    }
-    (*handle).stopWebAccessServer();
-    string_to_ptr("{\"ok\":true}")
-}
-
 /// Decodes and reads one compact native CoreProxy watch snapshot.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn bridge_watch_snapshot(handle: &OperitFlutterBridge, request_bytes: &[u8]) -> Vec<u8> {
@@ -952,18 +851,6 @@ pub unsafe extern "C" fn operit_flutter_bridge_free_bytes(value: OperitByteBuffe
             value.ptr, value.len,
         )));
     }
-}
-
-fn json_to_ptr(value: &impl serde::Serialize) -> *mut c_char {
-    string_to_ptr(json_string(value))
-}
-
-fn json_string(value: &impl serde::Serialize) -> String {
-    serde_json::to_string(value).unwrap_or_else(|error| {
-        format!(
-            "{{\"requestId\":\"flutter-bridge-serialize\",\"result\":{{\"Err\":{{\"code\":\"INTERNAL_ERROR\",\"message\":\"{error}\"}}}}}}"
-        )
-    })
 }
 
 fn string_to_ptr(value: impl Into<String>) -> *mut c_char {

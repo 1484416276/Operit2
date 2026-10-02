@@ -7278,6 +7278,288 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Cache hit rate: {rate}'**
   String chatMessageCacheHitRate(String rate);
+
+  /// No description provided for @settingsPeerAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced options'**
+  String get settingsPeerAdvanced;
+
+  /// No description provided for @settingsPeerTransportHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.'**
+  String get settingsPeerTransportHelp;
+
+  /// No description provided for @settingsPeerBindAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Listen address'**
+  String get settingsPeerBindAddress;
+
+  /// No description provided for @settingsPeerBindAddressHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Example: 0.0.0.0:37195 for LAN access'**
+  String get settingsPeerBindAddressHelp;
+
+  /// No description provided for @settingsPeerDiscoveryNeedsTransport.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one transport before enabling discovery.'**
+  String get settingsPeerDiscoveryNeedsTransport;
+
+  /// No description provided for @settingsPeerPortConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.'**
+  String get settingsPeerPortConflict;
+
+  /// No description provided for @settingsPeerAddressRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a listen address.'**
+  String get settingsPeerAddressRequired;
+
+  /// No description provided for @settingsPeerApplied.
+  ///
+  /// In en, this message translates to:
+  /// **'Listener settings applied.'**
+  String get settingsPeerApplied;
+
+  /// No description provided for @settingsPeerRestoreFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to restore previous listeners: {error}'**
+  String settingsPeerRestoreFailed(String error);
+
+  /// No description provided for @settingsPeerCodeInstructions.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter this code on the other device to finish pairing. It expires in five minutes. Do not share it with strangers.'**
+  String get settingsPeerCodeInstructions;
+
+  /// No description provided for @settingsPeerSixDigitCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the six-digit pairing code shown on the receiving device.'**
+  String get settingsPeerSixDigitCode;
+
+  /// No description provided for @spaceJoinRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Space join requests'**
+  String get spaceJoinRequests;
+
+  /// No description provided for @spaceJoinReviewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Reviewer: {name}'**
+  String spaceJoinReviewer(String name);
+
+  /// No description provided for @spaceJoinWaitingReviewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for an authorized reviewer to come online'**
+  String get spaceJoinWaitingReviewer;
+
+  /// No description provided for @spaceJoinPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for approval'**
+  String get spaceJoinPending;
+
+  /// No description provided for @spaceJoinApproving.
+  ///
+  /// In en, this message translates to:
+  /// **'Decision is being processed'**
+  String get spaceJoinApproving;
+
+  /// No description provided for @spaceJoinApproved.
+  ///
+  /// In en, this message translates to:
+  /// **'Approved · completing join'**
+  String get spaceJoinApproved;
+
+  /// No description provided for @spaceJoinJoined.
+  ///
+  /// In en, this message translates to:
+  /// **'Joined'**
+  String get spaceJoinJoined;
+
+  /// No description provided for @spaceJoinRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Rejected'**
+  String get spaceJoinRejected;
+
+  /// No description provided for @spaceJoinCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get spaceJoinCancelled;
+
+  /// No description provided for @spaceJoinExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'Expired'**
+  String get spaceJoinExpired;
+
+  /// No description provided for @spaceJoinSubmit.
+  ///
+  /// In en, this message translates to:
+  /// **'Submit request'**
+  String get spaceJoinSubmit;
+
+  /// No description provided for @spaceJoinApprovalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Space join request'**
+  String get spaceJoinApprovalTitle;
+
+  /// No description provided for @spaceJoinApprovalDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} wants to join “{space}”. No Space data is shared before approval.'**
+  String spaceJoinApprovalDescription(String name, String space);
+
+  /// No description provided for @spaceJoinApprove.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get spaceJoinApprove;
+
+  /// No description provided for @spaceJoinReject.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get spaceJoinReject;
+
+  /// No description provided for @spaceJoinRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Submit again'**
+  String get spaceJoinRetry;
+
+  /// No description provided for @spaceJoinKeepWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep waiting in background'**
+  String get spaceJoinKeepWaiting;
+
+  /// No description provided for @spaceJoinCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get spaceJoinCancel;
+
+  /// No description provided for @spaceJoinRefreshingFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot reach the device right now. The request is saved and will retry.'**
+  String get spaceJoinRefreshingFailed;
+
+  /// No description provided for @spaceJoinAssignmentChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'This request has been transferred or already processed.'**
+  String get spaceJoinAssignmentChanged;
+
+  /// No description provided for @spaceJoinProgressTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Space join request'**
+  String get spaceJoinProgressTitle;
+
+  /// No description provided for @spaceJoinSending.
+  ///
+  /// In en, this message translates to:
+  /// **'Submitting request…'**
+  String get spaceJoinSending;
+
+  /// No description provided for @spaceJoinSubmitFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not submit the request. Check the connection and try again.'**
+  String get spaceJoinSubmitFailed;
+
+  /// No description provided for @spaceJoinNoDataYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Your current Space remains unchanged until approval. You can close this window and keep waiting in the background.'**
+  String get spaceJoinNoDataYet;
+
+  /// No description provided for @deviceSpaceAddDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Add device'**
+  String get deviceSpaceAddDevice;
+
+  /// No description provided for @deviceSpaceDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices'**
+  String get deviceSpaceDevices;
+
+  /// No description provided for @deviceSpaceMore.
+  ///
+  /// In en, this message translates to:
+  /// **'More device actions'**
+  String get deviceSpaceMore;
+
+  /// No description provided for @deviceSpaceConnectionSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection settings'**
+  String get deviceSpaceConnectionSettings;
+
+  /// No description provided for @deviceSpaceViewRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'View request'**
+  String get deviceSpaceViewRequest;
+
+  /// No description provided for @devicePickerNearby.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby devices'**
+  String get devicePickerNearby;
+
+  /// No description provided for @devicePickerEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No nearby devices found'**
+  String get devicePickerEmpty;
+
+  /// No description provided for @devicePickerHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect both devices to the same network and enable discovery on the other device.'**
+  String get devicePickerHint;
+
+  /// No description provided for @devicePickerManual.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect using an address'**
+  String get devicePickerManual;
+
+  /// No description provided for @deviceSpaceMyRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'My requests'**
+  String get deviceSpaceMyRequests;
+
+  /// No description provided for @deviceSpaceMyReviews.
+  ///
+  /// In en, this message translates to:
+  /// **'Awaiting my review'**
+  String get deviceSpaceMyReviews;
+
+  /// No description provided for @deviceSpaceNoRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'No requests'**
+  String get deviceSpaceNoRequests;
 }
 
 class _AppLocalizationsDelegate

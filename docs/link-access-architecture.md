@@ -74,7 +74,8 @@ Link Access 只提供控制面和 PeerLink carrier：
 | --- | --- | --- |
 | `operit-proxy-local` | 生成本地 Proxy、字符串 target 和本地 dispatch | Space 路由、设备信任、远程 session |
 | `operit-node-runtime` | `CoreNodeRouter`、Space 路由、Binding 同步和本地 Core 目标解析 | Flutter/CLI 入口协议 |
-| `operit-access-runtime` | 配对控制面、session、签名验证、PeerLink HTTP/WebSocket carrier | 本地 Proxy 调用投影 |
+| `operit-node-runtime::remote` | 节点配对、session、签名验证、连接管理及服务端接入 | 本地 Proxy 调用投影 |
+| `operit-peer-link`（`node/peer-link`） | 共用 PeerLink 引擎和 HTTP/WebSocket/TCP/serial transport | 配对策略、存储、业务运行时 |
 | `operit-edge-contract` | Edge Service object/property address contract | Host implementation、Link dispatch、Access session |
 | `operit-node-edge` | 设备侧 Edge Node、Edge Service、Host capability dispatch | 桌面 runtime、Provider、ToolPkg、Chat、Access 控制面 |
 | `operit-proxy-edge` | Edge Service 的类型化 Proxy facade | 本地 Node 实现、Host implementation、Access session |

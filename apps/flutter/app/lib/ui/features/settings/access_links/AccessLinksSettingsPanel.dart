@@ -1,12 +1,10 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
-import '../../../theme/OperitGlassSurface.dart';
-import '../components/SettingsControlStyles.dart';
 import '../runtime/RuntimeSettingsPanel.dart';
-import '../web_access/WebAccessSettingsPanel.dart';
 
 class AccessLinksSettingsPanel extends StatelessWidget {
   const AccessLinksSettingsPanel({super.key, required this.onOpenProfile});
@@ -21,38 +19,32 @@ class AccessLinksSettingsPanel extends StatelessWidget {
       children: <Widget>[
         RuntimeSettingsPanel(embedded: true, onOpenProfile: onOpenProfile),
         const SizedBox(height: 2),
-        _buildAdvancedSection(context),
+        _buildWebEntry(context),
       ],
     );
   }
 
-  /// Builds the collapsed advanced section for browser access settings.
-  Widget _buildAdvancedSection(BuildContext context) {
+  /// 打开在线网页应用，不启动本地 Web Access server，也不携带 token。
+  Widget _buildWebEntry(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        material: true,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: ExpansionTile(
-            shape: const Border(),
-            collapsedShape: const Border(),
-            initiallyExpanded: false,
-            title: Text(
-              l10n.settingsAdvanced,
-              style: SettingsControlStyles.sectionTitleTextStyle(context),
-            ),
-            children: <Widget>[const WebAccessSettingsPanel(embedded: true)],
-          ),
-        ),
-      ),
+    return ListTile(
+      leading: const Icon(Icons.open_in_browser_outlined),
+      title: const Text('web.operit.app'),
+      subtitle: Text(l10n.openInBrowser),
+      onTap: () async {
+        final uri = Uri.https('web.operit.app', '/');
+        try {
+          if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+            return;
+          }
+        } catch (_) {
+          // 无可用浏览器时保留可复制的网页地址；不启动本地替代服务。
+        }
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: SelectableText(uri.toString())),
+        );
+      },
     );
   }
 }

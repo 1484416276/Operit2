@@ -1,10 +1,9 @@
 #![allow(non_snake_case)]
 
 use std::sync::Arc;
+use operit_node_runtime::NodeServices::NodeServices;
 
-use operit_access_runtime::{LinkAccessIdentity, LinkAccessStore, RemoteDeviceInfo};
-#[cfg(not(target_arch = "wasm32"))]
-use operit_access_runtime::{RemoteLinkServer, RemoteLinkServerConfig, RemoteWebAccessConfig};
+use operit_link::protocol::LinkDeviceInfo;
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::PluginSdkIpc::PluginSdkIpcEndpoint;
 use operit_node_runtime::{
@@ -21,20 +20,28 @@ type LocalClientConfigurator = Box<dyn FnOnce(&mut LocalCoreProxy) -> Result<(),
 /// Contains the host-provided inputs needed to start one Core tree.
 pub struct CoreApplicationConfig {
     pub hostManager: HostManager,
-    pub deviceInfo: RemoteDeviceInfo,
+    pub deviceInfo: LinkDeviceInfo,
     startSpaceSync: bool,
     localClientConfigurator: Option<LocalClientConfigurator>,
+    nodeServices: Option<NodeServices>,
 }
 
 impl CoreApplicationConfig {
     /// Creates a Core application config from host capabilities and device identity.
-    pub fn new(hostManager: HostManager, deviceInfo: RemoteDeviceInfo) -> Self {
+    pub fn new(hostManager: HostManager, deviceInfo: LinkDeviceInfo) -> Self {
         Self {
             hostManager,
             deviceInfo,
             startSpaceSync: true,
             localClientConfigurator: None,
+            nodeServices: None,
         }
+    }
+
+    /// 注入应用、CLI 和 Router 共用的节点服务，不在外围创建协议实现。
+    pub fn withNodeServices(mut self, services: NodeServices) -> Self {
+        self.nodeServices = Some(services);
+        self
     }
 
     /// Selects whether this Core application owns the persistent Space synchronizer.
@@ -55,49 +62,13 @@ impl CoreApplicationConfig {
     }
 }
 
-/// Describes the remote Link server owned by one Core application.
-#[cfg(not(target_arch = "wasm32"))]
-pub struct CoreRemoteLinkServerConfig {
-    pub bindAddress: String,
-    pub token: String,
-    pub webAccess: Option<RemoteWebAccessConfig>,
-    pub printStartupInfo: bool,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl CoreRemoteLinkServerConfig {
-    /// Creates the remote Link server config used by a Core application.
-    pub fn new(bindAddress: String, token: String) -> Self {
-        Self {
-            bindAddress,
-            token,
-            webAccess: None,
-            printStartupInfo: true,
-        }
-    }
-
-    /// Attaches a Web Access surface to the remote Link server.
-    #[allow(non_snake_case)]
-    pub fn withWebAccess(mut self, webAccess: RemoteWebAccessConfig) -> Self {
-        self.webAccess = Some(webAccess);
-        self
-    }
-
-    /// Sets whether the server prints startup information.
-    #[allow(non_snake_case)]
-    pub fn withStartupInfo(mut self, printStartupInfo: bool) -> Self {
-        self.printStartupInfo = printStartupInfo;
-        self
-    }
-}
-
 /// Owns the running Core tree and exposes narrow handles to host surfaces.
 pub struct CoreApplication {
     localClient: Arc<LocalCoreProxy>,
     nodeRuntime: CoreNodeLocalRuntime,
-    nodeRouter: CoreNodeRouter,
-    accessStore: LinkAccessStore,
-    accessIdentity: LinkAccessIdentity,
+    nodeRouter: Arc<CoreNodeRouter>,
+    deviceInfo: LinkDeviceInfo,
+    startSpaceSync: bool,
     accessServices: RuntimeRemoteLinkService,
     pluginSdkIpcBridge: Option<OperitPluginSdkIpcBridge>,
 }
@@ -106,24 +77,30 @@ impl CoreApplication {
     /// Starts one Core tree from explicit host and access configuration.
     pub async fn start(config: CoreApplicationConfig) -> Result<Self, String> {
         let startSpaceSync = config.startSpaceSync;
+        let nodeServices = config.nodeServices;
         let mut runtimeApplication = OperitApplication::newWithContext(config.hostManager);
         runtimeApplication.onCreate()?;
         let mut localClient = LocalCoreProxy::new(runtimeApplication);
         if let Some(configurator) = config.localClientConfigurator {
             configurator(&mut localClient)?;
         }
-        Self::startWithSharedLocalClientConfigured(
-            Arc::new(localClient),
-            config.deviceInfo,
-            startSpaceSync,
-        )
+        let mut application = Self::startWithSharedLocalClientConfigured(
+            Arc::new(localClient), config.deviceInfo, startSpaceSync,
+        )?;
+        let services = match nodeServices {
+            Some(services) => services,
+            None => NodeServices::new(operit_node_runtime::HostRuntimePeerService::HostRuntimePeerService::new(
+                Arc::new(application.localClient.hostManager().clone()), &application.nodeRouter, application.deviceInfo.clone())?),
+        };
+        application.installNodeServices(services)?;
+        Ok(application)
     }
 
     /// Starts one Core tree from a configured local client owned by the caller until this point.
     #[allow(non_snake_case)]
     pub fn startWithLocalClient(
         localClient: LocalCoreProxy,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
     ) -> Result<Self, String> {
         Self::startWithSharedLocalClient(Arc::new(localClient), deviceInfo)
     }
@@ -132,27 +109,28 @@ impl CoreApplication {
     #[allow(non_snake_case)]
     pub fn startWithSharedLocalClient(
         localClient: Arc<LocalCoreProxy>,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
     ) -> Result<Self, String> {
-        Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)
+        let mut application = Self::startWithSharedLocalClientConfigured(localClient, deviceInfo, true)?;
+        let peers = operit_node_runtime::HostRuntimePeerService::HostRuntimePeerService::new(
+            Arc::new(application.localClient.hostManager().clone()), &application.nodeRouter, application.deviceInfo.clone())?;
+        application.installNodeServices(NodeServices::new(peers))?;
+        Ok(application)
     }
 
     /// Starts one Core tree while explicitly selecting whether its persistence worker is owned here.
     #[allow(non_snake_case)]
     fn startWithSharedLocalClientConfigured(
         localClient: Arc<LocalCoreProxy>,
-        deviceInfo: RemoteDeviceInfo,
+        deviceInfo: LinkDeviceInfo,
         startSpaceSync: bool,
     ) -> Result<Self, String> {
         let nodeRuntime = localClient.coreNodeLocalRuntime();
-        let nodeRouter = CoreNodeRouter::new(nodeRuntime.clone());
-        let accessStore = LinkAccessStore::new(nodeRuntime.runtimeStorageHost());
-        let accessIdentity = accessStore.initializeIdentity(deviceInfo)?;
-        let accessServices = RuntimeRemoteLinkService::newWithAccessStore(
-            nodeRuntime.clone(),
-            nodeRouter.clone(),
-            accessStore.clone(),
+        let nodeRouter = Arc::new(CoreNodeRouter::new(nodeRuntime.clone()));
+        let accessServices = RuntimeRemoteLinkService::newWithRouter(
+            nodeRuntime.clone(), (*nodeRouter).clone(),
         );
+        let deviceInfo = accessServices.initializeDeviceInfo(deviceInfo)?;
         let routeChangeServices = accessServices.clone();
         localClient.bindCoreRouteChangeHandler(Arc::new(
             move |chatId, targetNodeId, resumeContext| {
@@ -164,15 +142,12 @@ impl CoreApplication {
                 })
             },
         ))?;
-        if startSpaceSync {
-            accessServices.startSpaceSync()?;
-        }
         let pluginSdkIpcBridge = localClient
             .hostManager()
             .pluginSdkIpcHost
             .clone()
             .map(|host| {
-                let target: Arc<dyn PluginSdkLinkTarget> = Arc::new(nodeRouter.clone());
+                let target: Arc<dyn PluginSdkLinkTarget> = nodeRouter.clone();
                 OperitPluginSdkIpcBridge::new(
                     host,
                     PluginSdkIpcEndpoint::standard(),
@@ -187,11 +162,30 @@ impl CoreApplication {
             localClient,
             nodeRuntime,
             nodeRouter,
-            accessStore,
-            accessIdentity,
+            deviceInfo,
+            startSpaceSync,
             accessServices,
             pluginSdkIpcBridge,
         })
+    }
+
+    /// 在启动装配或宿主注入阶段调用；Router 和外围共享同一个服务实例。
+    pub fn installNodeServices(&mut self, services: NodeServices) -> Result<(), String> {
+        self.nodeRouter.installNodeServices(services)?;
+        // 同步必须在通信服务注入后启动；不能先启动旧连接管理器填补空缺。
+        if self.startSpaceSync { self.accessServices.startSpaceSync()?; }
+        Ok(())
+    }
+
+    /// 未装配核心时明确报错，不把缺失服务伪装成配对成功。
+    pub fn nodeServices(&self) -> Result<NodeServices, String> {
+        self.nodeRouter.nodeServices().cloned()
+    }
+
+    /// 本机管理入口，不能注册为远端 Link Call，也不能出现在普通状态快照中。
+    pub fn localPairingToken(&self) -> Result<String, String> {
+        operit_node_runtime::PeerStateStore::PeerStateStore::new(self.nodeRuntime.runtimeStorageHost())
+            .localPairingToken()
     }
 
     /// Returns the generated local Core client entry point.
@@ -206,28 +200,17 @@ impl CoreApplication {
 
     /// Returns the router that owns Rust route dispatch for this Core tree.
     pub fn nodeRouter(&self) -> CoreNodeRouter {
-        self.nodeRouter.clone()
+        (*self.nodeRouter).clone()
     }
 
-    /// Returns the Link Access store owned by this Core tree.
-    pub fn accessStore(&self) -> LinkAccessStore {
-        self.accessStore.clone()
-    }
+    /// 设备资料和稳定节点身份不再由旧配对仓库持有。
+    pub fn deviceInfo(&self) -> &LinkDeviceInfo { &self.deviceInfo }
 
-    /// Returns the initialized Link Access identity for this Core tree.
-    pub fn accessIdentity(&self) -> &LinkAccessIdentity {
-        &self.accessIdentity
-    }
+    pub fn localNodeId(&self) -> String { self.nodeRouter.localNodeId() }
 
-    /// Updates the Link Access device information owned by this Core tree.
-    #[allow(non_snake_case)]
-    pub fn updateAccessIdentity(
-        &mut self,
-        deviceInfo: RemoteDeviceInfo,
-    ) -> Result<LinkAccessIdentity, String> {
-        let accessIdentity = self.accessStore.updateIdentityDeviceInfo(deviceInfo)?;
-        self.accessIdentity = accessIdentity.clone();
-        Ok(accessIdentity)
+    pub fn updateDeviceInfo(&mut self, info: LinkDeviceInfo) -> Result<LinkDeviceInfo, String> {
+        self.deviceInfo = self.accessServices.updateDeviceInfo(info)?;
+        Ok(self.deviceInfo.clone())
     }
 
     /// Returns the Access service facade owned by this Core tree.
@@ -235,27 +218,12 @@ impl CoreApplication {
         self.accessServices.clone()
     }
 
-    /// Serves the application-owned authenticated remote Link endpoint.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(non_snake_case)]
-    pub async fn serveRemoteLink(&self, config: CoreRemoteLinkServerConfig) -> Result<(), String> {
-        RemoteLinkServer::serve(
-            self.nodeRouter.clone(),
-            RemoteLinkServerConfig {
-                bindAddress: config.bindAddress,
-                token: config.token,
-                deviceId: self.accessIdentity.deviceId.clone(),
-                deviceInfo: self.accessIdentity.deviceInfo.clone(),
-                webAccess: config.webAccess,
-                printStartupInfo: config.printStartupInfo,
-                accessStore: self.accessStore.clone(),
-            },
-        )
-        .await
-    }
-
     /// Stops application-owned global route state.
     pub async fn shutdown(self) {
+        let _ = self.accessServices.stopSpaceSync();
+        if let Ok(services) = self.nodeServices() {
+            let _ = services.peers().stop().await;
+        }
         self.shutdownNow();
     }
 

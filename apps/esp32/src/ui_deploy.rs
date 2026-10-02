@@ -43,7 +43,7 @@ pub fn register(server: &mut EspHttpServer<'static>, token: String) -> HostResul
                 return Ok(());
             }
             let mut remaining = length;
-            let mut chunk = [0u8; 512];
+            let mut chunk = vec![0u8; 512];
             let mut good = true;
             while remaining > 0 {
                 let cap = remaining.min(chunk.len());

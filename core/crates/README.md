@@ -12,13 +12,13 @@ Each first-level directory groups related crates. Each second-level directory is
 - `tool`: tool execution, builtin tools, skills, packages, MCP, and tool scripting.
 - `plugin`: plugin SDK, SDK code generation, plugin runtime support, and JavaScript bridge.
 - `runtime`: core business runtime and application-level services.
-- `node`: route macros, shared Edge contracts, lightweight Edge Node services,
-  node routing, local route runtime, space runtime, and node synchronization.
-- `access`: identity, pairing, authentication, peer transport, server, and web access control.
+- `node`: node identity, pairing, authenticated peer links and their transports,
+  route macros, node routing, space runtime and synchronization; also the compact
+  Edge contracts and capability runtime used by constrained devices.
 - `rslink`: pure Rust-to-link-to-Rust protocol runtime and shared code generation foundations.
 - `proxy`: core-app proxy scan, language emitters, bridge contracts, local proxy
   runtime, and typed Edge Service projections.
-- `application`: composition roots that assemble runtime, proxy, node, and access into one Core tree.
+- `application`: composition roots that assemble runtime, proxy, and node into one Core tree.
 - `command`: command orchestration over the core application facade.
 
 ## Naming

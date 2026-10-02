@@ -32,7 +32,8 @@ The local Flutter and WASM bridges carry MessagePack values directly to the
 generated local dispatch surface. There is no generic HTTP or WebSocket
 application-to-Core dispatcher in this crate.
 
-Space transport belongs to `operit-access-runtime`. It places the standard Link
+Space transport belongs to `node/peer-link` (`operit-peer-link`); node runtime
+owns pairing and session admission. The transport places the standard Link
 request types inside authenticated `PeerFrame` messages exchanged by
 `CoreNodeRouter` instances. Watch subscriptions use `subscriptionId`; Push
 streams use `pushId` and a monotonically increasing `sequence`. Each id remains

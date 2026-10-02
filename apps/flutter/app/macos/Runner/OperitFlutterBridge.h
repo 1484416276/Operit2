@@ -18,17 +18,6 @@ char *operit_flutter_bridge_runtime_bootstrap_write(
 /// Creates a retained direct Dart FFI connection.
 char *operit_flutter_bridge_ffi_connect(void *handle);
 void operit_flutter_bridge_destroy(void *handle);
-char *operit_flutter_bridge_start_web_access_server(
-    void *handle,
-    const char *bind_address,
-    const char *token,
-    const char *shutdown_token,
-    const char *web_root,
-    const char *device_info_json,
-    const char *enable_web_access,
-    const char *enable_discovery
-);
-char *operit_flutter_bridge_stop_web_access_server(void *handle);
 char *operit_flutter_bridge_emit_runtime_event(void *handle, const char *event_json);
 void operit_flutter_bridge_free_string(char *value);
 

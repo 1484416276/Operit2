@@ -6,7 +6,6 @@ pub(crate) fn object_specs(
     store_root: &SourceRoot,
     tools_root: &SourceRoot,
     providers_root: &SourceRoot,
-    link_access_root: &SourceRoot,
     server_root: &SourceRoot,
 ) -> Vec<ObjectSpec> {
     let mut specs = Vec::new();
@@ -75,11 +74,6 @@ pub(crate) fn object_specs(
         server_root,
         ".",
         "server",
-    ));
-    specs.extend(discover_constructible_objects_recursive(
-        link_access_root,
-        ".",
-        "linkAccess",
     ));
     specs.sort_by(|left, right| left.schema_key.cmp(&right.schema_key));
     specs

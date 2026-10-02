@@ -5,27 +5,37 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["full"]
+peer-state = ["dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
+full = ["peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:operit-runtime", "dep:operit-store", "dep:operit-tools", "dep:operit-util", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
+test-support = []
+
 [dependencies]
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"], optional = true }
+uuid = { workspace = true, optional = true }
+
+operit-peer-link = { path = "../peer-link" }
 async-trait.workspace = true
-base64.workspace = true
+futures-util = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
-operit-access-runtime = { path = "../../access/runtime" }
-operit-edge-transport = { path = "../edge-transport" }
-operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
-operit-store = { path = "../../persistence/store" }
-operit-tools = { path = "../../tool/services", default-features = false }
-operit-util = { path = "../../foundation/util" }
+operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"], optional = true }
+operit-store = { path = "../../persistence/store", optional = true }
+operit-tools = { path = "../../tool/services", default-features = false, optional = true }
+operit-util = { path = "../../foundation/util", optional = true }
 serde.workspace = true
-serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "rt-multi-thread", "time"] }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt"] }
 
 [build-dependencies]
 quote = "1"
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
-operit-access-runtime = { path = "../../access/runtime", features = ["test-support"] }
 operit-model = { path = "../../foundation/model" }
 operit-rslink-runtime = { path = "../../rslink/runtime" }
 rusqlite.workspace = true
+
+operit-host-native-common = { path = "../../../../hosts/common/operit-host-native-common", features = ["tcp"] }

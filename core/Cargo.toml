@@ -17,7 +17,7 @@ members = [
     "crates/runtime/application",
     "crates/node/route-macros",
     "crates/node/runtime",
-    "crates/access/runtime",
+    "crates/node/peer-link",
     "crates/rslink/runtime",
     "crates/rslink/codegen",
     "crates/proxy/scan",
@@ -28,7 +28,6 @@ members = [
     "crates/application/core",
     "crates/node/edge-contract",
     "crates/node/edge",
-    "crates/node/edge-transport",
     "crates/proxy/edge",
     "crates/command/core"
 ]

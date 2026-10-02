@@ -7,8 +7,8 @@ import '../proxy/generated/CoreProxyModels.g.dart' as generated;
 class RuntimeDeviceInfoProvider {
   const RuntimeDeviceInfoProvider._();
 
-  static Future<generated.RemoteDeviceInfo> current() async {
-    return generated.RemoteDeviceInfo(
+  static Future<generated.LinkDeviceInfo> current() async {
+    return generated.LinkDeviceInfo(
       platform: Platform.operatingSystem,
       model: Platform.localHostname,
     );

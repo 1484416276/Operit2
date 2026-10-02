@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
-use operit_access_runtime::RemoteDeviceInfo;
+use operit_link::LinkDeviceInfo;
+use operit_node_runtime::{NodeServices::PeerTransport, PeerStateStore::{PeerStateStore, PeerHostConfig, PeerHostPortMode}};
 use operit_board_pb_sbc01_h3::{PbSbc01H3Board, PbSbc01H3BoardConfig, PB_SBC01_H3_BOARD_ID};
-use operit_core_application::{CoreApplication, CoreApplicationConfig, CoreRemoteLinkServerConfig};
+use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
 use operit_host_linux_native::{createRuntimeHostManager, LinuxWebVisitHost};
 use operit_node_edge::{createDeviceIoService, createRobotFaceService, EdgeNode};
@@ -27,33 +28,35 @@ pub async fn run() -> Result<(), String> {
 
     let core = CoreApplication::start(CoreApplicationConfig::new(
         hostManager,
-        RemoteDeviceInfo {
+        LinkDeviceInfo {
             platform: "pb_sbc01_h3".to_string(),
             model: PB_SBC01_H3_BOARD_ID.to_string(),
         },
     ))
     .await?;
 
-    boardProxy
-        .setExpression("online".to_string())
-        .await
-        .map_err(|error| error.to_string())?;
+    // 原配置文件是唯一来源；命令行只覆盖显式给出的字段。
+    let store = PeerStateStore::new(core.nodeRuntime().runtimeStorageHost());
+    let mut listenerConfig = match store.hostConfig()? {
+        Some(saved) => saved,
+        None => PeerHostConfig {
+            bindAddress: "0.0.0.0:4819".into(),
+            token: config.token.clone().ok_or("Configure a pairing token with --token before listening")?,
+            transports: vec![PeerTransport::Http], discoveryEnabled: true,
+            portMode: PeerHostPortMode::Fixed, updatedAt: 0,
+        },
+    };
+    if let Some(bind) = config.bindAddress { listenerConfig.bindAddress = bind; }
+    if let Some(token) = config.token { listenerConfig.token = token; }
+    store.saveHostConfig(&listenerConfig)?;
+    core.accessServices().startListening(vec![PeerTransport::Http]).await.map_err(|error| error.to_string())?;
+    boardProxy.setExpression("online".into()).await.map_err(|error| error.to_string())?;
+    println!("operit-pb-sbc01-h3 listening {} as {}", listenerConfig.bindAddress, core.deviceInfo().displayName());
+    println!("PB_SBC01_H3 face state file: {}", board.robotFaceStatePath().display());
+    let interrupted = tokio::signal::ctrl_c().await.map_err(|error| error.to_string());
+    core.shutdown().await;
+    interrupted
 
-    println!(
-        "operit-pb-sbc01-h3 serving {} as {}",
-        config.bindAddress,
-        core.accessIdentity().deviceInfo.displayName()
-    );
-    println!(
-        "PB_SBC01_H3 face state file: {}",
-        board.robotFaceStatePath().display()
-    );
-
-    core.serveRemoteLink(CoreRemoteLinkServerConfig::new(
-        config.bindAddress,
-        config.token,
-    ))
-    .await
 }
 
 /// Creates the Linux HostManager with PB_SBC01_H3 board capabilities attached.

@@ -258,9 +258,6 @@ class RuntimeHostInteractionSubscriber {
       RuntimeHostInteractionKind.localInference => _handleLocalInference(
         _requirePayload(request.localInference, request.kind),
       ),
-      RuntimeHostInteractionKind.webAccessPairing => throw StateError(
-        'web access pairing is handled by the app dialog host',
-      ),
       RuntimeHostInteractionKind.appNotification => throw StateError(
         'application notification is handled by the app notification service',
       ),

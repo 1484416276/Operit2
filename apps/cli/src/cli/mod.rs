@@ -60,7 +60,7 @@ mod host_ops;
 pub(crate) mod link;
 pub(crate) mod network_control_ui;
 mod transfer;
-mod web_access;
+mod web;
 
 use crate::bootstrap::{
     cli_identities, create_cli_identity, persist_cli_storage_config,
@@ -75,7 +75,7 @@ use crate::core_proxy::local_cli_core;
 use host_ops::{schedule_cli_uninstall, schedule_cli_update};
 use link::run_link_command;
 use transfer::{run_backup_command, run_export_command, run_import_command};
-use web_access::run_web_access_command;
+use web::run_web_command;
 
 const CLI_DEFAULT_TTS_PROVIDER_TYPE: &str = "OPENAI_COMPATIBLE";
 
@@ -138,7 +138,7 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     }
 
     if args[0].as_str() == "web" {
-        return run_web_access_command(&args[1..]).await;
+        return run_web_command(&args[1..]);
     }
 
     if args[0].as_str() == "install" {
@@ -1875,7 +1875,7 @@ fn print_cli_usage() {
     println!(
         "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>"
     );
-    println!("operit2 cli web <open|close|status|token>");
+    println!("operit2 cli web open");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
     println!("operit2 cli chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|bind-character|bind-group|set-group|shell|send>");
     println!("operit2 cli chat new [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");

@@ -99,8 +99,6 @@ final class AppleRuntimeChannel: NSObject {
       runRuntime(result: result) { handle in
         self.takeString(operit_flutter_bridge_ffi_connect(handle))
       }
-    case "startWebAccessServer":
-      startWebAccessServer(call: call, result: result)
     case "restartApplication":
       restartApplication(result: result)
     case "localRuntimeStorageDefaults":
@@ -125,10 +123,6 @@ final class AppleRuntimeChannel: NSObject {
       hostOnboardingPermissionSnapshot(call: call, result: result)
     case "hostOnboardingRequestPermission":
       hostOnboardingRequestPermission(call: call, result: result)
-    case "stopWebAccessServer":
-      runRuntime(result: result) { handle in
-        self.takeString(operit_flutter_bridge_stop_web_access_server(handle))
-      }
     case "ownerSystemCaptureScreenshot":
       ownerSystemCaptureScreenshot(result: result)
     case "ownerSystemRecognizeText":
@@ -583,32 +577,6 @@ final class AppleRuntimeChannel: NSObject {
     }
   }
 
-  private func startWebAccessServer(call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let args = call.arguments as? [String: Any],
-      let bindAddress = args["bindAddress"] as? String,
-      let token = args["token"] as? String,
-      let shutdownToken = args["shutdownToken"] as? String,
-      let webRoot = args["webRoot"] as? String,
-      let deviceInfo = args["deviceInfo"] as? String,
-      let enableWebAccess = args["enableWebAccess"] as? String,
-      let enableDiscovery = args["enableDiscovery"] as? String
-    else {
-      result(FlutterError(code: "INVALID_ARGS", message: "startWebAccessServer arguments are incomplete", details: nil))
-      return
-    }
-    runRuntime(result: result) { handle in
-      self.takeString(operit_flutter_bridge_start_web_access_server(
-        handle,
-        bindAddress,
-        token,
-        shutdownToken,
-        webRoot,
-        deviceInfo,
-        enableWebAccess,
-        enableDiscovery
-      ))
-    }
-  }
 
   /// Returns and consumes the oldest notification activation received before Dart startup.
   private static func takePendingNotificationActivation() -> [String: Any]? {

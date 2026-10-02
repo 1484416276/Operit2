@@ -211,6 +211,12 @@ impl<T, U> PartialEq<CoreStream<U>> for CoreStream<T> {
 }
 
 impl<T> CoreStream<T> {
+    /// Returns the in-process source for a local, typed stream adapter.
+    /// Wire-only descriptors have no attached source.
+    pub fn localSource(&self) -> Option<Arc<CoreStreamSource>> {
+        self.source.clone()
+    }
+
     /// Creates an anonymous stream handle backed by one stable logical source.
     #[allow(non_snake_case)]
     pub fn fromSource(source: Arc<CoreStreamSource>) -> Self {

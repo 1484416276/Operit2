@@ -432,7 +432,8 @@ impl<'de> Deserialize<'de> for CoreValue {
 /// Converts a serializable Rust value into the Link value model.
 #[allow(non_snake_case)]
 pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
-    crate::value_codec::to_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
+    crate::value_codec::to_value(value)
+        .map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
 }
 
 /// Converts a Link value into a typed Rust value.
@@ -441,7 +442,8 @@ pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCod
 where
     T: serde::de::DeserializeOwned,
 {
-    crate::value_codec::from_value(value).map_err(|e| crate::codec::CoreLinkCodecError::Decode(e.to_string()))
+    crate::value_codec::from_value(value)
+        .map_err(|e| crate::codec::CoreLinkCodecError::Decode(e.to_string()))
 }
 
 pub struct CoreEventStream {
@@ -480,6 +482,11 @@ impl CoreEventStream {
     /// Waits for the next event from the stream.
     pub async fn recv(&mut self) -> Option<CoreEvent> {
         self.receiver.recv().await
+    }
+
+    /// Polls with the caller's waker, without adding a task or a timer.
+    pub(crate) fn poll_recv(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<CoreEvent>> {
+        self.receiver.poll_recv(cx)
     }
 
     /// Polls the stream for an already available event.
@@ -605,17 +612,6 @@ pub struct CoreCallResponse {
     pub result: Result<CoreValue, CoreLinkError>,
 }
 
-/// Carries one lightweight-node operation through a Link carrier.
-///
-/// This is intentionally defined in `operit-link`, rather than in the Edge
-/// crates, so normal Core nodes and lightweight Edge nodes share the same
-/// request/value/error model.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LinkFrame {
-    pub messageId: String,
-    pub payload: LinkFramePayload,
-}
-
 /// Minimal device information shared by Link pairing without depending on a
 /// full runtime's Access types.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -624,84 +620,29 @@ pub struct LinkDeviceInfo {
     pub model: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkPairStartRequest {
-    pub pairingServiceVersion: u16,
-    pub tokenHash: String,
-    pub clientDeviceId: String,
-    pub clientDeviceInfo: LinkDeviceInfo,
-    pub clientPublicKey: String,
-    pub clientNonce: String,
-}
+impl LinkDeviceInfo {
+    /// Describes the local CLI device with its runtime role.
+    #[allow(non_snake_case)]
+    pub fn nativeCli(role: &str) -> Self {
+        let mut deviceInfo = Self::native();
+        deviceInfo.model = format!("{}(cli)-{}", role, deviceInfo.model);
+        deviceInfo
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkPairStartResponse {
-    pub pairingId: String,
-    pub pairingServiceVersion: u16,
-    pub edgeDeviceId: String,
-    pub edgeDeviceInfo: LinkDeviceInfo,
-    pub edgePublicKey: String,
-    pub serverNonce: String,
-}
+    pub fn native() -> Self {
+        Self {
+            platform: std::env::consts::OS.to_string(),
+            model: std::env::consts::ARCH.to_string(),
+        }
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkPairFinishRequest {
-    pub pairingId: String,
-    pub pairingCode: String,
-    pub clientProof: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinkPairFinishResponse {
-    pub sessionId: String,
-    pub pairingServiceVersion: u16,
-    pub coreProof: String,
-}
-
-/// Defines the request/response subset needed by lightweight Edge nodes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "body")]
-pub enum LinkFramePayload {
-    PairStart(LinkPairStartRequest),
-    PairStartResponse(LinkPairStartResponse),
-    PairFinish(LinkPairFinishRequest),
-    PairFinishResponse(LinkPairFinishResponse),
-    Authenticated {
-        sessionId: String,
-        deviceId: String,
-        signature: String,
-        #[serde(with = "serde_bytes")]
-        payloadBytes: Vec<u8>,
-    },
-    Call(CoreCallRequest),
-    CallResponse(CoreCallResponse),
-    /// One complete standard Space PeerLink frame. TCP/UART Edge carriers
-    /// transport this exact payload instead of defining a parallel route
-    /// protocol.
-    PeerFrame(PeerFrame),
-    /// Authenticated Space admission metadata for a storage-free route source.
-    SpaceContext { spaceId: String, adjacentNodeId: String, ttl: u32, chatId: String },
-    WatchSnapshot(CoreWatchRequest),
-    WatchSnapshotResponse(Result<CoreEvent, CoreLinkError>),
-    WatchOpen {
-        subscriptionId: String,
-        request: CoreWatchRequest,
-    },
-    WatchEvent {
-        subscriptionId: String,
-        event: CoreEvent,
-    },
-    WatchClose {
-        subscriptionId: String,
-    },
-    Operation(Result<(), CoreLinkError>),
-    Heartbeat {
-        sequence: u64,
-    },
-    Close {
-        code: String,
-        message: String,
-    },
+    pub fn displayName(&self) -> String {
+        [self.platform.trim(), self.model.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+    }
 }
 
 impl CoreCallResponse {
@@ -766,6 +707,66 @@ impl CorePushRequest {
         self.args = args;
         self
     }
+}
+
+/// One standard application Link request. Transports must expose only these
+/// three operation families; pairing/session control is not a Link operation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkRequest {
+    Call(CoreCallRequest),
+    Watch(CoreLinkWatchRequest),
+    Push(CoreLinkPushRequestMessage),
+}
+
+/// Watch lifecycle messages carried by the standard Link ingress.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkWatchRequest {
+    Snapshot(CoreWatchRequest),
+    Open(CoreWatchRequest),
+    Close { requestId: CoreRequestId },
+}
+
+/// Push lifecycle messages carried by the standard Link ingress.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkPushRequestMessage {
+    Open(CorePushRequest),
+    Item(CorePushItem),
+    Close { pushId: String },
+}
+
+/// Responses preserve the operation family and correlation even when an operation fails.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkResponse {
+    Call(CoreCallResponse),
+    Watch {
+        requestId: CoreRequestId,
+        result: Result<CoreLinkWatchResponse, CoreLinkError>,
+    },
+    Push {
+        pushId: String,
+        result: Result<CoreLinkPushResponse, CoreLinkError>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkWatchResponse {
+    Snapshot(CoreEvent),
+    Opened,
+    Event(CoreEvent),
+    Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum CoreLinkPushResponse {
+    Opened,
+    ItemAccepted { sequence: u64 },
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -915,7 +916,6 @@ impl CoreWatchRequest {
     pub fn registryKey(&self) -> String {
         format!("{}::{}", self.target, self.propertyName)
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

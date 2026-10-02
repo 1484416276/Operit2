@@ -28,7 +28,6 @@ pub struct CoreProxyRegisteredRoots {
     plugin_sdk_src: PathBuf,
     store_src: PathBuf,
     link_src: PathBuf,
-    link_access_src: PathBuf,
     server_src: PathBuf,
     util_src: PathBuf,
     tools_src: PathBuf,
@@ -48,7 +47,6 @@ impl CoreProxyRegisteredRoots {
             plugin_sdk_src: proxy_manifest_dir.join("../../plugin/sdk/src"),
             store_src: proxy_manifest_dir.join("../../persistence/store/src"),
             link_src: proxy_manifest_dir.join("../../foundation/link/src"),
-            link_access_src: proxy_manifest_dir.join("../../access/runtime/src"),
             server_src: proxy_manifest_dir.join("../../node/runtime/src"),
             util_src: proxy_manifest_dir.join("../../foundation/util/src"),
             tools_src: proxy_manifest_dir.join("../../tool/services/src"),
@@ -103,7 +101,7 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
     let plugin_sdk_root = SourceRoot::new(roots.plugin_sdk_src, "operit_plugin_sdk");
     let store_root = SourceRoot::new(roots.store_src, "operit_store");
     let link_root = SourceRoot::new(roots.link_src, "operit_link");
-    let link_access_root = SourceRoot::new(roots.link_access_src, "operit_access_runtime");
+    let peer_link_root = SourceRoot::new(roots.server_src.join("../../peer-link/src"), "operit_peer_link");
     let server_root = SourceRoot::new(roots.server_src, "operit_node_runtime");
     let util_root = SourceRoot::new(roots.util_src, "operit_util");
     let tools_root = SourceRoot::new(roots.tools_src, "operit_tools");
@@ -132,13 +130,13 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
         plugin_sdk_root,
         store_root.clone(),
         link_root,
-        link_access_root.clone(),
         util_root,
         tools_root.clone(),
         provider_root.clone(),
         javascript_bridge_root,
         host_api_root,
         server_root.clone(),
+        peer_link_root,
     ];
     for source_root in &source_roots {
         emit_source_tree_rerun_if_changed(source_root.as_path());
@@ -168,7 +166,6 @@ pub fn scan_core_proxy(config: CoreProxyScanConfig) -> CoreProxyScanOutput {
         &store_root,
         &tools_root,
         &provider_root,
-        &link_access_root,
         &server_root,
     );
     let public_object_types = collect_public_object_types(&source_roots);

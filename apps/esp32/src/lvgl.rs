@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn operit_lvgl_navigate_home();
     fn operit_lvgl_set_connection(wifi_ready: bool, edge_ready: bool);
     fn operit_lvgl_set_paired(paired: bool);
+    fn operit_lvgl_set_theme(index: u32, circular: bool);
     fn operit_lvgl_set_expression(expression: *const c_char);
     fn operit_lvgl_set_pairing_code(code: *const c_char);
     fn operit_lvgl_set_space_state(state: *const c_char);
@@ -41,8 +42,25 @@ unsafe extern "C" {
     fn operit_lvgl_set_chat_screen(text: *const c_char);
     fn operit_lvgl_set_chat_identity(id: *const c_char, character: *const c_char);
     fn operit_lvgl_set_message(index: u32, user: bool, text: *const c_char);
+    fn operit_lvgl_set_message_image(index: u32, image: u32, id: *const c_char);
+    fn operit_lvgl_image_request() -> u32;
+    fn operit_lvgl_image_chunk(
+        request: u32,
+        width: u32,
+        height: u32,
+        offset: u32,
+        bytes: *const u8,
+        length: u32,
+    ) -> bool;
+    fn operit_lvgl_image_error(request: u32, error: *const c_char);
     fn operit_lvgl_finish_messages(count: u32);
-    fn operit_lvgl_set_conversation(index: u32, id: *const c_char, title: *const c_char, character: *const c_char, selected: bool);
+    fn operit_lvgl_set_conversation(
+        index: u32,
+        id: *const c_char,
+        title: *const c_char,
+        character: *const c_char,
+        selected: bool,
+    );
     fn operit_lvgl_finish_conversations(count: u32);
     fn operit_lvgl_action_error(error: *const c_char);
     fn operit_lvgl_set_chat_task(text: *const c_char);
@@ -127,6 +145,10 @@ impl Esp32Lvgl {
         unsafe { operit_lvgl_set_paired(paired) };
     }
 
+    pub fn setTheme(&mut self, index: usize) {
+        unsafe { operit_lvgl_set_theme(index as u32, false) };
+    }
+
     /// Updates the face app's expression label.
     pub fn setExpression(&mut self, expression: &str) {
         let mut bytes = expression.as_bytes().to_vec();
@@ -147,33 +169,111 @@ impl Esp32Lvgl {
     pub fn setChatScreen(&mut self, text: &str) {
         setText(text, operit_lvgl_set_chat_screen);
     }
-    pub fn actionError(&mut self, error: &str) { setText(error, operit_lvgl_action_error); }
+    pub fn actionError(&mut self, error: &str) {
+        setText(error, operit_lvgl_action_error);
+    }
 
     pub fn setChatState(&mut self, state: &serde_json::Value) {
         let string = |value: &str| CString::new(value.replace('\0', "")).unwrap();
         let id = state["chatId"].as_str().unwrap_or("");
-        let name = crate::edge_chat::preview();
-        unsafe { operit_lvgl_set_chat_identity(string(id).as_ptr(), string(&name).as_ptr()); }
-        let rows = state["messages"].as_array().into_iter().flatten()
-            .filter(|row| row["text"].as_str().is_some_and(|text| !text.trim().is_empty())).collect::<Vec<_>>();
+        let name = state["conversations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|chat| chat["id"].as_str() == Some(id))
+            .and_then(|chat| chat["characterCardName"].as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Operit");
+        unsafe {
+            operit_lvgl_set_chat_identity(string(id).as_ptr(), string(&name).as_ptr());
+        }
+        let rows = state["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+                    || row["images"].as_array().is_some_and(|a| !a.is_empty())
+            })
+            .collect::<Vec<_>>();
         let rows = &rows[rows.len().saturating_sub(12)..];
         for (index, row) in rows.iter().enumerate() {
-            unsafe { operit_lvgl_set_message(index as u32, row["sender"] == "user",
-                string(row["text"].as_str().unwrap_or("")).as_ptr()); }
+            for image in 0..4 {
+                unsafe {
+                    operit_lvgl_set_message_image(
+                        index as u32,
+                        image as u32,
+                        string(row["images"][image].as_str().unwrap_or("")).as_ptr(),
+                    );
+                }
+            }
+            unsafe {
+                operit_lvgl_set_message(
+                    index as u32,
+                    row["sender"] == "user",
+                    string(row["text"].as_str().unwrap_or("")).as_ptr(),
+                );
+            }
         }
-        unsafe { operit_lvgl_finish_messages(rows.len() as u32); }
-        let rows = state["conversations"].as_array().into_iter().flatten().take(24).collect::<Vec<_>>();
+        unsafe {
+            operit_lvgl_finish_messages(rows.len() as u32);
+        }
+        let rows = state["conversations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(24)
+            .collect::<Vec<_>>();
         for (index, row) in rows.iter().enumerate() {
-            unsafe { operit_lvgl_set_conversation(index as u32,
-                string(row["id"].as_str().unwrap_or("")).as_ptr(),
-                string(row["title"].as_str().unwrap_or("")).as_ptr(),
-                string(row["characterCardName"].as_str().unwrap_or("")).as_ptr(), row["id"] == id); }
+            unsafe {
+                operit_lvgl_set_conversation(
+                    index as u32,
+                    string(row["id"].as_str().unwrap_or("")).as_ptr(),
+                    string(row["title"].as_str().unwrap_or("")).as_ptr(),
+                    string(row["characterCardName"].as_str().unwrap_or("")).as_ptr(),
+                    row["id"] == id,
+                );
+            }
         }
-        unsafe { operit_lvgl_finish_conversations(rows.len() as u32); }
+        unsafe {
+            operit_lvgl_finish_conversations(rows.len() as u32);
+        }
     }
 
     pub fn setChatTask(&mut self, text: &str) {
         setText(text, operit_lvgl_set_chat_task);
+    }
+
+    pub fn imageError(&mut self, error: &str) {
+        let text = CString::new(error.replace('\0', "")).unwrap();
+        unsafe {
+            operit_lvgl_image_error(operit_lvgl_image_request(), text.as_ptr());
+        }
+    }
+
+    pub fn imageEvent(&mut self, event: crate::edge_image::ImageEvent) {
+        match event.chunk {
+            Ok(chunk) => unsafe {
+                if !operit_lvgl_image_chunk(
+                    event.request,
+                    chunk.width as u32,
+                    chunk.height as u32,
+                    chunk.offset as u32,
+                    chunk.bytes.as_ptr(),
+                    chunk.bytes.len() as u32,
+                ) {
+                    crate::edge_image::cancel();
+                }
+            },
+            Err(error) => {
+                let text = CString::new(error.replace('\0', "")).unwrap();
+                unsafe {
+                    operit_lvgl_image_error(event.request, text.as_ptr());
+                }
+            }
+        }
     }
 
     /// Returns the bounded draft captured by the LVGL text area.
@@ -255,7 +355,12 @@ unsafe extern "C" fn actionCallback(action: *const c_char, userData: *mut c_void
 }
 
 /// Keeps status-to-LVGL updates in one place for the firmware loop.
-pub fn updateStatus(runtime: &mut Esp32Lvgl, status: &FirmwareStatus, edgeReady: bool, paired: bool) {
+pub fn updateStatus(
+    runtime: &mut Esp32Lvgl,
+    status: &FirmwareStatus,
+    edgeReady: bool,
+    paired: bool,
+) {
     let snapshot = status.snapshot();
     // `edgeReady` is the live authenticated Space route state. It must not be
     // derived from the TCP listener, which is enabled even before pairing.

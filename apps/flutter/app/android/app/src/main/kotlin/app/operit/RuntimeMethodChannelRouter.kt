@@ -9,7 +9,6 @@ class RuntimeMethodChannelRouter(
     ownerSystem: OwnerSystemCapabilityChannel,
 ) {
     private val coreLinkChannel = RuntimeCoreLinkChannel(runtimeHost)
-    private val linkHostChannel = RuntimeLinkHostChannel(runtimeHost)
     private val ownerSystemChannel = ownerSystem
     private val androidPlatformChannel = AndroidPlatformChannel(activity, runtimeHost)
     private val snapshotImportInputChannel = SnapshotImportInputChannel(activity)
@@ -26,7 +25,6 @@ class RuntimeMethodChannelRouter(
                         result.success(null)
                     }
                     coreLinkChannel.handle(call, result) -> Unit
-                    linkHostChannel.handle(call, result) -> Unit
                     ownerSystemChannel.handle(call, result) -> Unit
                     androidPlatformChannel.handle(call, result) -> Unit
                     else -> result.notImplemented()

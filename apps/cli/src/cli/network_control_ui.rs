@@ -142,9 +142,22 @@ pub(crate) fn network_capabilities(values: &[String]) -> Result<BTreeSet<String>
                 "manage-identities" => "network.identity.manage",
                 "assign-identity" => "network.identity.assign",
                 "approve" => "network.approval",
+                "join" => "network.members.join",
                 _ => return Err(format!("unknown capability: {value}")),
             };
             Ok(capability.to_string())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::network_capabilities;
+
+    #[test]
+    fn reviewer_requires_both_join_and_approval_capabilities() {
+        let capabilities = network_capabilities(&["approve".into(), "join".into()]).unwrap();
+        assert_eq!(capabilities, ["network.approval".into(), "network.members.join".into()].into_iter().collect());
+        assert!(network_capabilities(&["unknown".into()]).is_err());
+    }
 }

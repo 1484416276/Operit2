@@ -5,6 +5,7 @@ typedef struct {
     char *text;
     bool user;
     lv_obj_t *row, *bubble, *speaker, *label;
+    struct { char id[81]; lv_obj_t *button; } images[4];
 } message_view_t;
 typedef struct {
     char id[80], title[128], character[96], action[96];
@@ -13,65 +14,213 @@ typedef struct {
 static message_view_t messages[MESSAGE_LIMIT];
 static conversation_view_t conversations[CONVERSATION_LIMIT];
 static unsigned message_count, conversation_count;
+static unsigned message_page;
+static bool message_follow_latest = true;
 static bool messages_dirty;
 static bool conversations_dirty;
 static char active_chat_id[80];
 static struct { char id[80], text[512]; } drafts[4];
 static unsigned draft_cursor;
+/* Markdown and input bounding share one heap buffer instead of consuming the
+ * LVGL task stack on every message update. */
+static char *message_scratch;
+static char visible_image_ids[4][81];
+
+static char *message_scratch_buffer(void) {
+    if (!message_scratch) message_scratch = malloc(MESSAGE_TEXT_BYTES);
+    return message_scratch;
+}
+
+/* Render a small Markdown subset without storing a second copy per message.
+ * Core keeps the original Markdown; this pass only removes presentation
+ * markers that cannot be represented by a compact LVGL label. */
+/* Append whole UTF-8 characters, always reserving the final NUL byte. */
+static void markdown_copy(const char *p, const char *end, char *output, size_t *out, size_t capacity) {
+    while (p < end) {
+        unsigned char lead = (unsigned char)*p;
+        size_t bytes = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+        if ((size_t)(end - p) < bytes || *out + bytes >= capacity) break;
+        memcpy(output + *out, p, bytes); *out += bytes; p += bytes;
+    }
+}
+
+static void markdown_inline(const char *p, const char *end, char *output, size_t *out,
+                            size_t capacity, unsigned depth) {
+    const char *start = p;
+    while (p < end && *out + 1 < capacity) {
+        if (*p == '\\' && p + 1 < end && strchr("\\`*_{}[]()#+-.!>~", p[1])) {
+            markdown_copy(p + 1, p + 2, output, out, capacity); p += 2; continue;
+        }
+        if (*p == '[' && depth < 4) {
+            const char *close = memchr(p + 1, ']', end - p - 1);
+            if (close && close + 1 < end && close[1] == '(') {
+                const char *url_end = memchr(close + 2, ')', end - close - 2);
+                if (url_end) {
+                    markdown_inline(p + 1, close, output, out, capacity, depth + 1);
+                    p = url_end + 1; continue;
+                }
+            }
+        }
+        if (strchr("*_~`", *p) && depth < 4) {
+            size_t count = 1;
+            while (p + count < end && p[count] == *p) ++count;
+            bool boundary = p == start || p[-1] == ' ' || p[-1] == '(' || (unsigned char)p[-1] >= 0x80;
+            bool eligible = *p == '`' || ((*p != '_' || boundary) && (*p != '~' || count == 2));
+            const char *close = p + count;
+            if (eligible && close < end && *close != ' ') {
+                while (close + count <= end) {
+                    if (close > p + count && !memcmp(p, close, count) && close[-1] != ' ' &&
+                        (close + count == end || close[count] != *p)) break;
+                    ++close;
+                }
+                if (close + count <= end) {
+                    if (*p == '`') markdown_copy(p + count, close, output, out, capacity);
+                    else markdown_inline(p + count, close, output, out, capacity, depth + 1);
+                    p = close + count; continue;
+                }
+            }
+            markdown_copy(p, p + count, output, out, capacity); p += count; continue;
+        }
+        unsigned char lead = (unsigned char)*p;
+        size_t bytes = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+        if ((size_t)(end - p) < bytes || *out + bytes >= capacity) break;
+        markdown_copy(p, p + bytes, output, out, capacity); p += bytes;
+    }
+}
+
+static void markdown_plain(const char *source, char *output, size_t capacity) {
+    if (!capacity) return;
+    size_t out = 0, fence_length = 0;
+    char fence = 0;
+    const char *p = source ? source : "";
+    while (*p && out + 1 < capacity) {
+        const char *end = strchr(p, '\n');
+        if (!end) end = p + strlen(p);
+        size_t marker_length = 0;
+        if (*p == '`' || *p == '~') while (p + marker_length < end && p[marker_length] == *p) ++marker_length;
+        if (marker_length >= 3 && (!fence || (*p == fence && marker_length >= fence_length))) {
+            if (fence) fence = 0;
+            else { fence = *p; fence_length = marker_length; }
+            p = *end ? end + 1 : end; continue;
+        }
+        if (fence) markdown_copy(p, end, output, &out, capacity);
+        else {
+            unsigned hashes = 0;
+            while (p + hashes < end && p[hashes] == '#' && hashes < 6) ++hashes;
+            if (hashes && p + hashes < end && p[hashes] == ' ') p += hashes + 1;
+            else if (end - p >= 2 && strchr("-*+", p[0]) && p[1] == ' ') {
+                if (out + 3 >= capacity) break;
+                memcpy(output + out, "\xc2\xb7 ", 3); out += 3; p += 2;
+            } else if (end - p >= 2 && p[0] == '>' && p[1] == ' ') {
+                if (out + 2 >= capacity) break;
+                memcpy(output + out, "| ", 2); out += 2; p += 2;
+            }
+            markdown_inline(p, end, output, &out, capacity, 0);
+        }
+        if (*end && out + 1 < capacity) output[out++] = '\n';
+        p = *end ? end + 1 : end;
+    }
+    output[out] = 0;
+}
 
 static void reset_message_nodes(void) {
-    for (unsigned i = 0; i < MESSAGE_LIMIT; ++i)
+    for (unsigned i = 0; i < MESSAGE_LIMIT; ++i) {
         messages[i].row = messages[i].bubble = messages[i].speaker = messages[i].label = NULL;
+        for (unsigned j = 0; j < 4; ++j) messages[i].images[j].button = NULL;
+    }
+}
+
+static void page_message(int direction);
+
+static void message_page_clicked(lv_event_t *event) {
+    page_message((int)(intptr_t)lv_event_get_user_data(event));
+}
+
+static void image_clicked(lv_event_t *event) {
+    const char *id = lv_event_get_user_data(event);
+    char action[96]; snprintf(action, sizeof(action), "image_open:%s", id); queue_route(action);
 }
 
 static void render_messages(void) {
     if (!message_list) return;
     messages_dirty = false;
-    bool at_bottom = lv_obj_get_scroll_bottom(message_viewport) <= 4;
+    char page_text[40];
+    snprintf(page_text, sizeof(page_text), "%u / %u", message_count ? message_page + 1 : 0, message_count);
+    if (message_page_label) lv_label_set_text(message_page_label, page_text);
+    if (message_prev_button) {
+        if (message_count && message_page > 0) lv_obj_clear_state(message_prev_button, LV_STATE_DISABLED);
+        else lv_obj_add_state(message_prev_button, LV_STATE_DISABLED);
+    }
+    if (message_next_button) {
+        if (message_count && message_page + 1 < message_count) lv_obj_clear_state(message_next_button, LV_STATE_DISABLED);
+        else lv_obj_add_state(message_next_button, LV_STATE_DISABLED);
+    }
     int y = 0;
     if (!chat_label) {
-        chat_label = label(message_list, "", 4, 0, 292, theme()->text_secondary);
+        chat_label = label(message_list, "", 4, 0, OPERIT_MESSAGE_WIDTH - 12, theme()->text_secondary);
         debug_set_id(chat_label, "chat_notice");
         lv_label_set_long_mode(chat_label, LV_LABEL_LONG_WRAP);
     }
-    for (unsigned i = 0; i < MESSAGE_LIMIT; ++i) {
-        message_view_t *m = &messages[i];
-        if (i >= message_count) {
-            if (m->row) lv_obj_add_flag(m->row, LV_OBJ_FLAG_HIDDEN);
-            continue;
+    if (message_count) {
+        message_view_t *m = &messages[message_page];
+        message_view_t *view = &messages[0];
+        if (!view->row) {
+            view->row = ui_box(message_list, 0, y, OPERIT_MESSAGE_WIDTH, 1, theme()->background, 0);
+            view->bubble = ui_box(view->row, 0, 0, OPERIT_MESSAGE_WIDTH - 12, 1, theme()->background, 8);
+            view->speaker = label(view->row, chat_preview, 4, 0, OPERIT_MESSAGE_WIDTH - 12, theme()->text_secondary);
+            view->label = label(view->bubble, "", 4, 0, OPERIT_MESSAGE_WIDTH - 28, theme()->text);
+            lv_label_set_long_mode(view->label, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_line_space(view->label, 3, 0);
+            debug_set_id(view->row, "message_0");
+            debug_set_id(view->label, "message_text_0");
         }
-        if (!m->row) {
-            m->row = ui_box(message_list, 0, y, 304, 1, theme()->background, 0);
-            m->bubble = ui_box(m->row, 0, 0, 288, 1, theme()->background, 10);
-            m->speaker = label(m->row, chat_preview, 4, 0, 288, theme()->text_secondary);
-            m->label = label(m->bubble, "", 4, 0, 280, theme()->text);
-            lv_label_set_long_mode(m->label, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_line_space(m->label, 3, 0);
-            char id[40]; snprintf(id, sizeof(id), "message_%u", i);
-            debug_set_id(m->row, id);
-            snprintf(id, sizeof(id), "message_text_%u", i);
-            debug_set_id(m->label, id);
+        lv_obj_clear_flag(view->row, LV_OBJ_FLAG_HIDDEN);
+        char *scratch = message_scratch_buffer();
+        const char *rendered = m->text ? m->text : "";
+        if (scratch) {
+            markdown_plain(rendered, scratch, MESSAGE_TEXT_BYTES);
+            rendered = scratch;
         }
-        lv_obj_clear_flag(m->row, LV_OBJ_FLAG_HIDDEN);
-        if (strcmp(lv_label_get_text(m->label), m->text ? m->text : ""))
-            lv_label_set_text(m->label, m->text ? m->text : "");
+        if (strcmp(lv_label_get_text(view->label), rendered))
+            lv_label_set_text(view->label, rendered);
         lv_point_t measured;
-        lv_text_get_size(&measured, m->text ? m->text : "", &operit_font_zh_14,
+        lv_text_get_size(&measured, rendered, &operit_font_zh_14,
                          0, 3, 228, LV_TEXT_FLAG_NONE);
-        int width = m->user ? LV_MIN(measured.x + 16, 244) : 292;
-        if (m->user) lv_obj_add_flag(m->speaker, LV_OBJ_FLAG_HIDDEN);
-        else { lv_obj_clear_flag(m->speaker, LV_OBJ_FLAG_HIDDEN); lv_label_set_text(m->speaker, chat_preview); }
-        lv_obj_set_width(m->label, width - 16);
-        lv_obj_set_pos(m->label, 8, m->user ? 8 : 2);
-        lv_obj_update_layout(m->label);
-        int h = lv_obj_get_height(m->label) + (m->user ? 16 : 4);
-        lv_obj_set_pos(m->bubble, m->user ? 304 - width : 0, m->user ? 0 : 22);
-        lv_obj_set_size(m->bubble, width, h);
-        lv_obj_set_style_bg_color(m->bubble, lv_color_hex(m->user ? theme()->selection : theme()->background), 0);
+        int width = m->user ? LV_MIN(measured.x + 16, 244) : OPERIT_MESSAGE_WIDTH - 12;
+        if (m->user) lv_obj_add_flag(view->speaker, LV_OBJ_FLAG_HIDDEN);
+        else { lv_obj_clear_flag(view->speaker, LV_OBJ_FLAG_HIDDEN); lv_label_set_text(view->speaker, chat_preview); }
+        lv_obj_set_width(view->label, width - 16);
+        lv_obj_set_pos(view->label, 8, m->user ? 8 : 2);
+        lv_obj_update_layout(view->label);
+        int h = lv_obj_get_height(view->label) + (m->user ? 16 : 4);
+        for (unsigned j = 0; j < 4; ++j) {
+            if (!m->images[j].id[0]) {
+                if (view->images[j].button) lv_obj_add_flag(view->images[j].button, LV_OBJ_FLAG_HIDDEN);
+                continue;
+            }
+            copy_utf8(visible_image_ids[j], sizeof(visible_image_ids[j]), m->images[j].id);
+            if (!view->images[j].button) {
+                view->images[j].button = ui_box(view->bubble, 8, h, 200, 28, theme()->surface, 6);
+                lv_obj_add_flag(view->images[j].button, LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_add_event_cb(view->images[j].button, image_clicked, LV_EVENT_CLICKED, visible_image_ids[j]);
+                char caption[48]; snprintf(caption, sizeof(caption), "查看图片 %u", j+1);
+                label(view->images[j].button, caption, 8, 4, 180, theme()->text);
+                char id[40]; snprintf(id, sizeof(id), "message_image_0_%u", j);
+                debug_register(view->images[j].button, "button", id, "image_open");
+            }
+            lv_obj_clear_flag(view->images[j].button, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_y(view->images[j].button, h); h += 32;
+            width = LV_MAX(width, 216);
+        }
+        lv_obj_set_pos(view->bubble, m->user ? OPERIT_MESSAGE_WIDTH - width : 0, m->user ? 0 : 22);
+        lv_obj_set_size(view->bubble, width, h);
+        lv_obj_set_style_bg_color(view->bubble, lv_color_hex(m->user ? theme()->selection : theme()->background), 0);
         h += m->user ? 0 : 22;
-        lv_obj_set_pos(m->row, 0, y);
-        lv_obj_set_height(m->row, h);
-        y += h + 12;
+        lv_obj_set_pos(view->row, 0, y);
+        lv_obj_set_height(view->row, h);
+        y += h + 8;
+    } else if (messages[0].row) {
+        lv_obj_add_flag(messages[0].row, LV_OBJ_FLAG_HIDDEN);
     }
     lv_label_set_text(chat_label, chat_screen);
     lv_obj_set_y(chat_label, y);
@@ -81,8 +230,20 @@ static void render_messages(void) {
         y += lv_obj_get_height(chat_label) + 8;
     } else lv_obj_add_flag(chat_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_height(message_list, y > 0 ? y : 1);
-    lv_obj_update_layout(message_viewport);
-    if (at_bottom) lv_obj_scroll_to_y(message_viewport, LV_COORD_MAX, LV_ANIM_OFF);
+    int max_scroll = y - lv_obj_get_height(message_viewport);
+    if (max_scroll < 0) max_scroll = 0;
+    if (message_scroll_y > max_scroll) message_scroll_y = max_scroll;
+    lv_obj_set_y(message_list, -message_scroll_y);
+}
+
+static void page_message(int direction) {
+    if (!message_count || !message_viewport) return;
+    if (direction < 0 && message_page > 0) --message_page;
+    else if (direction > 0 && message_page + 1 < message_count) ++message_page;
+    else return;
+    message_follow_latest = message_page + 1 == message_count;
+    message_scroll_y = 0;
+    render_messages();
 }
 
 static void toggle_character(lv_event_t *event) {
@@ -167,6 +328,7 @@ static void render_conversations(void) {
 
 void operit_lvgl_set_chat_identity(const char *id, const char *character) {
     if (id && strcmp(active_chat_id, id)) {
+        close_image();
         bool switching = active_chat_id[0] != 0;
         if (switching) {
             remember_chat_draft();
@@ -177,6 +339,9 @@ void operit_lvgl_set_chat_identity(const char *id, const char *character) {
             copy_utf8(drafts[slot].text, sizeof(drafts[slot].text), chat_draft);
         }
         copy_utf8(active_chat_id, sizeof(active_chat_id), id);
+        message_page = 0;
+        message_scroll_y = 0;
+        message_follow_latest = true;
         if (switching) {
             chat_send_pending = false;
             operit_lvgl_set_chat_draft("");
@@ -184,7 +349,6 @@ void operit_lvgl_set_chat_identity(const char *id, const char *character) {
                 operit_lvgl_set_chat_draft(drafts[i].text);
             if (drawer_layer) { sidebar_open = false; lv_obj_add_flag(drawer_layer, LV_OBJ_FLAG_HIDDEN); }
         }
-        if (message_viewport) lv_obj_scroll_to_y(message_viewport, LV_COORD_MAX, LV_ANIM_OFF);
     }
     operit_lvgl_set_chat_preview(character);
 }
@@ -194,27 +358,43 @@ static void clear_chat_cache(void) {
     memset(drafts, 0, sizeof(drafts)); draft_cursor = 0;
     operit_lvgl_set_chat_draft("");
     chat_send_pending = false;
+    message_page = 0;
+    message_scroll_y = 0;
+    message_follow_latest = true;
     for (unsigned i = 0; i < MESSAGE_LIMIT; ++i) { free(messages[i].text); messages[i].text = NULL; }
     message_count = conversation_count = 0;
 }
 
 void operit_lvgl_set_message(unsigned index, bool user, const char *text) {
     if (index >= MESSAGE_LIMIT) return;
-    char bounded[MESSAGE_TEXT_BYTES]; copy_utf8(bounded, sizeof(bounded), text);
+    const char *source = text ? text : "";
+    char *scratch = message_scratch_buffer();
+    if (!scratch) return;
+    copy_utf8(scratch, MESSAGE_TEXT_BYTES, source);
+    size_t bounded_length = strlen(scratch);
     message_view_t *m = &messages[index];
-    if (!m->text || strcmp(m->text, bounded)) {
-        char *next = malloc(strlen(bounded) + 1);
+    if (!m->text || strcmp(m->text, scratch)) {
+        char *next = malloc(bounded_length + 1);
         if (!next) return;
-        strcpy(next, bounded); free(m->text); m->text = next;
+        memcpy(next, scratch, bounded_length + 1);
+        free(m->text); m->text = next;
         messages_dirty = true;
     }
     if (m->user != user) messages_dirty = true;
     m->user = user;
 }
+void operit_lvgl_set_message_image(unsigned index, unsigned image, const char *id) {
+    if (index >= MESSAGE_LIMIT || image >= 4) return;
+    char *current = messages[index].images[image].id;
+    if (strcmp(current, id ? id : "")) { copy_utf8(current, 81, id); messages_dirty = true; }
+}
 void operit_lvgl_finish_messages(unsigned count) {
     unsigned next = count > MESSAGE_LIMIT ? MESSAGE_LIMIT : count;
     if (next != message_count) messages_dirty = true;
     message_count = next;
+    if (!message_count) message_page = 0;
+    else if (message_follow_latest) message_page = message_count - 1;
+    else if (message_page >= message_count) message_page = message_count - 1;
     for (unsigned i = message_count; i < MESSAGE_LIMIT; ++i) { free(messages[i].text); messages[i].text = NULL; }
     if (messages_dirty) render_messages();
 }

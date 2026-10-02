@@ -32,6 +32,8 @@ pub struct GeneratedSpaceRoute {
     pub permissionScope: GeneratedRoutePermissionSubject,
     pub permissionCapability: &'static str,
     pub lifecycle: GeneratedRouteLifecycle,
+    /// Only explicit creation commands may allocate a missing binding.
+    pub createBindingCapability: &'static str,
 }
 
 impl GeneratedSpaceRoute {
@@ -68,15 +70,29 @@ impl GeneratedSpaceRoute {
     }
 }
 
+#[cfg(feature = "full")]
 include!(concat!(env!("OUT_DIR"), "/generated_route_catalog.rs"));
 
+#[cfg(feature = "full")]
 pub mod CoreNodeRouter;
-pub mod RuntimeRemoteLinkDiscovery;
+#[cfg(feature = "full")]
+pub mod NodeClient;
+pub mod RuntimePeerService;
+#[cfg(feature = "full")]
+pub mod HostRuntimePeerService;
+pub mod NodeServices;
+#[cfg(feature = "peer-state")]
+pub mod PeerStateStore;
+#[cfg(feature = "full")]
 pub mod RuntimeRemoteLinkService;
+#[cfg(feature = "full")]
 pub mod SpacePersistenceSyncService;
+#[cfg(feature = "full")]
+mod PeerSync;
+#[cfg(feature = "full")]
 pub mod SpaceRuntime;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full"))]
 mod tests {
     use super::*;
 

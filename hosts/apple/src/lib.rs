@@ -4,6 +4,10 @@
 #[path = "../../common/chromium_browser.rs"]
 pub mod chromium_browser;
 pub mod tools;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod logging;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use logging::installAppleLogSink;
 
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as AppleHostJavaScriptRuntimeHost;
 pub use operit_host_native_common::NativeHostRuntimeEventSchedulerHost as AppleHostRuntimeEventSchedulerHost;

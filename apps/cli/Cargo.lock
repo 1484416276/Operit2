@@ -2178,30 +2178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-access-runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "hmac",
- "operit-host-api",
- "operit-link",
- "operit-runtime",
- "operit-store",
- "operit-util",
- "rand_core 0.6.4",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "operit-cli"
 version = "2.0.0-preview.9"
 dependencies = [
@@ -2215,7 +2191,6 @@ dependencies = [
  "hmac",
  "image",
  "mdns-sd",
- "operit-access-runtime",
  "operit-command-core",
  "operit-core-application",
  "operit-host-api",
@@ -2227,6 +2202,7 @@ dependencies = [
  "operit-model",
  "operit-node-runtime",
  "operit-providers",
+ "operit-proxy-edge",
  "operit-proxy-local",
  "operit-runtime",
  "operit-store",
@@ -2271,7 +2247,6 @@ dependencies = [
 name = "operit-core-application"
 version = "0.1.0"
 dependencies = [
- "operit-access-runtime",
  "operit-host-api",
  "operit-link",
  "operit-node-runtime",
@@ -2282,20 +2257,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "operit-edge-transport"
+name = "operit-edge-contract"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "base64",
- "hmac",
- "operit-host-api",
  "operit-link",
- "rand_core 0.6.4",
  "serde",
- "sha2",
- "tokio",
- "uuid",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -2303,6 +2269,9 @@ name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "http",
+ "http-body-util",
  "js-sys",
  "serde",
  "serde_json",
@@ -2387,6 +2356,9 @@ dependencies = [
 name = "operit-host-native-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "http-body-util",
  "operit-host-api",
  "reqwest",
  "tokio",
@@ -2522,19 +2494,39 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
- "operit-access-runtime",
- "operit-edge-transport",
+ "futures-util",
  "operit-host-api",
  "operit-link",
+ "operit-peer-link",
  "operit-runtime",
  "operit-store",
  "operit-tools",
  "operit-util",
  "quote",
+ "ring",
  "serde",
  "serde_json",
  "syn",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "operit-peer-link"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2633,17 +2625,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-proxy-edge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "operit-edge-contract",
+ "operit-host-api",
+ "operit-link",
+ "serde",
+]
+
+[[package]]
 name = "operit-proxy-local"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "operit-access-runtime",
  "operit-command-core",
  "operit-host-api",
  "operit-link",
  "operit-local-models",
  "operit-model",
  "operit-node-runtime",
+ "operit-peer-link",
  "operit-plugin-sdk",
  "operit-plugin-sdk-codegen",
  "operit-plugin-sdk-ipc",
@@ -4072,6 +4075,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2 0.6.3",
  "tokio-macros",
  "windows-sys 0.61.2",

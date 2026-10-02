@@ -44,6 +44,7 @@ pub fn createRuntimeHostManager(
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
     managedRuntimeHost: Arc<dyn operit_host_api::ManagedRuntimeHost>,
 ) -> HostManager {
+    operit_host_apple_native::installAppleLogSink();
     let runtimeStorageWriteHost =
         Arc::new(operit_host_native_common::NativeRuntimeStorageHost::new(
             runtimeRoot.clone(),
@@ -63,6 +64,8 @@ pub fn createRuntimeHostManager(
         Arc::new(IosSystemOperationHost::new()),
     );
     hostManager.httpHost = Some(Arc::new(IosHttpHost::new()));
+    hostManager.httpServerHost = Some(Arc::new(operit_host_native_common::NativeHttpServerHost));
+    hostManager.tcpHost = Some(Arc::new(operit_host_native_common::NativeTcpHost));
     hostManager.serialPortHost = Some(Arc::new(IosSerialPortHost));
     hostManager.webSocketHost = Some(Arc::new(IosHttpHost::new()));
     hostManager.managedRuntimeHost = Some(managedRuntimeHost);

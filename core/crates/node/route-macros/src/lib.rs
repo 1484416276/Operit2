@@ -18,6 +18,7 @@ impl Parse for CoreRouteArguments {
         let mut binding = None;
         let mut permission = None;
         let mut sdk = false;
+        let mut create_binding = None;
         while !input.is_empty() {
             let name: Ident = input.parse()?;
             if name == "binding" {
@@ -26,6 +27,9 @@ impl Parse for CoreRouteArguments {
             } else if name == "permission" {
                 input.parse::<Token![=]>()?;
                 permission = Some(input.parse::<LitStr>()?);
+            } else if name == "create_binding" {
+                input.parse::<Token![=]>()?;
+                create_binding = Some(input.parse::<LitStr>()?);
             } else if name == "sdk" {
                 sdk = true;
             } else {
@@ -41,6 +45,11 @@ impl Parse for CoreRouteArguments {
         let binding = binding.ok_or_else(|| input.error("missing `binding = argument`"))?;
         let permission = permission.ok_or_else(|| input.error("missing `permission = \"scope:capability\"`"))?;
         validate_permission(&permission)?;
+        if let Some(capability) = create_binding {
+            if capability.value().trim().is_empty() || !permission.value().starts_with("caller:") {
+                return Err(Error::new(capability.span(), "binding creation requires a target capability and caller permission"));
+            }
+        }
         Ok(Self {
             binding,
             permission,

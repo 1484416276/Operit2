@@ -24,7 +24,16 @@ pub fn module_path_for_source_with_crate(
     if relative == Path::new("lib.rs") {
         return module_path.join("::");
     }
-    for component in relative.with_extension("").components() {
+    // A directory module's mod.rs declares its parent, not a child named `mod`.
+    let module_file = if relative.file_name() == Some(std::ffi::OsStr::new("mod.rs")) {
+        relative
+            .parent()
+            .expect("mod.rs has a parent")
+            .to_path_buf()
+    } else {
+        relative.with_extension("")
+    };
+    for component in module_file.components() {
         module_path.push(component.as_os_str().to_string_lossy().to_string());
     }
     module_path.join("::")
@@ -126,4 +135,47 @@ pub fn parent_module_path(full_type: &str) -> &str {
         .rsplit_once("::")
         .map(|(module, _)| module)
         .expect("object full_type must include module path")
+}
+
+#[cfg(test)]
+mod module_path_tests {
+    use super::*;
+
+    #[test]
+    fn directory_modules_do_not_add_a_mod_segment() {
+        let root = Path::new("src");
+        for (file, module) in [
+            ("lib.rs", "operit_node_runtime"),
+            ("mod.rs", "operit_node_runtime"),
+            ("example/mod.rs", "operit_node_runtime::example"),
+            (
+                "example/transport/mod.rs",
+                "operit_node_runtime::example::transport",
+            ),
+            (
+                "example/transport.rs",
+                "operit_node_runtime::example::transport",
+            ),
+            ("CoreNodeRouter.rs", "operit_node_runtime::CoreNodeRouter"),
+        ] {
+            assert_eq!(
+                module_path_for_source_with_crate(root, &root.join(file), "operit_node_runtime"),
+                module
+            );
+        }
+    }
+
+    #[test]
+    fn nested_types_resolve_from_directory_module() {
+        let root = Path::new("src");
+        assert_eq!(
+            full_type_for_source_with_crate(
+                root,
+                &root.join("example/mod.rs"),
+                "ExampleService",
+                "operit_node_runtime"
+            ),
+            "operit_node_runtime::example::ExampleService"
+        );
+    }
 }

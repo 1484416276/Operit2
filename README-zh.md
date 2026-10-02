@@ -177,7 +177,7 @@ cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- tui
 ```powershell
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli link
-cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli web
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli web open
 ```
 
 ### Flutter App

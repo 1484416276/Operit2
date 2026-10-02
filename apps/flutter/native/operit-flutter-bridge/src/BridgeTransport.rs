@@ -89,7 +89,13 @@ impl Drop for OperitFlutterBridge {
     fn drop(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.stopWebAccessServer();
+            if let Ok(guard) = self.coreApplication.lock() {
+                if let Some(core) = guard.as_ref() {
+                    if let Ok(services) = core.nodeServices() {
+                        let _ = self.runHostRuntimeAsyncTask("node-stop", move || async move { services.peers().stop().await });
+                    }
+                }
+            }
             if let Ok(coreApplication) = self.coreApplication.get_mut() {
                 if let Some(coreApplication) = coreApplication.take() {
                     coreApplication.shutdownNow();

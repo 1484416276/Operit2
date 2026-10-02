@@ -177,7 +177,7 @@ With no arguments, `operit2` enters the TUI by default. View more entry points w
 ```powershell
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli
 cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli link
-cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli web
+cargo run --manifest-path apps/cli/Cargo.toml --bin operit2 -- cli web open
 ```
 
 ### Flutter App

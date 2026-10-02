@@ -2147,5 +2147,77 @@
         "type": "String"
       }
     }
-  }
+  },
+
+  "settingsPeerAdvanced": "Advanced options",
+  "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
+  "settingsPeerBindAddress": "Listen address",
+  "settingsPeerBindAddressHelp": "Example: 0.0.0.0:37195 for LAN access",
+  "settingsPeerDiscoveryNeedsTransport": "Select at least one transport before enabling discovery.",
+  "settingsPeerPortConflict": "TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.",
+  "settingsPeerAddressRequired": "Enter a listen address.",
+  "settingsPeerApplied": "Listener settings applied.",
+  "settingsPeerRestoreFailed": "Failed to restore previous listeners: {error}",
+  "@settingsPeerRestoreFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsPeerCodeInstructions": "Enter this code on the other device to finish pairing. It expires in five minutes. Do not share it with strangers.",
+  "settingsPeerSixDigitCode": "Enter the six-digit pairing code shown on the receiving device.",
+  "spaceJoinRequests": "Space join requests",
+  "spaceJoinReviewer": "Reviewer: {name}",
+  "@spaceJoinReviewer": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinWaitingReviewer": "Waiting for an authorized reviewer to come online",
+  "spaceJoinPending": "Waiting for approval",
+  "spaceJoinApproving": "Decision is being processed",
+  "spaceJoinApproved": "Approved · completing join",
+  "spaceJoinJoined": "Joined",
+  "spaceJoinRejected": "Rejected",
+  "spaceJoinCancelled": "Cancelled",
+  "spaceJoinExpired": "Expired",
+  "spaceJoinSubmit": "Submit request",
+  "spaceJoinApprovalTitle": "Space join request",
+  "spaceJoinApprovalDescription": "{name} wants to join “{space}”. No Space data is shared before approval.",
+  "@spaceJoinApprovalDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "space": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinApprove": "Approve",
+  "spaceJoinReject": "Reject",
+  "spaceJoinRetry": "Submit again",
+  "spaceJoinKeepWaiting": "Keep waiting in background",
+  "spaceJoinCancel": "Cancel request",
+  "spaceJoinRefreshingFailed": "Cannot reach the device right now. The request is saved and will retry.",
+  "spaceJoinAssignmentChanged": "This request has been transferred or already processed.",
+  "spaceJoinProgressTitle": "Space join request",
+  "spaceJoinSending": "Submitting request…",
+  "spaceJoinSubmitFailed": "Could not submit the request. Check the connection and try again.",
+  "spaceJoinNoDataYet": "Your current Space remains unchanged until approval. You can close this window and keep waiting in the background.",
+  "deviceSpaceAddDevice": "Add device",
+  "deviceSpaceDevices": "Devices",
+  "deviceSpaceMore": "More device actions",
+  "deviceSpaceConnectionSettings": "Connection settings",
+  "deviceSpaceViewRequest": "View request",
+  "devicePickerNearby": "Nearby devices",
+  "devicePickerEmpty": "No nearby devices found",
+  "devicePickerHint": "Connect both devices to the same network and enable discovery on the other device.",
+  "devicePickerManual": "Connect using an address",
+  "deviceSpaceMyRequests": "My requests",
+  "deviceSpaceMyReviews": "Awaiting my review",
+  "deviceSpaceNoRequests": "No requests"
 }

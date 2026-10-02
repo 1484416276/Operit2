@@ -83,7 +83,6 @@ class AppNotificationService with WidgetsBindingObserver {
       case RuntimeHostInteractionKind.ttsSynthesis:
       case RuntimeHostInteractionKind.ttsPlayback:
       case RuntimeHostInteractionKind.localInference:
-      case RuntimeHostInteractionKind.webAccessPairing:
         throw StateError(
           'unexpected application notification kind: ${request.kind.name}',
         );

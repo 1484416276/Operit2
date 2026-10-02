@@ -47,6 +47,14 @@ void operit_lvgl_submit_chat(void);
 void operit_lvgl_chat_send_result(bool ok, const char *error);
 
 void operit_lvgl_set_theme(unsigned index, bool circular);
+/* Emoji style IDs are defined in operit_emoji.h. Invalid IDs are rejected. */
+bool operit_lvgl_set_emoji_style(unsigned style);
+unsigned operit_lvgl_emoji_style(void);
+void operit_lvgl_set_message_image(unsigned index, unsigned image, const char *id);
+unsigned operit_lvgl_image_request(void);
+void operit_lvgl_image_error(unsigned request, const char *error);
+bool operit_lvgl_image_chunk(unsigned request, unsigned width, unsigned height, unsigned offset,
+                            const uint8_t *bytes, unsigned length);
 void operit_lvgl_navigate_apps(void);
 unsigned operit_lvgl_theme_index(void);
 bool operit_lvgl_round_icons(void);

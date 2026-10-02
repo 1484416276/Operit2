@@ -9,14 +9,12 @@ import 'package:flutter/widgets.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../host/RuntimeHostInteractionSubscriber.dart';
-import '../link_access/LinkAccessHost.dart';
 import '../logging/ClientLogger.dart';
 import '../notifications/AppNotificationService.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../runtime/RuntimeBootstrapManager.dart';
 import '../runtime/RuntimeDeviceInfoProvider.dart';
-import '../runtime/RemotePairingBridge.dart';
 
 class CoreApplicationService with WidgetsBindingObserver {
   CoreApplicationService._();
@@ -34,8 +32,6 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   bool _initialized = false;
   bool _localBackgroundServiceStartAttempted = false;
-  bool _linkHostStartAttempted = false;
-  bool _webAccessBootstrapAttempted = false;
   Future<void>? _runtimeServicesStart;
   Object? _pendingStartupError;
 
@@ -169,7 +165,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     });
   }
 
-  /// Starts host subscriptions and LinkHost outside the widget lifecycle.
+  /// Starts host subscriptions and configured node listeners outside the widget lifecycle.
   Future<void> _startRuntimeServicesOnce() async {
     final stopwatch = Stopwatch()..start();
     if (!_runtimeManager.runtimeConfigured) {
@@ -196,16 +192,35 @@ class CoreApplicationService with WidgetsBindingObserver {
         return;
       }
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
-      await _coreClients.linkAccess.linkAccessStore.initializeIdentity(
-        deviceInfo: deviceInfo,
+      await _coreClients.server.runtimeRemoteLinkService.initializeDeviceInfo(
+        supplied: deviceInfo,
       );
       await _coreClients.server.runtimeRemoteLinkService
           .updateCurrentDeviceUserName(
             userName: _runtimeManager.activeIdentity.name,
           );
-      await _ensureLinkHostStarted();
+      // 配置和监听生命周期归 runtime；Dart 只调用生成的类型化 Proxy。
+      final peerService = _coreClients.server.runtimeRemoteLinkService;
+      final config = await peerService.localHostConfig();
+      if (config != null && config.transports.isNotEmpty) {
+        // The Flutter listener panel previously wrote Fixed unconditionally,
+        // although it offered no fixed-port option. Migrate those saved configs
+        // so existing installations also recover from port collisions on launch.
+        if (config.portMode == PeerHostPortMode.fixed) {
+          await peerService.saveLocalHostConfig(
+            config: PeerHostConfig(
+              bindAddress: config.bindAddress,
+              token: config.token,
+              transports: config.transports,
+              discoveryEnabled: config.discoveryEnabled,
+              portMode: PeerHostPortMode.automatic,
+              updatedAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+        }
+        await peerService.startListening(transports: config.transports);
+      }
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
-      await _bootstrapWebAccessSession();
       ClientLogger.i(
         'runtime services start done elapsedMs=${stopwatch.elapsedMilliseconds}',
         tag: _logTag,
@@ -223,66 +238,6 @@ class CoreApplicationService with WidgetsBindingObserver {
         _pendingStartupError = error;
       }
     }
-  }
-
-  /// Automatically pairs the browser runtime with the native Web Access host.
-  Future<void> _bootstrapWebAccessSession() async {
-    if (_webAccessBootstrapAttempted) {
-      return;
-    }
-    final launchInfo = LinkAccessHost.instance.webAccessLaunchInfo;
-    if (launchInfo == null) {
-      return;
-    }
-    _webAccessBootstrapAttempted = true;
-    final sessions = await _coreClients.linkAccess.linkAccessStore
-        .outboundSessions();
-    PairedRemoteSessionRecord? session;
-    for (final candidate in sessions.values) {
-      if (candidate.baseUrl == launchInfo.baseUrl) {
-        session = candidate;
-        break;
-      }
-    }
-    late final String name;
-    late final String coreDeviceId;
-    if (session != null) {
-      name = remotePairingSessionNameFromRecord(session);
-      coreDeviceId = session.coreDeviceId;
-    } else {
-      final created = await const RemotePairingBridge().bootstrap(
-        baseUrl: launchInfo.baseUrl,
-        token: launchInfo.token,
-      );
-      name = remotePairingSessionNameFromRecord(created);
-      coreDeviceId = created.coreDeviceId;
-    }
-    await _coreClients.server.runtimeRemoteLinkService.joinPairedDeviceSpace(
-      name: name,
-    );
-    ClientLogger.i(
-      'web access bootstrap completed coreDeviceId=$coreDeviceId',
-      tag: _logTag,
-    );
-  }
-
-  /// Starts LinkHost once the local runtime storage is confirmed.
-  Future<void> _ensureLinkHostStarted() async {
-    if (_linkHostStartAttempted) {
-      ClientLogger.d(
-        'link host initialize skipped attempted=true',
-        tag: _logTag,
-      );
-      return;
-    }
-    _linkHostStartAttempted = true;
-    final linkHostStopwatch = Stopwatch()..start();
-    ClientLogger.i('link host initialize start', tag: _logTag);
-    await LinkAccessHost.instance.initializeFromConfig();
-    ClientLogger.i(
-      'link host initialize done elapsedMs=${linkHostStopwatch.elapsedMilliseconds}',
-      tag: _logTag,
-    );
   }
 
   /// Starts the Android foreground Core service for a local runtime.

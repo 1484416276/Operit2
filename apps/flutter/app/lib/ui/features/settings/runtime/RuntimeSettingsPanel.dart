@@ -10,6 +10,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/DeviceSpaceDiscoveryPanel.dart';
+import '../../../common/SpaceJoinWidgets.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
@@ -17,6 +18,14 @@ import '../components/SettingsControlStyles.dart';
 import '../profile/UserProfileSummaryTile.dart';
 import 'DeviceSpaceGraph.dart';
 import 'NetworkControlPanel.dart';
+
+String _deviceInfoName(generated.LinkDeviceInfo info) {
+  final parts = [
+    info.platform.trim(),
+    info.model.trim(),
+  ].where((part) => part.isNotEmpty).toList();
+  return parts.isEmpty ? 'Unknown device' : parts.join('-');
+}
 
 class RuntimeSettingsPanel extends StatefulWidget {
   const RuntimeSettingsPanel({
@@ -34,6 +43,7 @@ class RuntimeSettingsPanel extends StatefulWidget {
 
 class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   bool _busy = false;
+  Map<String, generated.SpaceJoinRequest> _spaceJoins = {};
   String? _connectionMessage;
   bool _connectionFailed = false;
   generated.CoreSpace? _currentDeviceSpace;
@@ -259,35 +269,6 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
-  /// Persists the explicit Link carrier selected for one outbound paired device.
-  Future<void> _setPairedDeviceTransport(
-    generated.RuntimePairedDevice device,
-    generated.LinkTransportPreference transport,
-  ) async {
-    final name = device.outboundSessionName;
-    if (name == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await _clients.server.runtimeRemoteLinkService.setPairedRemoteTransport(
-        name: name,
-        transport: transport,
-      );
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _connectionMessage = error.toString();
-          _connectionFailed = true;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   /// Prompts for and persists a new name for the current device space.
   Future<void> _renameCurrentDeviceSpace() async {
     final currentDeviceSpace = _currentDeviceSpace;
@@ -376,8 +357,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
   Future<void> _offerJoiningExistingPairedDeviceSpace(
     generated.RuntimePairedDevice device,
   ) async {
-    final sessionName = device.outboundSessionName;
-    if (sessionName == null) {
+    if (!device.outbound) {
       throw StateError('joining a device space requires an outbound pairing');
     }
     final deviceInfo = device.deviceInfo;
@@ -386,8 +366,8 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
       final joined = await confirmAndJoinPairedDeviceSpace(
         context: context,
         clients: _clients,
-        sessionName: sessionName,
-        deviceName: '${deviceInfo.platform}-${deviceInfo.model}',
+        deviceId: device.deviceId,
+        deviceName: _deviceInfoName(deviceInfo),
       );
       if (mounted && joined != null) {
         setState(() {
@@ -441,6 +421,27 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
     }
   }
 
+  void _applySpaceJoins(List<generated.SpaceJoinRequest> requests) {
+    final next = <String, generated.SpaceJoinRequest>{};
+    for (final request in requests) {
+      final old = next[request.targetDeviceId];
+      if (old == null || request.createdAt > old.createdAt) {
+        next[request.targetDeviceId] = request;
+      }
+    }
+    if (next.length == _spaceJoins.length &&
+        next.entries.every((e) {
+          final old = _spaceJoins[e.key];
+          return old?.requestId == e.value.requestId &&
+              old?.status == e.value.status &&
+              old?.assignmentVersion == e.value.assignmentVersion &&
+              old?.reviewerName == e.value.reviewerName;
+        })) {
+      return;
+    }
+    if (mounted) setState(() => _spaceJoins = next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -457,45 +458,44 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel> {
         connectionFailed: _connectionFailed,
       ),
       _SectionCard(
-        title: l10n.settingsRuntimeNetworkControl,
+        title: l10n.deviceSpaceDevices,
+        headerActions: DeviceSpaceDiscoveryPanel(
+          clients: _clients,
+          enabled: !_busy,
+          onJoined: _handleJoinedDeviceSpace,
+          onBusyChanged: _handleDiscoveryBusyChanged,
+          onRequestsChanged: _applySpaceJoins,
+        ),
         children: <Widget>[
-          NetworkControlPanel(
-            clients: _clients,
-            onChanged: _refreshCurrentDeviceSpace,
-          ),
-        ],
-      ),
-      _SectionCard(
-        title: l10n.settingsRuntimeRemoteTitle,
-        children: <Widget>[
-          Text(
-            l10n.settingsRuntimeRemoteDescription,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
           _PairedDeviceList(
             devices: _pairedDevices,
             busy: _busy,
             states: _pairedRemoteStates,
+            requests: _spaceJoins,
+            onRequest: (request) async {
+              final space = await showSpaceJoinProgress(
+                context,
+                clients: _clients,
+                request: request,
+              );
+              if (mounted && space != null) {
+                await _handleJoinedDeviceSpace(space);
+              }
+            },
             currentMemberIds:
                 _currentDeviceSpace?.members.toSet() ?? <String>{},
             onJoin: _offerJoiningExistingPairedDeviceSpace,
             onDelete: _deletePairedDevice,
-            onTransportChanged: _setPairedDeviceTransport,
             onRemovedFromSpace: _handleRemovedFromSpace,
           ),
         ],
       ),
       _SectionCard(
-        title: l10n.settingsRuntimeDiscoverSpaces,
+        title: l10n.settingsRuntimeNetworkControl,
         children: <Widget>[
-          DeviceSpaceDiscoveryPanel(
+          NetworkControlPanel(
             clients: _clients,
-            enabled: !_busy,
-            onJoined: _handleJoinedDeviceSpace,
-            onBusyChanged: _handleDiscoveryBusyChanged,
+            onChanged: _refreshCurrentDeviceSpace,
           ),
         ],
       ),
@@ -936,10 +936,15 @@ class _IdentityChipAvatar extends StatelessWidget {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.children});
+  const _SectionCard({
+    required this.title,
+    required this.children,
+    this.headerActions,
+  });
 
   final String title;
   final List<Widget> children;
+  final Widget? headerActions;
 
   @override
   Widget build(BuildContext context) {
@@ -958,9 +963,18 @@ class _SectionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                title,
-                style: SettingsControlStyles.sectionTitleTextStyle(context),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: SettingsControlStyles.sectionTitleTextStyle(
+                        context,
+                      ),
+                    ),
+                  ),
+                  ?headerActions,
+                ],
               ),
               const SizedBox(height: 8),
               ...children,
@@ -1052,24 +1066,23 @@ class _PairedDeviceList extends StatelessWidget {
     required this.devices,
     required this.busy,
     required this.states,
+    required this.requests,
+    required this.onRequest,
     required this.currentMemberIds,
     required this.onJoin,
     required this.onDelete,
-    required this.onTransportChanged,
     required this.onRemovedFromSpace,
   });
 
   final Map<String, generated.RuntimePairedDevice> devices;
   final bool busy;
   final Map<String, _PairedRemoteProbeState> states;
+  final Map<String, generated.SpaceJoinRequest> requests;
+  final ValueChanged<generated.SpaceJoinRequest> onRequest;
   final Set<String> currentMemberIds;
   final ValueChanged<generated.RuntimePairedDevice> onJoin;
   final ValueChanged<String> onDelete;
-  final void Function(
-    generated.RuntimePairedDevice,
-    generated.LinkTransportPreference,
-  )
-  onTransportChanged;
+
   final VoidCallback onRemovedFromSpace;
 
   @override
@@ -1091,13 +1104,16 @@ class _PairedDeviceList extends StatelessWidget {
             device: entries[index].value,
             busy: busy,
             state: states[entries[index].key],
+            request: requests[entries[index].key],
+            onRequest: () {
+              final request = requests[entries[index].key];
+              if (request != null) onRequest(request);
+            },
             inCurrentSpace: currentMemberIds.contains(entries[index].key),
-            onJoin: entries[index].value.outboundSessionName == null
+            onJoin: !entries[index].value.outbound
                 ? null
                 : () => onJoin(entries[index].value),
             onDelete: () => onDelete(entries[index].key),
-            onTransportChanged: (transport) =>
-                onTransportChanged(entries[index].value, transport),
             onRemovedFromSpace: onRemovedFromSpace,
           ),
           if (index < entries.length - 1) const SizedBox(height: 10),
@@ -1113,9 +1129,10 @@ class _PairedDeviceTile extends StatelessWidget {
     required this.busy,
     required this.state,
     required this.inCurrentSpace,
+    required this.request,
+    required this.onRequest,
     required this.onJoin,
     required this.onDelete,
-    required this.onTransportChanged,
     required this.onRemovedFromSpace,
   });
 
@@ -1123,9 +1140,10 @@ class _PairedDeviceTile extends StatelessWidget {
   final bool busy;
   final _PairedRemoteProbeState? state;
   final bool inCurrentSpace;
+  final generated.SpaceJoinRequest? request;
+  final VoidCallback onRequest;
   final VoidCallback? onJoin;
   final VoidCallback onDelete;
-  final ValueChanged<generated.LinkTransportPreference> onTransportChanged;
   final VoidCallback onRemovedFromSpace;
 
   @override
@@ -1134,7 +1152,6 @@ class _PairedDeviceTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final probeState = state ?? _PairedRemoteProbeState.checking;
-    final outboundBaseUrl = device.outboundBaseUrl;
     final statusColor = switch (probeState) {
       _PairedRemoteProbeState.checking => colorScheme.onSurfaceVariant,
       _PairedRemoteProbeState.online => colorScheme.primary,
@@ -1143,7 +1160,9 @@ class _PairedDeviceTile extends StatelessWidget {
       _PairedRemoteProbeState.error => colorScheme.error,
       _PairedRemoteProbeState.removedFromSpace => colorScheme.error,
     };
+    final pendingJoin = request != null && spaceJoinIsActive(request!.status);
     final canJoin =
+        !pendingJoin &&
         !inCurrentSpace &&
         onJoin != null &&
         probeState != _PairedRemoteProbeState.invalid &&
@@ -1182,13 +1201,25 @@ class _PairedDeviceTile extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   Text(
-                    '${device.deviceInfo.platform}-${device.deviceInfo.model}',
+                    _deviceInfoName(device.deviceInfo),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (pendingJoin)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        '${spaceJoinStatusText(request!, l10n)}${request!.reviewerName == null ? '' : ' · ${request!.reviewerName}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 2),
                   Row(
                     children: <Widget>[
@@ -1200,7 +1231,7 @@ class _PairedDeviceTile extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          outboundBaseUrl ?? device.deviceId,
+                          device.deviceId,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: textTheme.bodySmall?.copyWith(
@@ -1238,6 +1269,12 @@ class _PairedDeviceTile extends StatelessWidget {
                 ],
               ),
             ),
+            if (pendingJoin)
+              IconButton(
+                tooltip: l10n.deviceSpaceViewRequest,
+                icon: const Icon(Icons.schedule_rounded, size: 20),
+                onPressed: busy ? null : onRequest,
+              ),
             if (canJoin)
               IconButton(
                 tooltip: l10n.settingsRuntimeJoinSpace,
@@ -1264,62 +1301,6 @@ class _PairedDeviceTile extends StatelessWidget {
                 icon: const Icon(Icons.person_remove_outlined, size: 18),
                 label: Text(l10n.settingsRuntimeRemovedFromSpaceConfirm),
               ),
-            ),
-          if (device.outboundTransport != null)
-            Row(
-              children: <Widget>[
-                Icon(
-                  Icons.swap_horiz_outlined,
-                  size: 15,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  'Link transport',
-                  style: textTheme.labelSmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const Spacer(),
-                SizedBox(
-                  width: 104,
-                  child: SegmentedButton<generated.LinkTransportPreference>(
-                    segments:
-                        const <
-                          ButtonSegment<generated.LinkTransportPreference>
-                        >[
-                          ButtonSegment(
-                            value: generated.LinkTransportPreference.http,
-                            label: Text('HTTP'),
-                          ),
-                          ButtonSegment(
-                            value: generated.LinkTransportPreference.webSocket,
-                            label: Text('WS'),
-                          ),
-                        ],
-                    selected: <generated.LinkTransportPreference>{
-                      device.outboundTransport!,
-                    },
-                    showSelectedIcon: false,
-                    style: ButtonStyle(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      textStyle: WidgetStatePropertyAll<TextStyle?>(
-                        textTheme.labelSmall,
-                      ),
-                      padding: const WidgetStatePropertyAll<EdgeInsets>(
-                        EdgeInsets.zero,
-                      ),
-                      minimumSize: const WidgetStatePropertyAll<Size>(
-                        Size(0, 28),
-                      ),
-                    ),
-                    onSelectionChanged: busy
-                        ? null
-                        : (selection) => onTransportChanged(selection.first),
-                  ),
-                ),
-              ],
             ),
         ],
       ),

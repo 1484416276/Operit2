@@ -2140,5 +2140,77 @@
         "type": "String"
       }
     }
-  }
+  },
+
+  "settingsPeerAdvanced": "高级选项",
+  "settingsPeerTransportHelp": "暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。",
+  "settingsPeerBindAddress": "监听地址",
+  "settingsPeerBindAddressHelp": "例如 0.0.0.0:37195，允许局域网访问",
+  "settingsPeerDiscoveryNeedsTransport": "开启允许被搜索前，请至少选择一种暴露方式。",
+  "settingsPeerPortConflict": "当前 TCP 不能与 HTTP/WebSocket 共用监听端口，请选择 TCP 或 HTTP/WebSocket。",
+  "settingsPeerAddressRequired": "请输入监听地址。",
+  "settingsPeerApplied": "监听设置已生效。",
+  "settingsPeerRestoreFailed": "恢复原监听配置失败：{error}",
+  "@settingsPeerRestoreFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsPeerCodeInstructions": "在另一台设备上输入此验证码以完成配对。验证码五分钟内有效，请勿提供给陌生人。",
+  "settingsPeerSixDigitCode": "请输入接收设备上显示的六位配对码。",
+  "spaceJoinRequests": "空间加入申请",
+  "spaceJoinReviewer": "审批人：{name}",
+  "@spaceJoinReviewer": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinWaitingReviewer": "等待有审批权限的设备上线",
+  "spaceJoinPending": "等待批准",
+  "spaceJoinApproving": "正在处理审批结果",
+  "spaceJoinApproved": "已批准，正在完成加入",
+  "spaceJoinJoined": "已加入",
+  "spaceJoinRejected": "已拒绝",
+  "spaceJoinCancelled": "已取消",
+  "spaceJoinExpired": "已过期",
+  "spaceJoinSubmit": "提交申请",
+  "spaceJoinApprovalTitle": "空间加入申请",
+  "spaceJoinApprovalDescription": "{name} 申请加入「{space}」。批准前不会共享空间数据。",
+  "@spaceJoinApprovalDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "space": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinApprove": "批准",
+  "spaceJoinReject": "拒绝",
+  "spaceJoinRetry": "重新申请",
+  "spaceJoinKeepWaiting": "后台等待",
+  "spaceJoinCancel": "取消申请",
+  "spaceJoinRefreshingFailed": "暂时无法联系设备。申请已保留，会继续重试。",
+  "spaceJoinAssignmentChanged": "该申请已转交或已处理。",
+  "spaceJoinProgressTitle": "申请加入空间",
+  "spaceJoinSending": "正在提交申请…",
+  "spaceJoinSubmitFailed": "申请暂时未能提交，请检查连接后重试。",
+  "spaceJoinNoDataYet": "批准前，你当前的空间不会改变。关闭窗口后，申请仍会在后台等待。",
+  "deviceSpaceAddDevice": "添加设备",
+  "deviceSpaceDevices": "设备",
+  "deviceSpaceMore": "更多设备操作",
+  "deviceSpaceConnectionSettings": "连接设置",
+  "deviceSpaceViewRequest": "查看申请",
+  "devicePickerNearby": "附近设备",
+  "devicePickerEmpty": "暂未发现附近设备",
+  "devicePickerHint": "请让两台设备连接同一网络，并在对方设备开启允许被搜索。",
+  "devicePickerManual": "通过地址连接",
+  "deviceSpaceMyRequests": "我发出的",
+  "deviceSpaceMyReviews": "待我审批",
+  "deviceSpaceNoRequests": "暂无申请"
 }

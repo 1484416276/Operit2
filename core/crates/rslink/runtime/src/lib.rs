@@ -538,17 +538,36 @@ where
     }
     let initial_value = first.value.clone();
     let initial = decoder(initial_value.clone())?;
-    let state_flow = operit_store::PreferencesDataStore::mutableStateFlow(initial);
-    let state_for_task = state_flow.clone();
+    let state_flow = operit_store::PreferencesDataStore::mutableStateFlow(initial).asStateFlow();
+    let cancellation = FlowCancellation::new();
+    let (cancel, mut cancelled) = oneshot::channel();
+    let cancel = StdMutex::new(Some(cancel));
+    let cancel_hook = cancellation.addCancelHook(move || {
+        if let Some(cancel) = cancel
+            .lock()
+            .expect("watch cancellation mutex poisoned")
+            .take()
+        {
+            let _ = cancel.send(());
+        }
+    });
+    let collect = state_flow.upstreamCollector(cancellation);
     let decoder_for_task = decoder.clone();
     defaultHostRuntimeTaskSchedulerHost()
         .scheduleHostRuntimeAsyncTask(
             "core-rslinkrs-state-flow",
             Box::new(move || {
                 Box::pin(async move {
+                    let _cancel_hook = cancel_hook;
                     let mut previous_value = Some(initial_value);
                     let mut event_count = 0_u64;
-                    while let Some(event) = stream.recv().await {
+                    loop {
+                        let event = tokio::select! {
+                            biased;
+                            _ = &mut cancelled => break,
+                            event = stream.recv() => event,
+                        };
+                        let Some(event) = event else { break; };
                         event_count += 1;
                         let completed = event.kind == CoreEventKind::Completed;
                         AppLogger::v_with_level(
@@ -584,13 +603,13 @@ where
                         previous_value = Some(value.clone());
                         let decoded = decoder_for_task(value)
                             .expect("Core watch value must decode into StateFlow item");
-                        state_for_task.set_value(decoded);
+                        if !collect(decoded) { break; }
                     }
                 })
             }),
         )
         .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-    Ok(state_flow.asStateFlow())
+    Ok(state_flow)
 }
 
 /// Registers routed sources from a typed watch value before exposing its wire event.
@@ -941,92 +960,98 @@ fn core_route_embedded_stream_source(
                 "core-rslinkrs-routed-embedded-stream",
                 Box::new(move || {
                     Box::pin(async move {
-                        let request_id = routed_open_request.requestId.clone();
-                        let target_route = routed_open_request.target.clone();
-                        let property_name = routed_open_request.propertyName.clone();
-                        let stream_id = core_stream_id_argument(&routed_open_request.args)
-                            .unwrap_or_else(|| "<missing>".to_string());
-                        AppLogger::i(
-                            "CoreRouteStream",
-                            &format!(
-                                "embedded.watch.start requestId={} streamId={} property={}",
-                                request_id.0, stream_id, property_name
-                            ),
-                        );
-                        match runtime.watch(routed_open_request).await {
-                            Ok(mut stream) => {
-                                let mut event_count = 0_u64;
+                        tokio::select! {
+                            biased;
+                            _ = sender.closed() => {},
+                            _ = async {
+                                let request_id = routed_open_request.requestId.clone();
+                                let target_route = routed_open_request.target.clone();
+                                let property_name = routed_open_request.propertyName.clone();
+                                let stream_id = core_stream_id_argument(&routed_open_request.args)
+                                    .unwrap_or_else(|| "<missing>".to_string());
                                 AppLogger::i(
                                     "CoreRouteStream",
                                     &format!(
-                                        "embedded.watch.opened requestId={} streamId={} property={}",
+                                        "embedded.watch.start requestId={} streamId={} property={}",
                                         request_id.0, stream_id, property_name
                                     ),
                                 );
-                                while let Some(event) = stream.recv().await {
-                                    event_count += 1;
-                                    if event_count == 1 {
+                                match runtime.watch(routed_open_request).await {
+                                    Ok(mut stream) => {
+                                        let mut event_count = 0_u64;
                                         AppLogger::i(
                                             "CoreRouteStream",
                                             &format!(
-                                                "embedded.watch.first_event requestId={} streamId={} kind={:?}",
-                                                request_id.0, stream_id, event.kind
+                                                "embedded.watch.opened requestId={} streamId={} property={}",
+                                                request_id.0, stream_id, property_name
                                             ),
                                         );
+                                        while let Some(event) = stream.recv().await {
+                                            event_count += 1;
+                                            if event_count == 1 {
+                                                AppLogger::i(
+                                                    "CoreRouteStream",
+                                                    &format!(
+                                                        "embedded.watch.first_event requestId={} streamId={} kind={:?}",
+                                                        request_id.0, stream_id, event.kind
+                                                    ),
+                                                );
+                                            }
+                                            let completed = event.kind == CoreEventKind::Completed;
+                                            AppLogger::v_with_level(
+                                                "CoreRouteStream",
+                                                &format!(
+                                                    "embedded.watch.event requestId={} streamId={} eventProperty={} kind={:?} value={} count={} summary={}",
+                                                    request_id.0,
+                                                    stream_id,
+                                                    event.propertyName,
+                                                    event.kind,
+                                                    core_value_shape(&event.value),
+                                                    event_count,
+                                                    core_value_trace_summary(&event.value)
+                                                ),
+                                                VERBOSE_LEVEL_6,
+                                            );
+                                            if sender.send(event).is_err() {
+                                                AppLogger::i(
+                                                    "CoreRouteStream",
+                                                    &format!(
+                                                        "embedded.watch.receiver_closed requestId={} streamId={}",
+                                                        request_id.0, stream_id
+                                                    ),
+                                                );
+                                                break;
+                                            }
+                                            if completed {
+                                                AppLogger::i(
+                                                    "CoreRouteStream",
+                                                    &format!(
+                                                        "embedded.watch.completed requestId={} streamId={} events={}",
+                                                        request_id.0, stream_id, event_count
+                                                    ),
+                                                );
+                                                break;
+                                            }
+                                        }
                                     }
-                                    let completed = event.kind == CoreEventKind::Completed;
-                                    AppLogger::v_with_level(
-                                        "CoreRouteStream",
-                                        &format!(
-                                            "embedded.watch.event requestId={} streamId={} eventProperty={} kind={:?} value={} count={} summary={}",
-                                            request_id.0,
-                                            stream_id,
-                                            event.propertyName,
-                                            event.kind,
-                                            core_value_shape(&event.value),
-                                            event_count,
-                                            core_value_trace_summary(&event.value)
-                                        ),
-                                        VERBOSE_LEVEL_6,
-                                    );
-                                    if sender.send(event).is_err() {
-                                        AppLogger::i(
+                                    Err(error) => {
+                                        operit_util::AppLogger::AppLogger::e(
                                             "CoreRouteStream",
                                             &format!(
-                                                "embedded.watch.receiver_closed requestId={} streamId={}",
-                                                request_id.0, stream_id
+                                                "embedded_stream_open_failed requestId={} streamId={} property={} code={} error={}",
+                                                request_id.0, stream_id, property_name, error.code, error
                                             ),
                                         );
-                                        break;
-                                    }
-                                    if completed {
-                                        AppLogger::i(
-                                            "CoreRouteStream",
-                                            &format!(
-                                                "embedded.watch.completed requestId={} streamId={} events={}",
-                                                request_id.0, stream_id, event_count
-                                            ),
-                                        );
-                                        break;
+                                        let _ = sender.send(CoreEvent {
+                                            requestId: Some(request_id),
+                                            target: target_route.clone(),
+                                            propertyName: property_name,
+                                            kind: CoreEventKind::Completed,
+                                            value: CoreValue::Null,
+                                        });
                                     }
                                 }
-                            }
-                            Err(error) => {
-                                operit_util::AppLogger::AppLogger::e(
-                                    "CoreRouteStream",
-                                    &format!(
-                                        "embedded_stream_open_failed requestId={} streamId={} property={} code={} error={}",
-                                        request_id.0, stream_id, property_name, error.code, error
-                                    ),
-                                );
-                                let _ = sender.send(CoreEvent {
-                                    requestId: Some(request_id),
-                                    target: target_route.clone(),
-                                    propertyName: property_name,
-                                    kind: CoreEventKind::Completed,
-                                    value: CoreValue::Null,
-                                });
-                            }
+                            } => {},
                         }
                     })
                 }),
@@ -1215,8 +1240,15 @@ pub fn forward_core_event_stream(
             task_name,
             Box::new(move || {
                 Box::pin(async move {
-                    while let Some(event) = stream.recv().await {
-                        let _ = sender.send(event);
+                    loop {
+                        let event = tokio::select! {
+                            biased;
+                            _ = sender.closed() => break,
+                            event = stream.recv() => event,
+                        };
+                        let Some(event) = event else { break; };
+                        let completed = event.kind == CoreEventKind::Completed;
+                        if sender.send(event).is_err() || completed { break; }
                     }
                 })
             }),
@@ -1235,17 +1267,21 @@ where
             "core-rslinkrs-string-events",
             Box::new(move || {
                 Box::pin(async move {
-                    stream
-                        .collect(&mut |value| {
-                            let _ = sender.send(CoreEvent {
-                                requestId: Some(request.requestId.clone()),
-                                target: request.target.clone(),
-                                propertyName: request.propertyName.clone(),
-                                kind: CoreEventKind::Changed,
-                                value: CoreValue::String(value),
-                            });
-                        })
-                        .await;
+                    let mut collector = |value| {
+                        let _ = sender.send(CoreEvent {
+                            requestId: Some(request.requestId.clone()),
+                            target: request.target.clone(),
+                            propertyName: request.propertyName.clone(),
+                            kind: CoreEventKind::Changed,
+                            value: CoreValue::String(value),
+                        });
+                    };
+                    // Cancels this collector, never the shared message producer.
+                    tokio::select! {
+                        biased;
+                        _ = sender.closed() => return,
+                        _ = stream.collect(&mut collector) => {},
+                    }
                     let _ = sender.send(CoreEvent {
                         requestId: Some(request.requestId),
                         target: request.target.clone(),
@@ -1317,6 +1353,7 @@ pub fn generated_proxy_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod stream_lifecycle;
 
     #[test]
     fn watch_sender_optimizes_without_request_capabilities() {
@@ -1328,7 +1365,7 @@ mod tests {
         let mut second = first.clone();
         second.insert("changed", "after".into());
         for value in [&first, &second] {
-            send_core_watch_value_with_attachments(&sender, &previous, &request_id, 1, "values", &adopter, value);
+            send_core_watch_value_with_attachments(&sender, &previous, &request_id, CORE_INTERNAL_TARGET.to_string(), "values", &adopter, value);
         }
         let snapshot = receiver.try_recv().unwrap();
         let delta = receiver.try_recv().unwrap();

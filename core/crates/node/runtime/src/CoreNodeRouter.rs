@@ -28,8 +28,6 @@ use crate::RuntimeRemoteLinkService::{RuntimeRemoteLinkService, NODE_SPACE_TARGE
 #[path = "peer/sync_dispatch.rs"]
 mod sync_dispatch;
 
-const ROUTED_BINDING_WATCH_RECHECK_DELAY_MS: u64 = 50;
-
 /// Reports both persisted ownership and the device currently selected by routing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingRouteStatus {
@@ -1616,6 +1614,24 @@ impl CoreNodeRouter {
                     _ = &mut cancelReceiver => {
                         break 'outer;
                     }
+                    // Persistent ownership/policy and authenticated peer changes
+                    // already publish notifications. Polling every 50 ms here
+                    // repeatedly scans topology/policy files even with no output.
+                    routeChange = routeChanges.recv() => {
+                        if routeChange.is_none() { break 'outer; }
+                        if !self.bindingStillCurrent(&bindingKey, &binding) {
+                            break;
+                        }
+                    }
+                    peerChange = peerChanges.recv() => {
+                        if matches!(peerChange, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                            break 'outer;
+                        }
+                        // Lagged notifications also require a fresh route check.
+                        if !self.bindingStillCurrent(&bindingKey, &binding) {
+                            break;
+                        }
+                    }
                     maybeEvent = stream.recv() => {
                         let Some(mut event) = maybeEvent else {
                             if !firstEventLogged {
@@ -1723,26 +1739,7 @@ impl CoreNodeRouter {
                             break 'outer;
                         }
                     }
-                    delayResult = defaultHostRuntimeTaskSchedulerHost()
-                        .waitForHostRuntimeDelay(ROUTED_BINDING_WATCH_RECHECK_DELAY_MS) => {
-                        let _ = delayResult;
-                        if !self.bindingStillCurrent(&bindingKey, &binding) {
-                            AppLogger::v_with_level(
-                                "CoreNodeRouteTrace",
-                                &format!(
-                                    "binding_flow_generation_changed requestId={} property={} key={} segment={} owner={} generation={}",
-                                    requestId,
-                                    propertyName,
-                                    bindingKey,
-                                    segmentCount,
-                                    binding.nodeId,
-                                    binding.generation
-                                ),
-                                VERBOSE_LEVEL_5,
-                            );
-                            break;
-                        }
-                    }
+
                 }
             }
             if self.bindingStillCurrent(&bindingKey, &binding)
@@ -3189,12 +3186,14 @@ mod tests {
     /// Stores one binding table entry for route integration tests.
     struct TestBindingRuntime {
         binding: StdMutex<CoreNodeBindingRecord>,
+        reads: std::sync::atomic::AtomicUsize,
     }
 
     impl TestBindingRuntime {
         /// Creates a binding runtime with one chat binding.
         fn new(key: &str, nodeId: String) -> Self {
             Self {
+                reads: std::sync::atomic::AtomicUsize::new(0),
                 binding: StdMutex::new(CoreNodeBindingRecord {
                     key: key.to_string(),
                     nodeId,
@@ -3220,6 +3219,7 @@ mod tests {
     impl CoreNodeBindingRuntime for TestBindingRuntime {
         /// Returns the single binding record owned by this test runtime.
         fn binding(&self, key: &str) -> Result<CoreNodeBindingRecord, CoreLinkError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
             let binding = self
                 .binding
                 .lock()
@@ -4501,6 +4501,49 @@ mod tests {
             .recv()
             .await
             .expect("Core event stream ended before the expected event")
+    }
+
+    /// Idle routed watches must not continually re-read bindings/topology from storage.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn binding_watch_is_idle_until_routing_evidence_changes() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let local = "idle-watch-client";
+        let remote = "idle-watch-owner";
+        let key = "idle-watch-chat";
+        let (router, _holder, binding) = testCoreNodeRouterInJoinedSpaceWithBindingRuntime(
+            local, remote, key, remote,
+            CoreSpace {
+                spaceId: "idle-watch-space".into(),
+                spaceName: "Idle watch".into(),
+                spaceRevision: 2,
+                members: vec![local.into(), remote.into()],
+            },
+        );
+        let source = TestSpaceEndpoint::new();
+        let peer = installTestPeer(&router, remote.into(), source).unwrap();
+        let request = CoreWatchRequest::new(
+            "idle-watch-request", CORE_INTERNAL_TARGET, "chatMessagesFlow",
+            CoreValue::Map(BTreeMap::from([("chatId".into(), CoreValue::String(key.into()))])),
+        );
+        let mut watch = router.watchBindingFlow(key.into(), request, local.into(), None).unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(5), watch.recv()).await.unwrap().unwrap();
+        assert_eq!(first.kind, CoreEventKind::Snapshot);
+        // Let queued setup notifications drain before measuring a silent window.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let reads = binding.reads.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(binding.reads.load(Ordering::SeqCst), reads,
+            "an unchanged routed watch must wait for events, not poll storage");
+
+        // A persistent mutation must still rebind an otherwise silent stream.
+        binding.setNodeId(local.into());
+        router.spaceStore.writeLocalDeviceProfile(local.into(), "test".into(), "test".into(), "1".into()).unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(5), watch.recv()).await.unwrap().unwrap();
+        assert_eq!(next.kind, CoreEventKind::Changed);
+        assert!(binding.reads.load(Ordering::SeqCst) > reads);
+        drop(watch);
+        peer.close();
     }
 
     /// Verifies an async annotation wrapper routes public Rust calls to the selected remote Core.

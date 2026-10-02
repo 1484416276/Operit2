@@ -312,6 +312,9 @@ class CharacterSettingsPanelState extends State<CharacterSettingsPanel> {
   }
 
   void _reload() {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _future = load();
     });

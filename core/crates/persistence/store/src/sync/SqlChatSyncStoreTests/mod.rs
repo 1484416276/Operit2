@@ -19,7 +19,7 @@ use rusqlite::types::Value as RusqliteValue;
 
 static HOSTS: OnceLock<()> = OnceLock::new();
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-static DATABASE_MUTEX: Mutex<()> = Mutex::new(());
+pub(crate) static DATABASE_MUTEX: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug)]
 struct TestRuntimeHost {
@@ -339,7 +339,8 @@ fn testPaths(name: &str) -> RuntimeStorePaths {
     RuntimeStorePaths::new(runtimeDir.clone(), runtimeDir.join(WORKSPACE_DIR_PATH))
 }
 
-fn openTestStore(name: &str) -> (RuntimeStorePaths, Arc<AppDatabase>, SqlChatSyncStore) {
+/// Opens an isolated database through the shared runtime host test fixture.
+pub(crate) fn openTestStore(name: &str) -> (RuntimeStorePaths, Arc<AppDatabase>, SqlChatSyncStore) {
     AppDatabase::closeDatabase();
     let paths = testPaths(name);
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();

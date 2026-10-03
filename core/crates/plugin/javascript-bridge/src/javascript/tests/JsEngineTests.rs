@@ -2264,6 +2264,47 @@ fn registration_mode_blocks_resource_and_wasm_calls() {
     );
 }
 
+/// Verifies module-level configuration access fails before registration can call the host.
+#[test]
+fn registration_mode_rejects_top_level_config_directory_access() {
+    ensure_test_runtime_root();
+    let engine = newTestToolPkgRegistrationEngine();
+    let script = r#"
+        const directory = ToolPkg.getConfigDir();
+        exports.registerToolPkg = function() { return true; };
+    "#;
+    let error = engine
+        .execute_toolpkg_main_registration_function(script, "registerToolPkg", &testParams())
+        .expect_err("registration must reject configuration access without a host callback");
+    assert!(error.message.find(
+        "ToolPkg.getConfigDir is unavailable during ToolPkg registration"
+    ).is_some(), "unexpected error: {}", error.message);
+}
+
+/// Verifies scoped configuration failures are thrown rather than returned as path text.
+#[test]
+fn scoped_config_directory_throws_host_failure() {
+    let mut state = newTestJsEngineState(None);
+    let script = r#"
+        exports.read_config = function() {
+            try {
+                NativeInterface.getScopedPluginConfigDir('missing', 'missing');
+                return 'unexpected success';
+            } catch (error) {
+                return error.message;
+            }
+        };
+    "#;
+    let output = state.execute_script_function_on_current_thread(
+        script, "read_config", &testParams(), &BTreeMap::new(), None, true, 60, None,
+    );
+    let output = expect_js_output(output, "scoped configuration failure");
+    assert_eq!(
+        serde_json::from_str::<String>(&output).expect("serialized error"),
+        "JavaScript execution host is unavailable"
+    );
+}
+
 /// Verifies call-scoped environment overrides are visible through `getEnv`.
 #[test]
 fn native_interface_reads_env_override_for_call() {

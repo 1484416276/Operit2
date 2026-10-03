@@ -451,8 +451,16 @@ pub fn buildRuntimeBootstrapScript() -> String {
             getPluginConfigDir: function(pluginId) {{
                 return __operitNativeGetPluginConfigDir(String(pluginId || ''));
             }},
+            // Decodes the host result and never exposes an error payload as a directory.
             getScopedPluginConfigDir: function(ownerId, pluginId) {{
-                return __operitNativeGetScopedPluginConfigDir(String(ownerId), String(pluginId));
+                var result = JSON.parse(__operitNativeGetScopedPluginConfigDir(String(ownerId), String(pluginId)));
+                if (result.success !== true) {{
+                    throw new Error(result.message);
+                }}
+                if (typeof result.path !== 'string' || !result.path.startsWith('/')) {{
+                    throw new Error('Plugin configuration directory must be an absolute VFS path');
+                }}
+                return result.path;
             }},
             isPackageImported: function(packageName) {{
                 return __operitNativeIsPackageImported(String(packageName || '')) === 'true';

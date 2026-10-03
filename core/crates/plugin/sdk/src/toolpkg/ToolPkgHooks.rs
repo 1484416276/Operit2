@@ -25,7 +25,7 @@ pub struct ToolPkgMessageProcessingHookRegistration {
 }
 
 /// Registration for one XML render plugin.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(non_snake_case)]
 pub struct ToolPkgXmlRenderHookRegistration {
     pub containerPackageName: String,

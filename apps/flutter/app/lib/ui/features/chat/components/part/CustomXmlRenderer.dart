@@ -222,17 +222,60 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
     ProxyCoreRuntimeBridge(),
   );
 
-  late Future<Object?> _renderFuture = _loadRender();
+  late Future<Object?> _renderFuture;
+  StreamSubscription<int>? _revisionSubscription;
+  int _subscriptionGeneration = 0;
+  int _renderGeneration = 0;
 
+  /// Loads the XML once and observes hooks even when none currently handle this tag.
+  @override
+  void initState() {
+    super.initState();
+    _renderFuture = _loadRender();
+    _subscribeToRegistry();
+  }
+
+  /// Follows the current runtime and reloads changed XML inputs without replacing its host.
   @override
   void didUpdateWidget(covariant _ToolPkgXmlRenderBridge oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.chatCore != widget.chatCore) {
+      _subscribeToRegistry();
+      _renderGeneration++;
+    }
     if (oldWidget.tagName != widget.tagName ||
         oldWidget.xmlContent != widget.xmlContent ||
         oldWidget.chatCore != widget.chatCore ||
         oldWidget.chatId != widget.chatId) {
       _renderFuture = _loadRender();
     }
+  }
+
+  /// Invalidates cached XML output only after the runtime publishes committed hooks.
+  void _subscribeToRegistry() {
+    final generation = ++_subscriptionGeneration;
+    unawaited(_revisionSubscription?.cancel());
+    _revisionSubscription = (widget.chatCore ?? _clients.chatRuntimeHolderMain)
+        .xmlRenderRegistryRevisionFlow()
+        .distinct()
+        .listen((revision) {
+          if (!mounted || generation != _subscriptionGeneration) {
+            return;
+          }
+          setState(() {
+            // A registry change invalidates DSL hosts as well as previously unhandled XML.
+            _renderGeneration++;
+            _renderFuture = _loadRender();
+          });
+        });
+  }
+
+  /// Releases the revision watch when the message XML node leaves the widget tree.
+  @override
+  void dispose() {
+    _subscriptionGeneration++;
+    unawaited(_revisionSubscription?.cancel());
+    super.dispose();
   }
 
   /// Requests ToolPkg XML render output from the active Core runtime.
@@ -248,6 +291,7 @@ class _ToolPkgXmlRenderBridgeState extends State<_ToolPkgXmlRenderBridge> {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Object?>(
+      key: ValueKey(_renderGeneration),
       future: _renderFuture,
       builder: (context, snapshot) {
         // A new XML chunk must not unmount the resolved DSL host while its

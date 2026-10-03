@@ -1433,4 +1433,4 @@ fn currentTimeMillis() -> Result<i64, SqlChatSyncStoreError> {
 
 #[cfg(test)]
 #[path = "SqlChatSyncStoreTests/mod.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -3770,7 +3770,8 @@ export namespace ToolPkg {
      */
     readResourceFromPackage(packageNameOrSubpackageId: string, key: string, outputFileName?: string, internal?: boolean): Promise<string>;
     /**
-     * Returns the configuration directory for the selected plugin.
+     * Returns the selected plugin configuration directory during runtime execution.
+     * Throws during registration or when the package has no installed scope owner.
      */
     getConfigDir(pluginId?: string): string;
   }

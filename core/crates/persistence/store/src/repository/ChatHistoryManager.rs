@@ -17,6 +17,8 @@ use crate::dao::MessageVariantDao::MessageVariantDao;
 use crate::db::AppDatabase::{AppDatabase, AppDatabaseError};
 use crate::repository::WorkspacePreferenceStore::WorkspacePreferenceStore;
 use crate::sync::SqlChatSyncStore::{SqlChatSyncStore, SqlChatSyncStoreError};
+use crate::sqliteParams;
+use crate::SqliteStore::SqliteStore;
 use operit_model::CharacterCardChatStats::CharacterCardChatStats;
 use operit_model::CharacterGroupChatStats::CharacterGroupChatStats;
 use operit_model::ChatEntity::ChatEntity;
@@ -90,6 +92,115 @@ pub enum ChatHistoryManagerError {
 
 /// Result alias used by chat history repository operations.
 pub type ChatHistoryManagerResult<T> = Result<T, ChatHistoryManagerError>;
+
+/// Deletes a revision atomically using the Kotlin promotion and adjacent-selection rules.
+fn deleteMessageVariantRevision(
+    store: &SqliteStore,
+    baseMessage: &MessageEntity,
+    variants: &[MessageVariantEntity],
+    variantIndex: i32,
+) -> ChatHistoryManagerResult<()> {
+    if baseMessage.sender != "ai" {
+        return Err(ChatHistoryManagerError::IllegalArgument(
+            "Only AI messages can delete variants".to_string(),
+        ));
+    }
+    let firstVariant = variants.first().ok_or_else(|| {
+        ChatHistoryManagerError::IllegalState(format!(
+            "Message {} has no deletable variants",
+            baseMessage.timestamp
+        ))
+    })?;
+    let targetVariant = if variantIndex == 0 {
+        firstVariant
+    } else {
+        variants
+            .iter()
+            .find(|variant| variant.variantIndex == variantIndex)
+            .ok_or_else(|| {
+                ChatHistoryManagerError::IllegalArgument(format!(
+                    "Variant {variantIndex} does not exist for message {}",
+                    baseMessage.timestamp
+                ))
+            })?
+    };
+    let selectedVariantIndex = if variantIndex == 0 {
+        0
+    } else if variants
+        .iter()
+        .any(|variant| variant.variantIndex > targetVariant.variantIndex)
+    {
+        targetVariant.variantIndex
+    } else {
+        (targetVariant.variantIndex - 1).max(0)
+    };
+    let chatId = &baseMessage.chatId;
+    let messageTimestamp = baseMessage.timestamp;
+    store.transaction(|transaction| {
+        if variantIndex == 0 {
+            let promotedMessage = targetVariant.applyTo(
+                baseMessage.toChatMessage(Vec::new()),
+                Vec::new(),
+                variants.len() as i32,
+            );
+            transaction.execute(
+                r#"
+                UPDATE messages
+                SET roleName = ?3, provider = ?4, modelName = ?5,
+                    inputTokens = ?6, outputTokens = ?7, cachedInputTokens = ?8,
+                    sentAt = ?9, outputDurationMs = ?10, waitDurationMs = ?11,
+                    completedAt = ?12
+                WHERE chatId = ?1 AND timestamp = ?2
+                "#,
+                sqliteParams![
+                    chatId, messageTimestamp, promotedMessage.roleName,
+                    promotedMessage.provider, promotedMessage.modelName,
+                    promotedMessage.inputTokens, promotedMessage.outputTokens,
+                    promotedMessage.cachedInputTokens, promotedMessage.sentAt,
+                    promotedMessage.outputDurationMs, promotedMessage.waitDurationMs,
+                    promotedMessage.completedAt,
+                ],
+            )?;
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = 0",
+                sqliteParams![chatId, messageTimestamp],
+            )?;
+            transaction.execute(
+                "UPDATE message_parts SET variantIndex = 0 WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, targetVariant.variantIndex],
+            )?;
+        } else {
+            transaction.execute(
+                "DELETE FROM message_parts WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, targetVariant.variantIndex],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM message_variants WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+            sqliteParams![chatId, messageTimestamp, targetVariant.variantIndex],
+        )?;
+        // Move revisions in ascending order so each unique destination has been vacated.
+        for variant in variants
+            .iter()
+            .filter(|variant| variant.variantIndex > targetVariant.variantIndex)
+        {
+            transaction.execute(
+                "UPDATE message_variants SET variantIndex = ?4 WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, variant.variantIndex, variant.variantIndex - 1],
+            )?;
+            transaction.execute(
+                "UPDATE message_parts SET variantIndex = ?4 WHERE chatId = ?1 AND messageTimestamp = ?2 AND variantIndex = ?3",
+                sqliteParams![chatId, messageTimestamp, variant.variantIndex, variant.variantIndex - 1],
+            )?;
+        }
+        transaction.execute(
+            "UPDATE messages SET selectedVariantIndex = ?3 WHERE chatId = ?1 AND timestamp = ?2",
+            sqliteParams![chatId, messageTimestamp, selectedVariantIndex],
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
 
 /// Repository for chats, messages, variants, branches, and sync recording.
 #[derive(Clone)]
@@ -996,24 +1107,10 @@ impl ChatHistoryManager {
                     "Message {messageTimestamp} does not exist in chat {chatId}"
                 ))
             })?;
-        if baseMessage.sender != "ai" {
-            return Err(ChatHistoryManagerError::IllegalArgument(
-                "Only AI messages can have variants".to_string(),
-            ));
-        }
-        if variantIndex == 0 {
-            return Err(ChatHistoryManagerError::IllegalArgument(
-                "Cannot delete base variant with deleteMessageVariant".to_string(),
-            ));
-        }
-        self.messageVariantDao
-            .deleteVariant(&chatId, messageTimestamp, variantIndex)?;
-        self.messagePartDao
-            .deletePartsForMessage(&chatId, messageTimestamp, variantIndex)?;
-        if baseMessage.selectedVariantIndex == variantIndex {
-            self.messageDao
-                .updateSelectedVariantIndex(&chatId, messageTimestamp, 0)?;
-        }
+        let variants = self
+            .messageVariantDao
+            .getVariantsForMessage(&chatId, messageTimestamp)?;
+        deleteMessageVariantRevision(self.database.store(), &baseMessage, &variants, variantIndex)?;
         self.touchChatMetadata(&chatId)?;
         self.recordMessageSnapshot(&chatId, messageTimestamp)?;
         Ok(())
@@ -2270,3 +2367,7 @@ fn attachWorkspaceNames(
         })
         .collect())
 }
+
+#[cfg(test)]
+#[path = "ChatHistoryManagerTests.rs"]
+mod tests;

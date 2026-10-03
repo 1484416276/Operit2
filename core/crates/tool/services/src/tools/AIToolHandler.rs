@@ -1363,13 +1363,9 @@ impl JsExecutionHost for AIToolHandler {
 
     /// Resolves the executing package owner while keeping arbitrary configuration aliases supported.
     fn scoped_plugin_config_dir(&self, owner_id: &str, plugin_id: &str) -> Result<String, String> {
-        let manager = self.getOrCreatePackageManager();
-        let manager = manager.lock().map_err(|e| e.to_string())?;
-        let owner = match manager.resolveToolPkgSubpackageRuntimeInternal(owner_id) {
-            Some(child) => child.containerPackageName,
-            None => manager.normalizePackageName(owner_id),
-        };
+        // Host callbacks must not acquire the package manager lock held by script callers.
         let store = operit_store::ExtensionStore::ExtensionStore::default();
+        let owner = store.packageOwner(owner_id)?.id;
         let root = store.configPath(&owner)?;
         let path = if plugin_id == owner {
             root

@@ -6,13 +6,52 @@ use operit_plugin_sdk::toolpkg::ToolPkgHooks::{
     decodeToolPkgHookResult, ToolPkgXmlRenderHookRegistration,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime;
+use operit_store::PreferencesDataStore::{MutableStateFlow, StateFlow};
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use serde_json::Value;
 
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 
-static XML_RENDER_HOOKS: OnceLock<Mutex<Vec<ToolPkgXmlRenderHookRegistration>>> = OnceLock::new();
+static XML_RENDER_REGISTRY: OnceLock<XmlRenderHookRegistry> = OnceLock::new();
 static XML_RENDER_RUNTIME: OnceLock<ToolPkgBridgeRuntime> = OnceLock::new();
+
+/// Owns the committed XML hooks and publishes invalidations after their replacement.
+struct XmlRenderHookRegistry {
+    hooks: Mutex<Vec<ToolPkgXmlRenderHookRegistration>>,
+    revision: MutableStateFlow<i64>,
+}
+
+impl XmlRenderHookRegistry {
+    /// Creates an empty registry with an observable initial revision.
+    fn new() -> Self {
+        Self {
+            hooks: Mutex::new(Vec::new()),
+            revision: MutableStateFlow::new(0),
+        }
+    }
+
+    /// Commits changed hooks before notifying observers, without holding the hook lock.
+    fn replace(&self, hooks: Vec<ToolPkgXmlRenderHookRegistration>) {
+        {
+            let mut current = self
+                .hooks
+                .lock()
+                .expect("toolpkg xml render hook mutex poisoned");
+            if *current == hooks {
+                return;
+            }
+            *current = hooks;
+        }
+        // Existing XML nodes must retry even when their message text did not change.
+        self.revision.update(|revision| *revision += 1);
+    }
+}
+
+/// Returns the process registry shared by rendering requests and revision observers.
+#[allow(non_snake_case)]
+fn xmlRenderRegistry() -> &'static XmlRenderHookRegistry {
+    XML_RENDER_REGISTRY.get_or_init(XmlRenderHookRegistry::new)
+}
 
 pub struct ToolPkgXmlRenderBridge;
 
@@ -50,10 +89,13 @@ impl ToolPkgXmlRenderBridge {
                 .then(left.containerPackageName.cmp(&right.containerPackageName))
                 .then(left.pluginId.cmp(&right.pluginId))
         });
-        *XML_RENDER_HOOKS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .expect("toolpkg xml render hook mutex poisoned") = hooks;
+        xmlRenderRegistry().replace(hooks);
+    }
+
+    /// Observes XML hook replacements after the new registrations are available for rendering.
+    #[allow(non_snake_case)]
+    pub fn revisionFlow() -> StateFlow<i64> {
+        xmlRenderRegistry().revision.asStateFlow()
     }
 
     /// Renders one XML block through registered ToolPkg hooks.
@@ -82,8 +124,8 @@ fn renderXml(
     if normalizedTag.is_empty() {
         return Value::Null;
     }
-    let hooks = XML_RENDER_HOOKS
-        .get_or_init(|| Mutex::new(Vec::new()))
+    let hooks = xmlRenderRegistry()
+        .hooks
         .lock()
         .expect("toolpkg xml render hook mutex poisoned")
         .clone()
@@ -200,5 +242,64 @@ fn parseXmlRenderResult(decoded: Option<Value>, containerPackageName: &str) -> O
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Creates one XML hook with stable registration identity.
+    fn hook() -> ToolPkgXmlRenderHookRegistration {
+        ToolPkgXmlRenderHookRegistration {
+            containerPackageName: "test.package".to_string(),
+            pluginId: "test.xml".to_string(),
+            tag: "plan".to_string(),
+            functionName: "renderPlan".to_string(),
+            functionSource: None,
+        }
+    }
+
+    /// Invalidates XML output for additions, changed declarations, and removals only.
+    #[test]
+    fn revisions_track_changed_hooks_without_redundant_notifications() {
+        let registry = XmlRenderHookRegistry::new();
+        registry.replace(Vec::new());
+        assert_eq!(registry.revision.value(), 0);
+        let initial = hook();
+        registry.replace(vec![initial.clone()]);
+        assert_eq!(registry.revision.value(), 1);
+        registry.replace(vec![initial.clone()]);
+        assert_eq!(registry.revision.value(), 1);
+        let mut changed = initial;
+        changed.functionSource = Some("function() { return 'updated'; }".to_string());
+        registry.replace(vec![changed]);
+        assert_eq!(registry.revision.value(), 2);
+        registry.replace(Vec::new());
+        assert_eq!(registry.revision.value(), 3);
+    }
+
+    /// Allows observers to read committed hooks without reentering the replacement lock.
+    #[test]
+    fn observers_see_committed_hooks_after_lock_release() {
+        let registry = Arc::new(XmlRenderHookRegistry::new());
+        let notifications = Arc::new(Mutex::new(Vec::new()));
+        let observedRegistry = registry.clone();
+        let observedNotifications = notifications.clone();
+        let subscription = registry.revision.subscribe(move |revision| {
+            let hooks = observedRegistry
+                .hooks
+                .try_lock()
+                .expect("revision must be published after releasing the hook lock");
+            observedNotifications
+                .lock()
+                .unwrap()
+                .push((revision, hooks.len()));
+        });
+        registry.replace(vec![hook()]);
+        registry.replace(Vec::new());
+        assert_eq!(*notifications.lock().unwrap(), vec![(0, 0), (1, 1), (2, 0)]);
+        registry.revision.unsubscribe(subscription);
     }
 }

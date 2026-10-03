@@ -842,6 +842,12 @@ impl ChatServiceCore {
         MarkdownRenderEventStream::fromContent(content)
     }
 
+    /// Observes committed XML render hook changes so existing message nodes can re-render.
+    #[allow(non_snake_case)]
+    pub fn xmlRenderRegistryRevisionFlow(&self) -> StateFlow<i64> {
+        ToolPkgXmlRenderBridge::revisionFlow()
+    }
+
     /// Renders one XML block through registered ToolPkg XML render hooks.
     #[allow(non_snake_case)]
     pub fn renderToolPkgXml(

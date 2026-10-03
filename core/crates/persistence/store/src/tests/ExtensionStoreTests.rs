@@ -557,3 +557,48 @@ fn package_config_changes_do_not_republish_archive_or_installation_record() {
         b"archive bytes"
     );
 }
+
+/// Registers one package fixture with explicit container membership.
+fn register_package_owner(store: &ExtensionStore, id: &str, members: &[&str]) {
+    store.registerDevice("package", id, &format!("{id}.toolpkg"), json!({
+        "members": members, "enabledNames": [], "disabledNames": [],
+        "subpackageStates": {}, "order": 0, "builtin": false,
+        "installationId": "00000000000000000000000000000000"
+    })).unwrap();
+}
+
+/// Resolves ownership directly from persisted records without a runtime package manager.
+#[test]
+fn package_owner_resolves_container_and_subpackage() {
+    let store = ExtensionStore::new(host());
+    register_package_owner(&store, "demo", &["demo", "demo.tools"]);
+    assert_eq!(store.packageOwner("demo").unwrap().id, "demo");
+    assert_eq!(store.packageOwner(" demo.tools ").unwrap().id, "demo");
+    assert_eq!(store.packageOwner("missing").unwrap_err(),
+        "Extension is not registered: package:missing");
+}
+
+/// Rejects ambiguous membership instead of selecting an arbitrary container.
+#[test]
+fn package_owner_rejects_conflicting_membership() {
+    let store = ExtensionStore::new(host());
+    register_package_owner(&store, "first", &["first", "shared"]);
+    register_package_owner(&store, "second", &["second", "shared"]);
+    assert_eq!(store.packageOwner("shared").unwrap_err(),
+        "Extension ownership conflict: package:shared");
+    register_package_owner(&store, "shared", &["shared"]);
+    assert_eq!(store.packageOwner("shared").unwrap_err(),
+        "Extension ownership conflict: package:shared");
+}
+
+/// Reads the committed scope after an installation moves without retaining runtime state.
+#[test]
+fn package_owner_tracks_scope_moves() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    storage.writeBytes("runtime/extensions/device/packages/demo.toolpkg", b"archive").unwrap();
+    register_package_owner(&store, "demo", &["demo", "demo.tools"]);
+    assert_eq!(store.packageOwner("demo.tools").unwrap().scope, "device");
+    store.moveScope("package", "demo", "space").unwrap();
+    assert_eq!(store.packageOwner("demo.tools").unwrap().scope, "space");
+}

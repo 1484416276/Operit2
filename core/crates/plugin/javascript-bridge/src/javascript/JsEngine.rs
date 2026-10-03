@@ -2979,7 +2979,7 @@ fn nativeSetEnvsStrings(valuesJson: String) -> String {
 fn nativeGetScopedPluginConfigDirString(ownerId: String, pluginId: String) -> String {
     match currentExecutionHost().and_then(|host| host.scoped_plugin_config_dir(&ownerId, &pluginId))
     {
-        Ok(path) => path,
+        Ok(path) => serde_json::json!({"success": true, "path": path}).to_string(),
         Err(error) => buildJsExecutionErrorPayload(&error),
     }
 }

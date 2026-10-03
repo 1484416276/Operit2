@@ -1,12 +1,11 @@
-const DUMP_DIR = `${ToolPkg.getConfigDir()}/dumps/`;
-
-function ensureDumpDir() {
-  try {
-    Tools.Files.mkdir(DUMP_DIR, true);
-  } catch (_error) {
-  }
+/** Resolves and creates the dump directory only while a runtime hook is executing. */
+async function ensureDumpDir(): Promise<string> {
+  const directory = `${ToolPkg.getConfigDir()}/dumps/`;
+  await Tools.Files.mkdir(directory, true);
+  return directory;
 }
 
+/** Formats one prompt snapshot for the debug dump file. */
 function buildDump(tag: string, input: ToolPkg.PromptHistoryHookEvent | ToolPkg.PromptFinalizeHookEvent) {
   const payload = input.eventPayload || {};
   const stage = String(payload.stage || input.eventName || "unknown");
@@ -69,10 +68,12 @@ function buildDump(tag: string, input: ToolPkg.PromptHistoryHookEvent | ToolPkg.
   return lines.join("\n");
 }
 
+/** Creates a filename-safe timestamp for one dump. */
 function buildTimestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
+/** Declares hooks without reading configuration or mutating the filesystem. */
 export function registerToolPkg() {
   ToolPkg.registerPromptHistoryHook({
     id: "debug_dump_history",
@@ -82,39 +83,32 @@ export function registerToolPkg() {
     id: "debug_dump_finalize",
     function: onPromptFinalize,
   });
-  ensureDumpDir();
   return true;
 }
 
-export function onPromptHistory(input: ToolPkg.PromptHistoryHookEvent) {
+/** Writes the prepared history after the runtime configuration becomes available. */
+export async function onPromptHistory(input: ToolPkg.PromptHistoryHookEvent) {
   const stage = String(input.eventPayload?.stage || input.eventName || "");
   if (stage !== "after_prepare_history") {
     return null;
   }
 
-  try {
-    const text = buildDump("HISTORY (after B pack processing)", input);
-    const path = `${DUMP_DIR}history_${buildTimestamp()}.txt`;
-    Tools.Files.write(path, text);
-    console.log(`[msg_dump] history saved to ${path}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`[msg_dump] history write error: ${message}`);
-  }
+  const text = buildDump("HISTORY (after B pack processing)", input);
+  const directory = await ensureDumpDir();
+  const path = `${directory}history_${buildTimestamp()}.txt`;
+  await Tools.Files.write(path, text);
+  console.log(`[msg_dump] history saved to ${path}`);
 
   return null;
 }
 
-export function onPromptFinalize(input: ToolPkg.PromptFinalizeHookEvent) {
-  try {
-    const text = buildDump("FINALIZE (final to model)", input);
-    const path = `${DUMP_DIR}finalize_${buildTimestamp()}.txt`;
-    Tools.Files.write(path, text);
-    console.log(`[msg_dump] finalize saved to ${path}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`[msg_dump] finalize write error: ${message}`);
-  }
+/** Writes the final model prompt and awaits filesystem completion. */
+export async function onPromptFinalize(input: ToolPkg.PromptFinalizeHookEvent) {
+  const text = buildDump("FINALIZE (final to model)", input);
+  const directory = await ensureDumpDir();
+  const path = `${directory}finalize_${buildTimestamp()}.txt`;
+  await Tools.Files.write(path, text);
+  console.log(`[msg_dump] finalize saved to ${path}`);
 
   return null;
 }

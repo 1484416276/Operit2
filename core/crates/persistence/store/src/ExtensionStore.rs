@@ -272,6 +272,23 @@ impl ExtensionStore {
         Ok(records)
     }
 
+    /// Resolves a package or subpackage owner from persisted membership without runtime locks.
+    pub fn packageOwner(&self, packageName: &str) -> Result<ExtensionRecord, String> {
+        let name = packageName.trim();
+        let mut owner = None;
+        for record in self.records("package")? {
+            let members: Vec<String> = serde_json::from_value(record.settings["members"].clone())
+                .map_err(|error| format!("Invalid package members: {error}"))?;
+            if record.id == name || members.iter().any(|member| member == name) {
+                if owner.is_some() {
+                    return Err(format!("Extension ownership conflict: package:{name}"));
+                }
+                owner = Some(record);
+            }
+        }
+        owner.ok_or_else(|| format!("Extension is not registered: package:{name}"))
+    }
+
     /// Reads an exact identity and rejects multiple installed owners rather than overriding either.
     pub fn record(&self, kind: &str, id: &str) -> Result<ExtensionRecord, String> {
         let mut records = self

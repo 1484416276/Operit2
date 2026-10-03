@@ -120,11 +120,18 @@ fn chat_flow_trace_summary(messages: &[ChatMessage]) -> String {
     )
 }
 
-/// Preserves live stream projections while applying a persistence snapshot.
-fn preserveLiveMessageStreams(previous: &[ChatMessage], loaded: &mut [ChatMessage]) {
+/// Preserves unaffected live stream projections while applying a persistence snapshot.
+fn preserveLiveMessageStreams(
+    previous: &[ChatMessage],
+    loaded: &mut [ChatMessage],
+    invalidatedMessageTimestamp: Option<i64>,
+) {
     let liveMessages = previous
         .iter()
-        .filter(|message| message.contentStream.is_some())
+        .filter(|message| {
+            message.contentStream.is_some()
+                && Some(message.timestamp) != invalidatedMessageTimestamp
+        })
         .map(|message| (message.timestamp, message))
         .collect::<HashMap<_, _>>();
     for message in loaded {
@@ -841,7 +848,7 @@ impl ChatHistoryDelegate {
         let currentSummary = chat_flow_trace_summary(&previousMessages);
         let mut messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
-        preserveLiveMessageStreams(&previousMessages, &mut messages);
+        preserveLiveMessageStreams(&previousMessages, &mut messages, None);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -873,6 +880,15 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Reloads the current indexed display window for the supplied chat id.
     pub fn reloadCurrentChatDisplayHistory(&mut self, chatId: String) -> Vec<ChatMessage> {
+        self.reloadCurrentChatDisplayHistoryWithInvalidatedRevision(chatId, None)
+    }
+
+    /// Reloads persisted revisions without retaining a mutated message's obsolete stream projection.
+    fn reloadCurrentChatDisplayHistoryWithInvalidatedRevision(
+        &mut self,
+        chatId: String,
+        invalidatedMessageTimestamp: Option<i64>,
+    ) -> Vec<ChatMessage> {
         let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
             .unwrap_or_default();
@@ -886,7 +902,7 @@ impl ChatHistoryDelegate {
             self.displayWindowQueryLimit(),
             displayEndTimestamp,
         );
-        preserveLiveMessageStreams(&previousMessages, &mut messages);
+        preserveLiveMessageStreams(&previousMessages, &mut messages, invalidatedMessageTimestamp);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -1082,7 +1098,7 @@ impl ChatHistoryDelegate {
         let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
             .unwrap_or_default();
-        preserveLiveMessageStreams(&previousMessages, &mut revealedMessages);
+        preserveLiveMessageStreams(&previousMessages, &mut revealedMessages, None);
         let hasOlder = self
             .chatHistoryManager
             .hasMessagesBefore(chatId.clone(), startTimestamp)
@@ -1261,7 +1277,7 @@ impl ChatHistoryDelegate {
         let currentSummary = chat_flow_trace_summary(&previousMessages);
         let mut messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
-        preserveLiveMessageStreams(&previousMessages, &mut messages);
+        preserveLiveMessageStreams(&previousMessages, &mut messages, None);
         let loadedSummary = chat_flow_trace_summary(&messages);
         let hasOlder = messages
             .first()
@@ -1323,7 +1339,7 @@ impl ChatHistoryDelegate {
         let messages =
             self.collectNewestDisplayPages(chatId.clone(), self.displayWindowQueryLimit(), None);
         let mut messages = messages;
-        preserveLiveMessageStreams(&previousMessages, &mut messages);
+        preserveLiveMessageStreams(&previousMessages, &mut messages, None);
         let loadedSummary = chat_flow_trace_summary(&messages);
         AppLogger::trace(
             "ChatFlowTrace",
@@ -2004,7 +2020,7 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Deletes one alternate message variant by timestamp and variant index.
+    /// Deletes one message revision and reloads its persisted display, matching Kotlin.
     pub fn deleteMessageVariant(&mut self, timestamp: i64, variantIndex: i32) {
         let Some(chatId) = self.currentChatIdFlow.value() else {
             return;
@@ -2012,12 +2028,7 @@ impl ChatHistoryDelegate {
         self.chatHistoryManager
             .deleteMessageVariant(chatId.clone(), timestamp, variantIndex)
             .expect("ChatHistoryManager.deleteMessageVariant must remove the requested variant");
-        self.updateOpenedChatMessage(&chatId, timestamp, |message| {
-            message.variantCount = (message.variantCount - 1).max(1);
-            if message.selectedVariantIndex == variantIndex {
-                message.selectedVariantIndex = 0;
-            }
-        });
+        self.reloadCurrentChatDisplayHistoryWithInvalidatedRevision(chatId, Some(timestamp));
     }
 
     #[allow(non_snake_case)]
@@ -2964,10 +2975,59 @@ mod tests {
             String::new(),
         )];
 
-        preserveLiveMessageStreams(&[previous.clone()], std::slice::from_mut(&mut loaded));
+        preserveLiveMessageStreams(
+            &[previous.clone()],
+            std::slice::from_mut(&mut loaded),
+            None,
+        );
 
         assert_eq!(loaded.contentStream, previous.contentStream);
         assert_eq!(loaded.parts, previous.parts);
+    }
+
+    /// Keeps the reloaded survivor's parts even when its index matches the deleted live revision.
+    #[test]
+    fn revision_deletion_does_not_preserve_obsolete_live_parts() {
+        let source = Arc::new(CoreStreamSource::new(|_request| {
+            let (_sender, receiver) = CoreEventStream::channel();
+            Ok(receiver)
+        }));
+        let mut deleted = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            "deleted live revision".to_string(),
+            123,
+        );
+        deleted.selectedVariantIndex = 1;
+        deleted.contentStream = Some(CoreStream::<MarkdownStreamEvent>::fromSourceWithId(
+            "deleted-stream".to_string(),
+            source.clone(),
+        ));
+        let mut other = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            "unrelated live output".to_string(),
+            456,
+        );
+        other.contentStream = Some(CoreStream::<MarkdownStreamEvent>::fromSourceWithId(
+            "other-stream".to_string(),
+            source,
+        ));
+        let mut survivor = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(),
+            "surviving revision".to_string(),
+            123,
+        );
+        survivor.selectedVariantIndex = 1;
+        let mut loaded = vec![
+            survivor.clone(),
+            ChatMessage::new_with_markdown_timestamp("ai".to_string(), String::new(), 456),
+        ];
+
+        preserveLiveMessageStreams(&[deleted, other.clone()], &mut loaded, Some(123));
+
+        assert_eq!(loaded[0].parts, survivor.parts);
+        assert!(loaded[0].contentStream.is_none());
+        assert_eq!(loaded[1].parts, other.parts);
+        assert_eq!(loaded[1].contentStream, other.contentStream);
     }
 
     /// Builds a chat-history row for binding comparisons in unit tests.

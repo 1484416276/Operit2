@@ -90,14 +90,21 @@ impl StandardFileSystemTools {
     #[allow(non_snake_case)]
     fn synchronizeMappedChanges<T>(&self, paths: &[&str], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         let mut storagePaths = Vec::new();
+        let mut workspaceChanged = false;
         for path in paths {
             let canonical = PathMapper::canonicalizeVfsPath(path)?;
+            workspaceChanged |= PathMapper::relativePath("/app/workspaces", &canonical)?.is_some();
             if let Some(relative) = PathMapper::relativePath("/app/data", &canonical)? {
                 storagePaths.push(format!("runtime/{relative}"));
             }
         }
-        RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
-            .trackChanges(&storagePaths, change)
+        let tracked = || RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+            .trackChanges(&storagePaths, change);
+        if workspaceChanged {
+            operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
+                self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH,
+            ).track(tracked)
+        } else { tracked() }
     }
 
     /// Writes text and publishes changed Space files, including appended bytes.
@@ -1315,7 +1322,7 @@ impl StandardFileSystemTools {
                     message.to_string(),
                 )];
             }
-            return vec![match vfs.writeFile(&path, &newContent, false) {
+            return vec![match self.writeMappedText(&vfs, &path, &newContent, false) {
                 Ok(()) => {
                     let diffContent = self.runtimeSupport.generateUnifiedDiff("", &newContent);
                     let details = format!("Successfully created new file: {path}");
@@ -1416,7 +1423,7 @@ impl StandardFileSystemTools {
                 aiInstructions,
             )];
         }
-        vec![match vfs.writeFile(&path, &mergedContent, false) {
+        vec![match self.writeMappedText(&vfs, &path, &mergedContent, false) {
             Ok(()) => {
                 let details = format!("Successfully applied AI code to file: {path}");
                 let diffContent = self

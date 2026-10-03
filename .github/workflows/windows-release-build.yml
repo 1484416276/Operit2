@@ -72,7 +72,7 @@ jobs:
 
       - name: Check build environment
         shell: pwsh
-        run: python tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
+        run: python tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
       - name: Build and package Windows app
         if: inputs.products != 'cli'

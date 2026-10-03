@@ -4134,11 +4134,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.';
 
   @override
-  String get settingsPeerBindAddress => 'Listen address';
+  String get settingsPeerBindAddress => 'Listen IP address';
 
   @override
   String get settingsPeerBindAddressHelp =>
-      'Example: 0.0.0.0:37195 for LAN access';
+      'Example: 0.0.0.0 for LAN access; IPv6 addresses are also supported.';
+
+  @override
+  String get settingsPeerBindPort => 'Listen port';
+
+  @override
+  String get settingsPeerBindPortHelp =>
+      'The port used by fixed listener mode.';
+
+  @override
+  String get settingsPeerBindPortAutomaticHelp =>
+      'Automatic mode selects a free port starting from this value.';
 
   @override
   String get settingsPeerDiscoveryNeedsTransport =>
@@ -4149,7 +4160,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'TCP cannot currently share a listen port with HTTP/WebSocket. Select TCP or HTTP/WebSocket.';
 
   @override
-  String get settingsPeerAddressRequired => 'Enter a listen address.';
+  String get settingsPeerAddressRequired => 'Enter a listen IP address.';
+
+  @override
+  String get settingsPeerPortRequired => 'Enter a port from 1 to 65535.';
 
   @override
   String get settingsPeerApplied => 'Listener settings applied.';

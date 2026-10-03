@@ -82,7 +82,7 @@ jobs:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu
 
       - name: Check build environment
-        run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
+        run: python3 tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
 
       - name: Build and package Linux app
         if: inputs.products != 'cli'

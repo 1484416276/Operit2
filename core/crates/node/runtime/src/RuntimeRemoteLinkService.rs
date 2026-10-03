@@ -20,6 +20,7 @@ use crate::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
     GeneratedRouteLifecycle,
     NodeServices::NodeServices,
+    PeerSync::PeerSyncMethod,
     SpacePersistenceSyncService::SpacePersistenceSyncService,
 };
 
@@ -877,7 +878,7 @@ impl RuntimeRemoteLinkService {
 
     /// Installs one committed Binding operation on the target without advancing sync clocks.
     #[allow(non_snake_case)]
-    async fn installRouteBindingOnTarget(
+    pub(super) async fn installRouteBindingOnTarget(
         &self,
         targetNodeId: &str,
         operation: operit_store::SyncOperationStore::SyncOperation,
@@ -885,20 +886,10 @@ impl RuntimeRemoteLinkService {
         if targetNodeId == self.nodeRouter.localNodeId() {
             return Ok(());
         }
-        let objectId = self
-            .nodeRouter
-            .targetForSchema("application")
-            .ok_or_else(|| "unknown Core schema key: application".to_string())?;
-        let mut args = BTreeMap::new();
-        args.insert(
-            "operation".to_string(),
-            toCoreValue(operation).map_err(|error| error.to_string())?,
-        );
-        let request = CoreCallRequest::new(
-            format!("core-route-binding-install-{}", currentTimeMillis()),
-            objectId,
-            "syncApplyImmediateBindingOperation".to_string(),
-            CoreValue::Map(args),
+        let request = PeerSyncMethod::SyncApplyImmediateBindingOperation.request(
+            operit_link::nextCoreRouteRequestId("core-route-binding-install"),
+            toCoreValue(serde_json::json!({ "operation": operation }))
+                .map_err(|error| error.to_string())?,
         );
         let response = self
             .nodeRouter

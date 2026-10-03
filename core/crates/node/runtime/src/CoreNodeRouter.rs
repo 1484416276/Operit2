@@ -3159,12 +3159,30 @@ mod tests {
     /// Dispatches local Core requests through a real test SpaceRuntime.
     struct TestSpaceRuntimeSharedClient {
         spaceRuntime: Arc<SpaceRuntime>,
+        bindingStore: Option<CoreNodeBindingStore>,
     }
 
     #[async_trait(?Send)]
     impl CoreLinkSharedClient for TestSpaceRuntimeSharedClient {
         /// Executes one local annotation-addressed call through SpaceRuntime.
         async fn call(&self, request: CoreCallRequest) -> CoreCallResponse {
+            if request.target == "core/server.application"
+                && request.methodName == "syncApplyImmediateBindingOperation"
+            {
+                let result = (|| {
+                    let CoreValue::Map(args) = &request.args else {
+                        return Err(CoreLinkError::internal("Missing binding arguments"));
+                    };
+                    let operation = operit_link::fromCoreValue(
+                        args.get("operation").cloned().ok_or_else(|| CoreLinkError::internal("Missing binding operation"))?,
+                    ).map_err(|error| CoreLinkError::internal(error.to_string()))?;
+                    self.bindingStore.as_ref().ok_or_else(|| CoreLinkError::internal("Missing binding store"))?
+                        .applyImmediateOperation(&operation).map_err(CoreLinkError::internal)?;
+                    operit_link::toCoreValue(serde_json::json!({"applied": true}))
+                        .map_err(|error| CoreLinkError::internal(error.to_string()))
+                })();
+                return CoreCallResponse { requestId: request.requestId, result };
+            }
             self.spaceRuntime.call(request).await
         }
 
@@ -3339,6 +3357,7 @@ mod tests {
         let sharedClient: Arc<dyn CoreLinkSharedClient + Send + Sync> =
             Arc::new(TestSpaceRuntimeSharedClient {
                 spaceRuntime: spaceRuntime.clone(),
+                bindingStore: None,
             });
         (
             CoreNodeLocalRuntime::new(
@@ -3415,6 +3434,51 @@ mod tests {
         router.networkControlStore.disconnectNode("sync-peer".into()).unwrap();
         assert!(router.routedCall("sync-peer".into(), request).await.result.is_err());
     }
+    /// A handoff must use the admitted peer sync surface, never the local-only application target.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn route_handoff_installs_binding_through_peer_sync() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let sourceId = "handoff-source";
+        let targetId = "handoff-target";
+        let chatId = "handoff-chat";
+        let space = CoreSpace {
+            spaceId: "handoff-space".into(),
+            spaceName: "Handoff test".into(),
+            spaceRevision: 2,
+            members: vec![sourceId.into(), targetId.into()],
+        };
+        let (source, _) = testCoreNodeRouterInJoinedSpace(
+            sourceId, targetId, chatId, sourceId, space.clone(),
+        );
+        let (mut target, _) = testCoreNodeRouterInJoinedSpace(
+            targetId, sourceId, chatId, sourceId, space,
+        );
+        let targetBindingStore = CoreNodeBindingStore::new(target.localCore.runtimeStorageHost()).unwrap();
+        let targetRuntime = Arc::make_mut(&mut target.localCore);
+        targetRuntime.targetForSchema = Arc::new(|schema: &str| {
+            if schema == "application" { Some("core/server.application") } else { None }
+        });
+        targetRuntime.applicationClient = Arc::new(TestSpaceRuntimeSharedClient {
+            spaceRuntime: targetRuntime.spaceRuntime.clone(),
+            bindingStore: Some(targetBindingStore.clone()),
+        });
+        let sourceBindingStore = CoreNodeBindingStore::new(source.localCore.runtimeStorageHost()).unwrap();
+        sourceBindingStore.create(chatId, sourceId).unwrap();
+        let commit = sourceBindingStore.compareAndSet(chatId, sourceId, targetId).unwrap();
+        let peer = installTestPeer(&source, targetId.into(), TestCoreNodeRouterEndpoint::new(target)).unwrap();
+        let service = RuntimeRemoteLinkService::newWithRouter((*source.localCore).clone(), source.clone());
+
+        assert!(targetBindingStore.bindingOptional(chatId).unwrap().is_none());
+
+        service.installRouteBindingOnTarget(targetId, commit.operation.clone()).await
+            .expect("handoff must install the committed binding through the authenticated sync protocol");
+        assert_eq!(targetBindingStore.binding(chatId).unwrap(), commit.binding);
+        service.installRouteBindingOnTarget(sourceId, commit.operation).await
+            .expect("local binding installation must remain a no-op");
+        peer.close();
+    }
+
     /// Creates one real router with synthetic local runtime and in-memory route state.
     #[allow(non_snake_case)]
     fn testCoreNodeRouter(
@@ -5185,6 +5249,7 @@ mod tests {
             .await;
         assert!(flow.value().is_empty());
     }
+    mod chat_input_menu_tests { use super::*; include!("router_chat_input_menu_tests.rs"); }
     mod space_join_tests { use super::*; include!("router_space_join_tests.rs"); }
 
 }

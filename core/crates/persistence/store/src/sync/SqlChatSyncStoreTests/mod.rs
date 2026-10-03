@@ -1394,3 +1394,5 @@ fn stress_ultra_many_messages_roundtrip_with_stream_compaction() {
 
 // Reuse this suite's host installer and mutex for memory search sync regressions.
 mod MemoryRepositoryReadTests;
+
+mod ObjectBoxSyncTests;

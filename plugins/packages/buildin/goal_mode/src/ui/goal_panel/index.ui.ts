@@ -29,7 +29,6 @@ function formatGoalDuration(durationMs: number): string {
 export default function Screen(ctx: ComposeDslContext): ComposeNode {
   const [chatId] = ctx.useState<string>("chatId", "");
   const [goal, setGoal] = ctx.useState<GoalRecord | null>("goal", null);
-  const [loaded, setLoaded] = ctx.useState("loaded", false);
   if (!refreshEpochs.has(chatId)) {
     refreshEpochs.set(chatId, 0);
   }
@@ -93,7 +92,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
   /** Refreshes the goal snapshot stored by the owning plugin runtime. */
   const refresh = async (): Promise<void> => {
     await refreshGoal();
-    setLoaded(true);
   };
 
   /** Pauses an active goal. */
@@ -118,7 +116,9 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
 
   const active = goal?.status === "active";
 
-  if (loaded && goal === null) {
+  // Keep the empty slot zero-height while the initial read is pending too.
+  // Transient padding here resizes the transcript and nudges its bottom twice.
+  if (goal === null) {
     return ctx.UI.Column({ fillMaxWidth: true, onLoad: refresh }, []);
   }
 
@@ -128,45 +128,43 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
 
   return ctx.UI.Column(
     { fillMaxWidth: true, padding: { horizontal: 8, vertical: 2 }, onLoad: refresh },
-    goal === null
-      ? []
-      : [
-          ctx.UI.Card(
-            {
-              fillMaxWidth: true,
-              containerColor: ctx.MaterialTheme.colorScheme.surfaceVariant.copy({ alpha: 0.22 }),
-              shape: { cornerRadius: 6 },
-              elevation: 0,
-            },
+    [
+      ctx.UI.Card(
+        {
+          fillMaxWidth: true,
+          containerColor: ctx.MaterialTheme.colorScheme.surfaceVariant.copy({ alpha: 0.22 }),
+          shape: { cornerRadius: 6 },
+          elevation: 0,
+        },
+        [
+          ctx.UI.Row(
+            { fillMaxWidth: true, padding: { horizontal: 8, vertical: 3 }, spacing: 6, verticalAlignment: "center" },
             [
-              ctx.UI.Row(
-                { fillMaxWidth: true, padding: { horizontal: 8, vertical: 3 }, spacing: 6, verticalAlignment: "center" },
-                [
-                  ctx.UI.Box(
-                    { width: 32, height: 32, contentAlignment: "center" },
-                    ctx.UI.Icon({ name: "flag", tint: "onSurfaceVariant", size: 16 }),
-                  ),
-                  ctx.UI.Text({ text: title, style: "labelMedium", maxLines: 1, overflow: "ellipsis", weight: 1 }),
-                  ctx.UI.Text({ text: elapsed, style: "labelSmall", color: "onSurfaceVariant", maxLines: 1 }),
-                  ctx.UI.Text({ text: goal.objective, style: "bodySmall", fontSize: 12, maxLines: 1, overflow: "ellipsis", weight: 2 }),
-                  active
-                    ? ctx.UI.IconButton({ icon: "pause", width: 32, height: 32, onClick: pause })
-                    : paused
-                    ? ctx.UI.IconButton({ icon: "playArrow", width: 32, height: 32, onClick: resume })
-                    : ctx.UI.Box(
-                        { width: 32, height: 32, contentAlignment: "center" },
-                        ctx.UI.Icon({ name: "checkCircle", tint: "onSurfaceVariant", size: 16 }),
-                      ),
-                  ctx.UI.IconButton({
-                    width: 32,
-                    height: 32,
-                    onClick: clear,
-                    content: ctx.UI.Icon({ name: "delete", tint: "onSurfaceVariant", size: 16 }),
-                  }),
-                ]
+              ctx.UI.Box(
+                { width: 32, height: 32, contentAlignment: "center" },
+                ctx.UI.Icon({ name: "flag", tint: "onSurfaceVariant", size: 16 }),
               ),
+              ctx.UI.Text({ text: title, style: "labelMedium", maxLines: 1, overflow: "ellipsis", weight: 1 }),
+              ctx.UI.Text({ text: elapsed, style: "labelSmall", color: "onSurfaceVariant", maxLines: 1 }),
+              ctx.UI.Text({ text: goal.objective, style: "bodySmall", fontSize: 12, maxLines: 1, overflow: "ellipsis", weight: 2 }),
+              active
+                ? ctx.UI.IconButton({ icon: "pause", width: 32, height: 32, onClick: pause })
+                : paused
+                ? ctx.UI.IconButton({ icon: "playArrow", width: 32, height: 32, onClick: resume })
+                : ctx.UI.Box(
+                    { width: 32, height: 32, contentAlignment: "center" },
+                    ctx.UI.Icon({ name: "checkCircle", tint: "onSurfaceVariant", size: 16 }),
+                  ),
+              ctx.UI.IconButton({
+                width: 32,
+                height: 32,
+                onClick: clear,
+                content: ctx.UI.Icon({ name: "delete", tint: "onSurfaceVariant", size: 16 }),
+              }),
             ]
           ),
         ]
+      ),
+    ]
   );
 }

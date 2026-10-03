@@ -209,6 +209,10 @@ class _ChatAreaState extends State<ChatArea>
                 child: CustomScrollView(
                   key: _scrollLayoutKey,
                   controller: _layoutScrollController,
+                  // Chat history should stop hard at its boundaries. The
+                  // platform default can use bouncing physics, which lets the
+                  // transcript move past the bottom and snap back on release.
+                  physics: const ClampingScrollPhysics(),
                   center: _centerSliverKey,
                   slivers: [
                     if (centerIndex > 0)

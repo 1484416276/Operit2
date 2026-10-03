@@ -79,7 +79,7 @@ def build_ios_app(enforce_lockfile: bool) -> None:
 def check_local_environment(products: str, cli_arches: str, include_ios: bool) -> None:
     command = [
         sys.executable,
-        os.path.join(BUILD_SCRIPTS_DIR, "check_environment.py"),
+        os.path.join(BUILD_SCRIPTS_DIR, "check_build_environment.py"),
         "--products",
         products,
         "--cli-arches",

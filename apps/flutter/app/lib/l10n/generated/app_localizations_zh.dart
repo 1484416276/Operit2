@@ -3976,10 +3976,19 @@ class AppLocalizationsZh extends AppLocalizations {
       '暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。';
 
   @override
-  String get settingsPeerBindAddress => '监听地址';
+  String get settingsPeerBindAddress => '监听 IP 地址';
 
   @override
-  String get settingsPeerBindAddressHelp => '例如 0.0.0.0:37195，允许局域网访问';
+  String get settingsPeerBindAddressHelp => '例如 0.0.0.0，允许局域网访问；也支持 IPv6 地址。';
+
+  @override
+  String get settingsPeerBindPort => '监听端口';
+
+  @override
+  String get settingsPeerBindPortHelp => '固定模式使用此端口监听。';
+
+  @override
+  String get settingsPeerBindPortAutomaticHelp => '自动模式会从此端口开始选择空闲端口。';
 
   @override
   String get settingsPeerDiscoveryNeedsTransport => '开启允许被搜索前，请至少选择一种暴露方式。';
@@ -3989,7 +3998,10 @@ class AppLocalizationsZh extends AppLocalizations {
       '当前 TCP 不能与 HTTP/WebSocket 共用监听端口，请选择 TCP 或 HTTP/WebSocket。';
 
   @override
-  String get settingsPeerAddressRequired => '请输入监听地址。';
+  String get settingsPeerAddressRequired => '请输入监听 IP 地址。';
+
+  @override
+  String get settingsPeerPortRequired => '请输入 1 到 65535 之间的端口。';
 
   @override
   String get settingsPeerApplied => '监听设置已生效。';

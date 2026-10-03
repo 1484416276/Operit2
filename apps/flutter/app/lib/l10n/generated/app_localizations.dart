@@ -7366,14 +7366,32 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerBindAddress.
   ///
   /// In en, this message translates to:
-  /// **'Listen address'**
+  /// **'Listen IP address'**
   String get settingsPeerBindAddress;
 
   /// No description provided for @settingsPeerBindAddressHelp.
   ///
   /// In en, this message translates to:
-  /// **'Example: 0.0.0.0:37195 for LAN access'**
+  /// **'Example: 0.0.0.0 for LAN access; IPv6 addresses are also supported.'**
   String get settingsPeerBindAddressHelp;
+
+  /// No description provided for @settingsPeerBindPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Listen port'**
+  String get settingsPeerBindPort;
+
+  /// No description provided for @settingsPeerBindPortHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'The port used by fixed listener mode.'**
+  String get settingsPeerBindPortHelp;
+
+  /// No description provided for @settingsPeerBindPortAutomaticHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic mode selects a free port starting from this value.'**
+  String get settingsPeerBindPortAutomaticHelp;
 
   /// No description provided for @settingsPeerDiscoveryNeedsTransport.
   ///
@@ -7390,8 +7408,14 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPeerAddressRequired.
   ///
   /// In en, this message translates to:
-  /// **'Enter a listen address.'**
+  /// **'Enter a listen IP address.'**
   String get settingsPeerAddressRequired;
+
+  /// No description provided for @settingsPeerPortRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a port from 1 to 65535.'**
+  String get settingsPeerPortRequired;
 
   /// No description provided for @settingsPeerApplied.
   ///

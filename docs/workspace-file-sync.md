@@ -1,0 +1,37 @@
+# 工作区文件同步
+
+同一 Space 内，`/app/workspaces/<目录>/...` 下的普通文件自动双向复制到各设备自己的工作区根目录。同步完成后副本可离线使用。只有配对、尚未加入同一 Space 时不共享文件。
+
+外部挂载目录（`/mnt/...`、`/data/...`）不会被扫描；要随手机带走的文件，需要实际复制到工作区本体。软链接、链接目录、失效链接、Windows junction/reparse point 以及非普通文件跳过，不跟随目标。接收端也不通过已有链接读写文件。
+
+## 实现
+
+- 复用 `runtime_file` 域、SHA-256 Blob、原有向量时钟、成员校验与传输，不增加第二套同步协议。
+- `WorkspaceFileSyncStore` 保存本机 `runtime/sync/workspace_inventory.json`，记录已观察到的文件哈希。此清单不会同步给其他设备。
+- 工作区 UI 保存、AI 文件写入/应用修改/复制/移动/删除、模板创建触发扫描。Core 运行时每 2 秒扫描一次，覆盖终端、外部编辑器和其它绕过这些入口的写入；关闭 Core 后不后台运行，重新启动时补扫。
+- 文件内容改变生成 upsert，消失生成 delete。重命名表示旧路径删除、新路径写入。删除优先于新增，以支持文件与目录之间切换。
+- 收到文件后更新清单，不把远端内容当成新本地修改再次广播。每个接收批次只扫一次工作区；应用整批操作后才推进同步时钟，避免跳过同批偏好等其它数据。
+- 接收前先持久化待应用内容，异常退出后重放待应用写入。扫描失败不发布缺失文件删除；工作区根目录不可用时拒绝批量删除。
+- 首次加入 Space 后重新登记设备已有的本体文件，避免旧操作日志不再导出而使本地文件无法分享。
+- 停止 Space 同步服务时停止定时扫描。
+
+## 行为边界
+
+- 复制文件字节，不是 Git 或文本协同编辑；同时修改同一文件，采用现有同步操作的确定性顺序（时间、设备 ID、序号）决定最终版本，不做逐行合并。
+- 目录随文件创建；删除后清理空的子目录，保留工作区根目录。独立空目录、文件权限和执行位不作为同步对象。
+- 当前扫描逐文件读取/哈希，不遵循 `.gitignore`，不排除大型依赖目录。不要把“不想共享”的数据放进本体；外部目录保持挂载即可。
+- 双端需要运行支持本功能的版本；没有新增手机后台常驻或绕过系统省电限制的能力。离开电脑前应让两端在线完成传输。
+
+## 验证
+
+```sh
+cargo test --manifest-path core/Cargo.toml -p operit-store --test workspace_file_sync
+cargo test --manifest-path hosts/common/operit-host-native-storage/Cargo.toml
+cargo build --manifest-path apps/cli/Cargo.toml
+python3 apps/cli/tests/workspace_sync_session.py --transport tcp
+python3 apps/cli/tests/workspace_sync_session.py --transport http
+python3 apps/cli/tests/workspace_sync_session.py --transport ws
+python3 apps/cli/tests/network_control_session.py --binary apps/cli/target/debug/operit2 --transport tcp
+```
+
+CLI 测试使用两套独立身份目录、真实进程与连接，检查首次加入时两端已有文件、配对隔离、二进制/空文件/中文路径、双向修改、重命名/删除、循环链接、双端退出后的修改及重启补同步。

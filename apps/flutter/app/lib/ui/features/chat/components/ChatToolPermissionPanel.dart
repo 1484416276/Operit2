@@ -31,6 +31,16 @@ class _ChatToolPermissionPanelState extends State<ChatToolPermissionPanel> {
   bool _submitting = false;
   bool _parametersExpanded = false;
 
+  @override
+  void didUpdateWidget(covariant ChatToolPermissionPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.request.requestId != widget.request.requestId ||
+        oldWidget.request.chatId != widget.request.chatId) {
+      _submitting = false;
+      _parametersExpanded = false;
+    }
+  }
+
   /// Sends one decision for the request displayed by this chat.
   Future<void> _respond(ChatToolPermissionResult result) async {
     if (_submitting) {
@@ -39,12 +49,9 @@ class _ChatToolPermissionPanelState extends State<ChatToolPermissionPanel> {
     setState(() {
       _submitting = true;
     });
+    final request = widget.request;
     try {
-      await widget.onRespond(
-        widget.request.chatId,
-        widget.request.requestId,
-        result,
-      );
+      await widget.onRespond(request.chatId, request.requestId, result);
     } catch (error, stackTrace) {
       FlutterError.reportError(
         FlutterErrorDetails(
@@ -54,7 +61,14 @@ class _ChatToolPermissionPanelState extends State<ChatToolPermissionPanel> {
           context: ErrorDescription('responding to chat tool permission'),
         ),
       );
-      if (mounted) {
+      if (mounted &&
+          widget.request.requestId == request.requestId &&
+          widget.request.chatId == request.chatId) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${AppLocalizations.of(context)!.failed}: $error'),
+          ),
+        );
         setState(() {
           _submitting = false;
         });
@@ -103,7 +117,13 @@ class _ChatToolPermissionPanelState extends State<ChatToolPermissionPanel> {
             visualDensity: VisualDensity.compact,
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          icon: const Icon(Icons.check_rounded, size: 18),
+          icon: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.check_rounded, size: 18),
           label: Text(l10n.toolApprovalAllowOnce),
         );
 

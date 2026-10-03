@@ -339,14 +339,19 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.byType(Switch), findsOneWidget);
       expect(find.byType(FilterChip), findsNothing);
-      await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
+      expect(find.text('保存'), findsOneWidget);
+      expect(find.text('确定'), findsNothing);
       await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
       expect(bridge.config!['discoveryEnabled'], true);
       await tester.tap(find.text('高级选项'));
       await tester.pumpAndSettle();
       expect(find.byType(FilterChip), findsNWidgets(5));
+      expect(find.text('保存'), findsOneWidget);
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(bridge.config!['discoveryEnabled'], false);
+      expect(find.byType(AlertDialog), findsNothing);
       await dispose(tester, bridge);
     },
   );

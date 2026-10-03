@@ -69,6 +69,34 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets(
+    'does not allow the chat transcript to overscroll at the bottom',
+    (tester) async {
+      final scrollController = ScrollController();
+      final autoScrollToBottom = ValueNotifier<bool>(false);
+      addTearDown(scrollController.dispose);
+      addTearDown(autoScrollToBottom.dispose);
+      await tester.pumpWidget(
+        _chatArea(
+          message: _aiMessage(parts: const []),
+          isLoading: false,
+          bottomContentInset: 1600,
+          scrollController: scrollController,
+          autoScrollToBottom: autoScrollToBottom,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(scrollController.position.physics, isA<ClampingScrollPhysics>());
+      final bottomOffset = scrollController.position.maxScrollExtent;
+      scrollController.jumpTo(bottomOffset);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -200));
+
+      expect(scrollController.offset, bottomOffset);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('ignores nested scroll updates at their own bottom', (
     tester,
   ) async {

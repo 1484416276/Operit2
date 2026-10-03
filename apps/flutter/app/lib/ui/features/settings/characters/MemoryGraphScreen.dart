@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:convert';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -16,6 +15,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../memory/MemoryOwnerControlsDialog.dart';
+import 'MemoryGraphCanvas.dart';
 
 const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
   label: 'Operit memory JSON',
@@ -61,9 +61,6 @@ class MemoryGraphScreen extends StatefulWidget {
 class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   late Future<_MemoryGraphData> _future;
   final TextEditingController _searchController = TextEditingController();
-  _MemoryGraphLayout? _layout;
-  Size? _layoutSize;
-  String _layoutSignature = '';
   String? _selectedNodeId;
   int? _selectedEdgeId;
   Future<core_proxy.Memory?>? _selectedMemoryFuture;
@@ -74,10 +71,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   late final GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     widget.bridge,
   );
-  double _scale = 1;
-  Offset _offset = Offset.zero;
-  double _startScale = 1;
-  Offset _startOffset = Offset.zero;
 
   /// Returns the repository proxy scoped to the current owner key.
   GeneratedRepositoryMemoryRepositoryCoreProxy get _repository =>
@@ -167,9 +160,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   void _reload() {
     setState(() {
       _future = _loadData();
-      _layout = null;
-      _layoutSize = null;
-      _layoutSignature = '';
       _selectedNodeId = null;
       _selectedEdgeId = null;
       _selectedMemoryFuture = null;
@@ -198,65 +188,10 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     setState(() {
       _folderPath = folderPath;
       _future = _loadData();
-      _layout = null;
-      _layoutSize = null;
-      _layoutSignature = '';
       _selectedNodeId = null;
       _selectedEdgeId = null;
       _selectedMemoryFuture = null;
       _linkSourceNodeId = null;
-    });
-  }
-
-  /// Recomputes the graph layout when data or size changed.
-  void _ensureLayout(core_proxy.MemoryGraph graph, Size size) {
-    final signature = _graphSignature(graph);
-    final oldSize = _layoutSize;
-    final shouldCompute =
-        _layout == null ||
-        _layoutSignature != signature ||
-        oldSize == null ||
-        (oldSize.width - size.width).abs() > 32 ||
-        (oldSize.height - size.height).abs() > 32;
-    if (!shouldCompute) {
-      return;
-    }
-    _layout = _MemoryGraphLayout.compute(graph, size);
-    _layoutSize = size;
-    _layoutSignature = signature;
-    _scale = 1;
-    _offset = Offset.zero;
-  }
-
-  /// Handles graph taps for normal selection and link creation.
-  void _handleTap(
-    TapUpDetails details,
-    _MemoryGraphData data,
-    _MemoryGraphLayout layout,
-  ) {
-    final graph = data.displayGraph;
-    final world = (details.localPosition - _offset) / _scale;
-    final hitNode = graph.nodes.reversed.where((node) {
-      final center = layout.positions[node.id];
-      return center != null &&
-          _nodeWorldRect(node, center).inflate(16 / _scale).contains(world);
-    }).firstOrNull;
-    if (hitNode != null) {
-      _selectNode(hitNode, data);
-      return;
-    }
-    final hitEdge = graph.edges.where((edge) {
-      final start = layout.positions[edge.sourceId];
-      final end = layout.positions[edge.targetId];
-      if (start == null || end == null) {
-        return false;
-      }
-      return _distanceToSegment(world, start, end) < 18 / _scale;
-    }).firstOrNull;
-    setState(() {
-      _selectedNodeId = null;
-      _selectedEdgeId = hitEdge?.id;
-      _selectedMemoryFuture = null;
     });
   }
 
@@ -358,8 +293,6 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
       setState(() {
         _linkSourceNodeId = null;
         _future = _loadData();
-        _layout = null;
-        _layoutSignature = '';
       });
     } catch (error) {
       if (mounted) {
@@ -604,10 +537,16 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         maxWidth: 420,
         showCloseButton: true,
         actions: <Widget>[
-          IconButton(tooltip: '导入文本／Markdown 文档', onPressed: _busy ? null : _importDocument,
-            icon: const Icon(Icons.article_outlined)),
-          IconButton(tooltip: 'AI 分类未归类记忆', onPressed: _busy ? null : _autoCategorize,
-            icon: const Icon(Icons.auto_awesome)),
+          IconButton(
+            tooltip: '导入文本／Markdown 文档',
+            onPressed: _busy ? null : _importDocument,
+            icon: const Icon(Icons.article_outlined),
+          ),
+          IconButton(
+            tooltip: 'AI 分类未归类记忆',
+            onPressed: _busy ? null : _autoCategorize,
+            icon: const Icon(Icons.auto_awesome),
+          ),
           IconButton(
             tooltip: '沉淀、检索与历史重建',
             icon: const Icon(Icons.tune),
@@ -675,27 +614,62 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
   }
 
   Future<void> _importDocument() async {
-    final file = await openFile(acceptedTypeGroups: [const XTypeGroup(label: 'Text document', extensions: ['txt', 'md', 'markdown', 'csv', 'log'])]);
+    final file = await openFile(
+      acceptedTypeGroups: [
+        const XTypeGroup(
+          label: 'Text document',
+          extensions: ['txt', 'md', 'markdown', 'csv', 'log'],
+        ),
+      ],
+    );
     if (file == null || !mounted) return;
     setState(() => _busy = true);
     try {
       final text = utf8.decode(await file.readAsBytes());
-      await _repository.createMemoryFromDocument(documentName: file.name, originalPath: file.path,
-        text: text, folderPath: _folderPath);
-      if (mounted) { _refresh(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('文档已分块入库'))); }
+      await _repository.createMemoryFromDocument(
+        documentName: file.name,
+        originalPath: file.path,
+        text: text,
+        folderPath: _folderPath,
+      );
+      if (mounted) {
+        _refresh();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('文档已分块入库')));
+      }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('文档导入失败：$error')));
-    } finally { if (mounted) setState(() => _busy = false); }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('文档导入失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _autoCategorize() async {
     setState(() => _busy = true);
     try {
-      final count = await _clients.application.memoryManagementService(ownerKey: widget.ownerKey).autoCategorize();
-      if (mounted) { _refresh(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已分类 $count 条记忆'))); }
+      final count = await _clients.application
+          .memoryManagementService(ownerKey: widget.ownerKey)
+          .autoCategorize();
+      if (mounted) {
+        _refresh();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已分类 $count 条记忆')));
+      }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('自动分类：$error')));
-    } finally { if (mounted) setState(() => _busy = false); }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('自动分类：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   /// Builds the page scaffold and graph canvas.
@@ -777,102 +751,72 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         textTheme: textTheme,
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        _ensureLayout(graph, size);
-        final layout = _layout;
-        if (layout == null) {
-          return const M3LoadingPane();
-        }
-        final selectedNode = _selectedNodeId == null
-            ? null
-            : graph.nodes
-                  .where((node) => node.id == _selectedNodeId)
-                  .firstOrNull;
-        final selectedEdge = _selectedEdgeId == null
-            ? null
-            : graph.edges
-                  .where((edge) => edge.id == _selectedEdgeId)
-                  .firstOrNull;
-        return Stack(
-          children: <Widget>[
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onScaleStart: (details) {
-                _startScale = _scale;
-                _startOffset = _offset;
-              },
-              onScaleUpdate: (details) {
+    final selectedNode = graph.nodes
+        .where((node) => node.id == _selectedNodeId)
+        .firstOrNull;
+    final selectedEdge = graph.edges
+        .where((edge) => edge.id == _selectedEdgeId)
+        .firstOrNull;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        MemoryGraphCanvas(
+          key: ValueKey('${data.query}:${data.folderPath}'),
+          graph: graph,
+          selectedNodeId: _selectedNodeId,
+          selectedEdgeId: _selectedEdgeId,
+          linkSourceNodeId: _linkSourceNodeId,
+          onSelect: (node, edge) {
+            if (node != null) {
+              _selectNode(node, data);
+              return;
+            }
+            setState(() {
+              _selectedNodeId = null;
+              _selectedEdgeId = edge?.id;
+              _selectedMemoryFuture = null;
+            });
+          },
+        ),
+        Positioned(
+          left: 16,
+          top: 12,
+          child: _MemoryGraphCounter(
+            text: '${graph.nodes.length} 节点 · ${graph.edges.length} 关系',
+          ),
+        ),
+        if (_linkMode)
+          Positioned(
+            right: 16,
+            top: 12,
+            child: _MemoryGraphCounter(
+              text: _linkSourceNodeId == null ? '关系模式：选择起点' : '关系模式：选择终点',
+            ),
+          ),
+        if (selectedNode != null || selectedEdge != null)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 72,
+            child: _MemoryGraphSelectionCard(
+              node: selectedNode,
+              edge: selectedEdge,
+              graph: graph,
+              memoryFuture: _selectedMemoryFuture,
+              folders: data.folders,
+              onClose: () {
                 setState(() {
-                  final nextScale = (_startScale * details.scale)
-                      .clamp(0.2, 5.0)
-                      .toDouble();
-                  final focal = details.localFocalPoint;
-                  _offset =
-                      (_startOffset - focal) * (nextScale / _startScale) +
-                      focal +
-                      details.focalPointDelta;
-                  _scale = nextScale;
+                  _selectedNodeId = null;
+                  _selectedEdgeId = null;
+                  _selectedMemoryFuture = null;
                 });
               },
-              onTapUp: (details) => _handleTap(details, data, layout),
-              child: CustomPaint(
-                painter: _MemoryGraphPainter(
-                  graph: graph,
-                  layout: layout,
-                  scale: _scale,
-                  offset: _offset,
-                  colorScheme: colorScheme,
-                  textTheme: textTheme,
-                  selectedNodeId: _selectedNodeId,
-                  selectedEdgeId: _selectedEdgeId,
-                  linkSourceNodeId: _linkSourceNodeId,
-                ),
-                size: Size.infinite,
-              ),
+              onEditMemory: _editMemory,
+              onDeleteMemory: _deleteMemory,
+              onDeleteEdge: _deleteEdge,
             ),
-            Positioned(
-              left: 16,
-              top: 12,
-              child: _MemoryGraphCounter(
-                text: '${graph.nodes.length} 节点 · ${graph.edges.length} 关系',
-              ),
-            ),
-            if (_linkMode)
-              Positioned(
-                right: 16,
-                top: 12,
-                child: _MemoryGraphCounter(
-                  text: _linkSourceNodeId == null ? '关系模式：选择起点' : '关系模式：选择终点',
-                ),
-              ),
-            if (selectedNode != null || selectedEdge != null)
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 16,
-                child: _MemoryGraphSelectionCard(
-                  node: selectedNode,
-                  edge: selectedEdge,
-                  graph: graph,
-                  memoryFuture: _selectedMemoryFuture,
-                  folders: data.folders,
-                  onClose: () {
-                    setState(() {
-                      _selectedNodeId = null;
-                      _selectedEdgeId = null;
-                      _selectedMemoryFuture = null;
-                    });
-                  },
-                  onEditMemory: _editMemory,
-                  onDeleteMemory: _deleteMemory,
-                  onDeleteEdge: _deleteEdge,
-                ),
-              ),
-          ],
-        );
-      },
+          ),
+      ],
     );
   }
 }
@@ -894,309 +838,6 @@ class _MemoryGraphData {
   final Map<String, core_proxy.Memory> scopedMemoryByUuid;
   final String query;
   final String folderPath;
-}
-
-class _MemoryGraphLayout {
-  /// Creates graph layout positions for each node id.
-  const _MemoryGraphLayout(this.positions);
-
-  final Map<String, Offset> positions;
-
-  /// Computes a deterministic clustered layout in linear graph time.
-  static _MemoryGraphLayout compute(core_proxy.MemoryGraph graph, Size size) {
-    final positions = <String, Offset>{};
-    final center = Offset(size.width / 2, size.height / 2);
-    final clusterInfo = _GraphClusterInfo.fromGraph(graph);
-    final clusters =
-        clusterInfo.clusterIds
-            .map(
-              (clusterId) => _ClusterPlacement(
-                id: clusterId,
-                nodeIds: clusterInfo.nodeIdsByCluster[clusterId]!,
-              ),
-            )
-            .toList(growable: false)
-          ..sort(
-            (left, right) =>
-                right.nodeIds.length.compareTo(left.nodeIds.length),
-          );
-    final clusterCount = clusters.length;
-    final columns = math.max(1, math.sqrt(clusterCount).ceil());
-    final cellWidth = math.max(size.width * 0.92, 860.0);
-    final cellHeight = math.max(size.height * 0.82, 680.0);
-    for (
-      var clusterIndex = 0;
-      clusterIndex < clusters.length;
-      clusterIndex += 1
-    ) {
-      final cluster = clusters[clusterIndex];
-      final row = clusterIndex ~/ columns;
-      final column = clusterIndex % columns;
-      final x = center.dx + (column - (columns - 1) / 2) * cellWidth;
-      final y =
-          center.dy + (row - ((clusterCount - 1) ~/ columns) / 2) * cellHeight;
-      _placeClusterNodes(
-        graph: graph,
-        cluster: cluster,
-        center: Offset(x, y),
-        positions: positions,
-      );
-    }
-    return _MemoryGraphLayout(Map.unmodifiable(positions));
-  }
-}
-
-class _ClusterPlacement {
-  /// Creates a cluster placement payload.
-  const _ClusterPlacement({required this.id, required this.nodeIds});
-
-  final int id;
-  final List<String> nodeIds;
-}
-
-class _GraphClusterInfo {
-  /// Creates cluster information derived from graph connectivity.
-  const _GraphClusterInfo({
-    required this.clusterByNodeId,
-    required this.nodeIdsByCluster,
-    required this.clusterIds,
-  });
-
-  final Map<String, int> clusterByNodeId;
-  final Map<int, List<String>> nodeIdsByCluster;
-  final List<int> clusterIds;
-
-  /// Groups nodes by non-cross-folder graph connectivity.
-  static _GraphClusterInfo fromGraph(core_proxy.MemoryGraph graph) {
-    final adjacency = <String, List<String>>{};
-    for (final node in graph.nodes) {
-      adjacency[node.id] = <String>[];
-    }
-    for (final edge in graph.edges) {
-      if (edge.isCrossFolderLink) {
-        continue;
-      }
-      adjacency[edge.sourceId]?.add(edge.targetId);
-      adjacency[edge.targetId]?.add(edge.sourceId);
-    }
-    final visited = <String>{};
-    final clusterByNodeId = <String, int>{};
-    final nodeIdsByCluster = <int, List<String>>{};
-    var clusterId = 0;
-    for (final node in graph.nodes) {
-      if (!visited.add(node.id)) {
-        continue;
-      }
-      clusterId += 1;
-      final nodeIds = <String>[];
-      final queue = <String>[node.id];
-      var index = 0;
-      while (index < queue.length) {
-        final current = queue[index];
-        index += 1;
-        clusterByNodeId[current] = clusterId;
-        nodeIds.add(current);
-        for (final neighbor in adjacency[current]!) {
-          if (visited.add(neighbor)) {
-            queue.add(neighbor);
-          }
-        }
-      }
-      nodeIdsByCluster[clusterId] = List<String>.unmodifiable(nodeIds);
-    }
-    return _GraphClusterInfo(
-      clusterByNodeId: Map.unmodifiable(clusterByNodeId),
-      nodeIdsByCluster: Map.unmodifiable(nodeIdsByCluster),
-      clusterIds: List<int>.unmodifiable(
-        nodeIdsByCluster.keys.toList()..sort(),
-      ),
-    );
-  }
-}
-
-class _MemoryGraphPainter extends CustomPainter {
-  /// Creates a painter for the memory graph.
-  const _MemoryGraphPainter({
-    required this.graph,
-    required this.layout,
-    required this.scale,
-    required this.offset,
-    required this.colorScheme,
-    required this.textTheme,
-    required this.selectedNodeId,
-    required this.selectedEdgeId,
-    required this.linkSourceNodeId,
-  });
-
-  final core_proxy.MemoryGraph graph;
-  final _MemoryGraphLayout layout;
-  final double scale;
-  final Offset offset;
-  final ColorScheme colorScheme;
-  final TextTheme textTheme;
-  final String? selectedNodeId;
-  final int? selectedEdgeId;
-  final String? linkSourceNodeId;
-
-  /// Paints the visible graph nodes and edges.
-  @override
-  void paint(Canvas canvas, Size size) {
-    final nodeById = {for (final node in graph.nodes) node.id: node};
-    final visibleRect = Offset.zero & size;
-    final outlinePaint = Paint()
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    for (final edge in graph.edges) {
-      final startWorld = layout.positions[edge.sourceId];
-      final endWorld = layout.positions[edge.targetId];
-      if (startWorld == null || endWorld == null) {
-        continue;
-      }
-      final start = startWorld * scale + offset;
-      final end = endWorld * scale + offset;
-      if (!_edgeMayBeVisible(start, end, visibleRect)) {
-        continue;
-      }
-      outlinePaint
-        ..color = edge.id == selectedEdgeId
-            ? colorScheme.error
-            : colorScheme.outline.withValues(alpha: 0.58)
-        ..strokeWidth = edge.isCrossFolderLink
-            ? (edge.weight * 2.6 * scale).clamp(1.0, 8.0).toDouble()
-            : (edge.weight * 5.8 * scale).clamp(1.2, 18.0).toDouble();
-      if (edge.isCrossFolderLink) {
-        _drawDashedLine(canvas, start, end, outlinePaint);
-      } else {
-        canvas.drawLine(start, end, outlinePaint);
-      }
-      final label = edge.label;
-      if (label != null && label.isNotEmpty) {
-        final center = (start + end) / 2;
-        if (visibleRect.contains(center)) {
-          final painter = _textPainter(
-            label,
-            textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
-            maxWidth: 220,
-          );
-          painter.paint(
-            canvas,
-            center - Offset(painter.width / 2, painter.height / 2),
-          );
-        }
-      }
-    }
-    for (final node in graph.nodes) {
-      final world = layout.positions[node.id];
-      if (world == null) {
-        continue;
-      }
-      final screen = world * scale + offset;
-      final rect = _nodeScreenRect(node, screen, scale);
-      if (!rect.overlaps(visibleRect)) {
-        continue;
-      }
-      _drawNode(
-        canvas,
-        node,
-        nodeById[node.id]!,
-        screen,
-        scale,
-        node.id == selectedNodeId,
-        node.id == linkSourceNodeId,
-      );
-    }
-  }
-
-  /// Draws a single memory node.
-  void _drawNode(
-    Canvas canvas,
-    core_proxy.MemoryGraphNode node,
-    core_proxy.MemoryGraphNode visualNode,
-    Offset center,
-    double scale,
-    bool selected,
-    bool linkSource,
-  ) {
-    final visualScale = scale.clamp(0.15, 2.2).toDouble();
-    final textPainter = _textPainter(
-      visualNode.label,
-      textTheme.labelMedium?.copyWith(color: _nodeTextColor()),
-      maxWidth: 280,
-    );
-    final width = textPainter.width + 28;
-    final height = textPainter.height + 8;
-    final rect = Rect.fromCenter(
-      center: center,
-      width: width * visualScale,
-      height: height * visualScale,
-    );
-    final radius = Radius.circular(
-      math.min(rect.height * 0.48, 20 * visualScale),
-    );
-    final underlayRect = rect.translate(0, 1.2 * visualScale);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(underlayRect, radius),
-      Paint()..color = _nodeUnderlayColor(),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, radius),
-      Paint()..color = _nodeFillColor(node),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, radius),
-      Paint()
-        ..color = linkSource
-            ? colorScheme.tertiary
-            : selected
-            ? colorScheme.secondary
-            : colorScheme.outline
-        ..strokeWidth = linkSource || selected ? 2.4 : 1.7
-        ..style = PaintingStyle.stroke,
-    );
-    canvas.save();
-    canvas.translate(rect.left + 14 * visualScale, rect.top + 4 * visualScale);
-    canvas.scale(visualScale);
-    textPainter.paint(canvas, Offset.zero);
-    canvas.restore();
-  }
-
-  /// Returns text color for node labels.
-  Color _nodeTextColor() {
-    return colorScheme.surface.computeLuminance() < 0.42
-        ? const Color(0xFFE5E7EB)
-        : const Color(0xFF1F2937);
-  }
-
-  /// Returns fill color for a graph node.
-  Color _nodeFillColor(core_proxy.MemoryGraphNode node) {
-    final nodeColor = Color(node.color & 0xFFFFFFFF);
-    return Color.alphaBlend(
-      nodeColor.withValues(alpha: 0.22),
-      colorScheme.surface.computeLuminance() < 0.42
-          ? const Color(0xFF2B313D)
-          : const Color(0xFFE5E7EB),
-    );
-  }
-
-  /// Returns underlay color for graph nodes.
-  Color _nodeUnderlayColor() {
-    return colorScheme.surface.computeLuminance() < 0.42
-        ? const Color(0xFF1F2530)
-        : const Color(0xFFD1D5DB);
-  }
-
-  /// Reports whether repainting is required.
-  @override
-  bool shouldRepaint(_MemoryGraphPainter oldDelegate) {
-    return graph != oldDelegate.graph ||
-        layout != oldDelegate.layout ||
-        scale != oldDelegate.scale ||
-        offset != oldDelegate.offset ||
-        selectedNodeId != oldDelegate.selectedNodeId ||
-        selectedEdgeId != oldDelegate.selectedEdgeId ||
-        linkSourceNodeId != oldDelegate.linkSourceNodeId ||
-        colorScheme != oldDelegate.colorScheme;
-  }
 }
 
 class _MemoryToolbar extends StatelessWidget {
@@ -2217,57 +1858,6 @@ class _ImportStrategyDialog extends StatelessWidget {
   }
 }
 
-/// Places all nodes in one cluster around a center point.
-void _placeClusterNodes({
-  required core_proxy.MemoryGraph graph,
-  required _ClusterPlacement cluster,
-  required Offset center,
-  required Map<String, Offset> positions,
-}) {
-  final degree = <String, int>{for (final nodeId in cluster.nodeIds) nodeId: 0};
-  for (final edge in graph.edges) {
-    if (degree.containsKey(edge.sourceId)) {
-      degree[edge.sourceId] = degree[edge.sourceId]! + 1;
-    }
-    if (degree.containsKey(edge.targetId)) {
-      degree[edge.targetId] = degree[edge.targetId]! + 1;
-    }
-  }
-  final nodeIds = cluster.nodeIds.toList(growable: false)
-    ..sort((left, right) {
-      final degreeOrder = degree[right]!.compareTo(degree[left]!);
-      if (degreeOrder != 0) {
-        return degreeOrder;
-      }
-      return left.compareTo(right);
-    });
-  if (nodeIds.length == 1) {
-    positions[nodeIds.single] = center;
-    return;
-  }
-  positions[nodeIds.first] = center;
-  var placed = 1;
-  var ring = 1;
-  const nodeSpacing = 240.0;
-  while (placed < nodeIds.length) {
-    final radius = 220.0 + (ring - 1) * 190.0;
-    final capacity = math.max(6, (math.pi * 2 * radius / nodeSpacing).floor());
-    final count = math.min(capacity, nodeIds.length - placed);
-    for (var index = 0; index < count; index += 1) {
-      final angle = -math.pi / 2 + math.pi * 2 * index / count;
-      positions[nodeIds[placed + index]] =
-          center + Offset(math.cos(angle), math.sin(angle)) * radius;
-    }
-    placed += count;
-    ring += 1;
-  }
-}
-
-/// Returns a stable signature for graph layout invalidation.
-String _graphSignature(core_proxy.MemoryGraph graph) {
-  return '${graph.nodes.length}:${graph.edges.length}:${graph.nodes.map((node) => node.id).join('|')}:${graph.edges.map((edge) => '${edge.id}:${edge.sourceId}:${edge.targetId}').join('|')}';
-}
-
 /// Returns a graph containing exactly the selected memory ids.
 core_proxy.MemoryGraph _graphForMemoryIds(
   core_proxy.MemoryGraph graph,
@@ -2344,89 +1934,4 @@ String _formatMillis(int millis) {
 /// Formats one integer as two digits.
 String _twoDigits(int value) {
   return value.toString().padLeft(2, '0');
-}
-
-/// Creates a text painter for graph labels.
-TextPainter _textPainter(
-  String text,
-  TextStyle? style, {
-  required double maxWidth,
-}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    maxLines: 3,
-    ellipsis: '...',
-    textDirection: TextDirection.ltr,
-    textScaler: TextScaler.noScaling,
-  )..layout(maxWidth: maxWidth);
-}
-
-/// Estimates a node world rectangle without measuring text every frame.
-Rect _nodeWorldRect(core_proxy.MemoryGraphNode node, Offset center) {
-  final width = _estimatedNodeWidth(node.label);
-  return Rect.fromCenter(center: center, width: width, height: 54);
-}
-
-/// Estimates a node screen rectangle without measuring text every frame.
-Rect _nodeScreenRect(
-  core_proxy.MemoryGraphNode node,
-  Offset center,
-  double scale,
-) {
-  final visualScale = scale.clamp(0.15, 2.2).toDouble();
-  final worldRect = _nodeWorldRect(node, center);
-  return Rect.fromCenter(
-    center: center,
-    width: worldRect.width * visualScale,
-    height: worldRect.height * visualScale,
-  );
-}
-
-/// Estimates rendered node width from label length.
-double _estimatedNodeWidth(String label) {
-  final textWidth = (label.length.clamp(4, 34) * 7.8).toDouble();
-  return (textWidth + 34).clamp(82.0, 314.0).toDouble();
-}
-
-/// Returns true when an edge intersects the visible canvas area.
-bool _edgeMayBeVisible(Offset start, Offset end, Rect visibleRect) {
-  if (visibleRect.contains(start) || visibleRect.contains(end)) {
-    return true;
-  }
-  return Rect.fromPoints(start, end).inflate(24).overlaps(visibleRect);
-}
-
-/// Computes the shortest distance from a point to a line segment.
-double _distanceToSegment(Offset point, Offset start, Offset end) {
-  final lengthSq = (start - end).distanceSquared;
-  if (lengthSq == 0) {
-    return (point - start).distance;
-  }
-  final t =
-      (((point.dx - start.dx) * (end.dx - start.dx) +
-                  (point.dy - start.dy) * (end.dy - start.dy)) /
-              lengthSq)
-          .clamp(0.0, 1.0)
-          .toDouble();
-  final projection = start + (end - start) * t;
-  return (point - projection).distance;
-}
-
-/// Draws a dashed line between two points.
-void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
-  const dash = 12.0;
-  const gap = 12.0;
-  final delta = end - start;
-  final distance = delta.distance;
-  if (distance <= 0) {
-    return;
-  }
-  final direction = delta / distance;
-  var drawn = 0.0;
-  while (drawn < distance) {
-    final segmentStart = start + direction * drawn;
-    final segmentEnd = start + direction * math.min(drawn + dash, distance);
-    canvas.drawLine(segmentStart, segmentEnd, paint);
-    drawn += dash + gap;
-  }
 }

@@ -124,7 +124,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-ish-static-${{ steps.ish-build-toolchain.outputs.hash }}-${{ hashFiles('apps/flutter/app/ios/Runner.xcodeproj/project.pbxproj', 'tools/ios-runtime/ish/build_ish_ios.sh', 'tools/ios-runtime/ish/fetch_sources.py', 'tools/ios-runtime/ish/patches/**') }}
 
       - name: Check build environment
-        run: python3 tools/build_scripts/check_environment.py --products app --include-ios --github-runner
+        run: python3 tools/build_scripts/check_build_environment.py --products app --include-ios --github-runner
 
       - name: Build iSH static libraries
         if: steps.ish-build-cache.outputs.cache-hit != 'true'

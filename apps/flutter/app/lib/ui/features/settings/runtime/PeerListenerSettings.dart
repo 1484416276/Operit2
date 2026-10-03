@@ -8,6 +8,68 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitFormStyles.dart';
 
+/// Keeps connection settings and their single save action in the same dialog.
+class PeerListenerSettingsDialog extends StatefulWidget {
+  const PeerListenerSettingsDialog({
+    super.key,
+    required this.clients,
+    this.onBusyChanged,
+  });
+
+  final GeneratedCoreProxyClients clients;
+  final ValueChanged<bool>? onBusyChanged;
+
+  @override
+  State<PeerListenerSettingsDialog> createState() =>
+      _PeerListenerSettingsDialogState();
+}
+
+class _PeerListenerSettingsDialogState
+    extends State<PeerListenerSettingsDialog> {
+  final _formKey = GlobalKey<_PeerListenerSettingsState>();
+  bool _busy = true;
+
+  void _busyChanged(bool busy) {
+    if (!mounted) return;
+    setState(() => _busy = busy);
+    widget.onBusyChanged?.call(busy);
+  }
+
+  Future<void> _save() async {
+    final saved = await _formKey.currentState?._apply() ?? false;
+    if (mounted && saved) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return PopScope(
+      canPop: !_busy,
+      child: AlertDialog(
+        title: Text(l10n.deviceSpaceConnectionSettings),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: PeerListenerSettings(
+              key: _formKey,
+              clients: widget.clients,
+              onBusyChanged: _busyChanged,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: !_busy && _formKey.currentState?._loaded == true
+                ? _save
+                : null,
+            child: Text(l10n.save),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Manages node-local authentication, discovery, and explicit listener binding.
 class PeerListenerSettings extends StatefulWidget {
   /// Creates the node-local connection settings panel.
@@ -28,7 +90,8 @@ class PeerListenerSettings extends StatefulWidget {
 }
 
 class _PeerListenerSettingsState extends State<PeerListenerSettings> {
-  final _address = TextEditingController();
+  final _bindHost = TextEditingController();
+  final _bindPort = TextEditingController();
   final _token = TextEditingController();
   Set<PeerTransport> _transports = {};
   PeerListenerCapabilities? _capabilities;
@@ -42,13 +105,16 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
   @override
   void initState() {
     super.initState();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
   }
 
   /// Releases the address and credential text controllers.
   @override
   void dispose() {
-    _address.dispose();
+    _bindHost.dispose();
+    _bindPort.dispose();
     _token.dispose();
     super.dispose();
   }
@@ -92,6 +158,7 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       _busy = true;
       _error = null;
     });
+    widget.onBusyChanged?.call(true);
     try {
       final config = await widget.clients.server.runtimeRemoteLinkService
           .localHostConfig();
@@ -109,36 +176,47 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+        widget.onBusyChanged?.call(false);
+      }
     }
   }
 
-  /// Persists listener settings and restarts the selected transports.
-  Future<void> _apply({bool? discovery}) async {
+  /// Persists listener settings, reporting success only after listeners restart.
+  Future<bool> _apply() async {
+    if (_busy || !_loaded || !widget.enabled) return false;
     final l10n = AppLocalizations.of(context)!;
-    final discoverable = discovery ?? _discoverable;
+    final discoverable = _discoverable;
     final appliedToken = _token.text.trim();
     final activeTransports = _transports.where(_supports).toList();
     final activeDiscovery =
         discoverable && _capabilities!.discoveryAdvertisement;
     if (activeTransports.isEmpty && activeDiscovery) {
       setState(() => _error = l10n.settingsPeerDiscoveryNeedsTransport);
-      return;
+      return false;
     }
     // TCP and the shared HTTP/WS server currently bind the same configured port.
     if (activeTransports.contains(PeerTransport.tcp) &&
         (activeTransports.contains(PeerTransport.http) ||
             activeTransports.contains(PeerTransport.webSocket))) {
       setState(() => _error = l10n.settingsPeerPortConflict);
-      return;
+      return false;
     }
-    if (_address.text.trim().isEmpty) {
+    final host = _bindHost.text.trim().replaceAll(RegExp(r'^\[|\]$'), '');
+    final portText = _bindPort.text.trim();
+    final port = int.tryParse(portText);
+    if (host.isEmpty) {
       setState(() => _error = l10n.settingsPeerAddressRequired);
-      return;
+      return false;
+    }
+    if (port == null || port < 1 || port > 65535) {
+      setState(() => _error = l10n.settingsPeerPortRequired);
+      return false;
     }
     if (appliedToken.isEmpty) {
       setState(() => _error = l10n.settingsPeerTokenRequired);
-      return;
+      return false;
     }
     setState(() {
       _busy = true;
@@ -148,7 +226,7 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     final service = widget.clients.server.runtimeRemoteLinkService;
     try {
       final config = PeerHostConfig(
-        bindAddress: _address.text.trim(),
+        bindAddress: _composeBindAddress(host, portText),
         token: appliedToken,
         transports: _transports.toList(),
         discoveryEnabled: discoverable,
@@ -165,13 +243,15 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       if (applied == null) {
         throw StateError('Listener configuration is missing after save');
       }
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _updateFields(applied));
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(l10n.settingsPeerApplied)));
+      return true;
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
+      return false;
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -182,11 +262,40 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
 
   /// Updates form values from the configuration persisted by the runtime.
   void _updateFields(PeerHostConfig config) {
-    _address.text = config.bindAddress;
+    final parts = _splitBindAddress(config.bindAddress);
+    _bindHost.text = parts.host;
+    _bindPort.text = parts.port;
     _token.text = config.token;
     _transports = config.transports.toSet();
     _portMode = config.portMode;
     _discoverable = config.discoveryEnabled;
+  }
+
+  /// Splits the persisted SocketAddr into independently editable host and port fields.
+  ({String host, String port}) _splitBindAddress(String address) {
+    final value = address.trim();
+    if (value.startsWith('[')) {
+      final close = value.indexOf(']');
+      if (close > 0 && close + 1 < value.length && value[close + 1] == ':') {
+        return (
+          host: value.substring(1, close),
+          port: value.substring(close + 2),
+        );
+      }
+    }
+    final separator = value.lastIndexOf(':');
+    if (separator > 0 && value.indexOf(':') == separator) {
+      return (
+        host: value.substring(0, separator),
+        port: value.substring(separator + 1),
+      );
+    }
+    return (host: value.replaceFirst(RegExp(r'^\[|\]$'), ''), port: '');
+  }
+
+  /// Reassembles the Host-compatible SocketAddr after form validation.
+  String _composeBindAddress(String host, String port) {
+    return host.contains(':') ? '[$host]:$port' : '$host:$port';
   }
 
   /// Checks one inbound transport against the loaded Host capability declaration.
@@ -215,7 +324,7 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
           ),
           value: _discoverable && _capabilities?.discoveryAdvertisement == true,
           onChanged: enabled && _capabilities!.discoveryAdvertisement
-              ? (value) => _apply(discovery: value)
+              ? (value) => setState(() => _discoverable = value)
               : null,
         ),
         Padding(
@@ -331,25 +440,49 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _address,
-                    enabled: enabled,
-                    decoration: InputDecoration(
-                      labelText: l10n.settingsPeerBindAddress,
-                      helperText: l10n.settingsPeerBindAddressHelp,
-                      helperMaxLines: 2,
-                      isDense: true,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: FilledButton.tonalIcon(
-                      onPressed: enabled ? () => _apply() : null,
-                      icon: const Icon(Icons.check_outlined, size: 18),
-                      label: Text(l10n.save),
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          key: const ValueKey('peer-bind-host'),
+                          controller: _bindHost,
+                          enabled: enabled,
+                          decoration: InputDecoration(
+                            labelText: l10n.settingsPeerBindAddress,
+                            helperText: l10n.settingsPeerBindAddressHelp,
+                            helperMaxLines: 2,
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          key: const ValueKey('peer-bind-port'),
+                          controller: _bindPort,
+                          enabled:
+                              enabled &&
+                              _portMode != PeerHostPortMode.automatic,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: InputDecoration(
+                            labelText: l10n.settingsPeerBindPort,
+                            helperText: _portMode == PeerHostPortMode.automatic
+                                ? l10n.settingsPeerBindPortAutomaticHelp
+                                : l10n.settingsPeerBindPortHelp,
+                            helperMaxLines: 2,
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

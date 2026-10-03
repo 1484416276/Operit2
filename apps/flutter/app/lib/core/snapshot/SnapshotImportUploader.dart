@@ -147,17 +147,17 @@ class SnapshotImportFile {
       _pendingStreamChunk = null;
       return bytes;
     }
-    _pendingStreamChunk = Uint8List.sublistView(bytes, _snapshotImportChunkSize);
+    _pendingStreamChunk = Uint8List.sublistView(
+      bytes,
+      _snapshotImportChunkSize,
+    );
     return Uint8List.sublistView(bytes, 0, _snapshotImportChunkSize);
   }
 }
 
 /// Refers to one fully uploaded archive used by snapshot import operations.
 class SnapshotImportSession {
-  const SnapshotImportSession({
-    required this.clients,
-    required this.archive,
-  });
+  const SnapshotImportSession({required this.clients, required this.archive});
 
   final GeneratedCoreProxyClients clients;
   final core_proxy.StagedArchive archive;
@@ -208,23 +208,39 @@ class SnapshotImportUploader {
   final GeneratedCoreProxyClients clients;
 
   /// Creates a staged archive and uploads exactly the selected file's declared byte length.
-  Future<SnapshotImportSession> stage(SnapshotImportFile file) async {
+  ///
+  /// [onProgress] is called with the number of bytes already sent and the
+  /// selected file's declared byte length. Keeping this callback at the
+  /// uploader boundary lets settings show progress before the archive is
+  /// available for inspection.
+  Future<SnapshotImportSession> stage(
+    SnapshotImportFile file, {
+    void Function(int uploadedBytes, int totalBytes)? onProgress,
+  }) async {
     final archiveId = await clients.servicesArchiveTransferManager
         .beginArchiveUpload(expectedByteLength: file.byteLength);
     try {
+      var uploadedBytes = 0;
+
+      Stream<Uint8List> trackedChunks() async* {
+        await for (final chunk in file.chunks()) {
+          uploadedBytes += chunk.length;
+          onProgress?.call(uploadedBytes, file.byteLength);
+          yield chunk;
+        }
+      }
+
+      onProgress?.call(0, file.byteLength);
       await clients.servicesArchiveTransferManager.writeArchiveUpload(
         archiveId: archiveId,
-        bytes: file.chunks(),
+        bytes: trackedChunks(),
       );
       final archive = await clients.servicesArchiveTransferManager
           .completeArchiveUpload(
             archiveId: archiveId,
             expectedByteLength: file.byteLength,
           );
-      return SnapshotImportSession(
-        clients: clients,
-        archive: archive,
-      );
+      return SnapshotImportSession(clients: clients, archive: archive);
     } catch (error, stackTrace) {
       await clients.servicesArchiveTransferManager.discardArchiveUpload(
         archiveId: archiveId,

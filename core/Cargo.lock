@@ -2326,6 +2326,7 @@ dependencies = [
  "jieba-rs",
  "js-sys",
  "operit-host-api",
+ "operit-host-native-storage",
  "operit-model",
  "operit-util",
  "regex",

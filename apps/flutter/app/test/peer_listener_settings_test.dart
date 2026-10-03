@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +26,8 @@ class TestBridge extends OperitRuntimeBridge {
   final startedTransports = <List<Object?>>[];
   final calls = <String>[];
   bool failStart = false;
+  Completer<void>? startGate;
+  Completer<void>? loadGate;
   String? selectedAddress;
   bool failLoad = false;
   bool failCapabilities = false;
@@ -46,6 +50,7 @@ class TestBridge extends OperitRuntimeBridge {
         }
         return encodeCoreLink([0, capabilities]);
       case 'localHostConfig':
+        await loadGate?.future;
         if (failLoad) throw StateError('Cannot read listener configuration');
         return encodeCoreLink([0, config]);
       case 'saveLocalHostConfig':
@@ -59,6 +64,7 @@ class TestBridge extends OperitRuntimeBridge {
         startedTransports.add(
           List<Object?>.from((request.args as Map)['transports'] as List),
         );
+        await startGate?.future;
         if (failStart) throw StateError('unsupported transport');
         if (config!['portMode'] == 'automatic' && selectedAddress != null) {
           config!['bindAddress'] = selectedAddress;
@@ -89,23 +95,42 @@ class TestBridge extends OperitRuntimeBridge {
 
 /// Verifies listener defaults, credentials, and explicit network binding.
 void main() {
-  /// Mounts the localized connection settings panel.
-  Future<void> mount(WidgetTester tester, TestBridge bridge) async {
+  /// Opens the localized connection settings dialog through a real route.
+  Future<void> mount(
+    WidgetTester tester,
+    TestBridge bridge, {
+    bool settle = true,
+  }) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         locale: const Locale('en'),
         home: Scaffold(
-          body: SingleChildScrollView(
-            child: PeerListenerSettings(
-              clients: GeneratedCoreProxyClients(bridge),
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => PeerListenerSettingsDialog(
+                  clients: GeneratedCoreProxyClients(bridge),
+                ),
+              ),
+              child: const Text('Open settings'),
             ),
           ),
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open settings'));
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
   }
 
   /// Submits the form after dismissing any transient success notification.
@@ -128,6 +153,8 @@ void main() {
     expect(bridge.calls, ['localHostConfig', 'listenerCapabilities']);
     expect(bridge.writes, isEmpty);
     expect(tester.widget<Switch>(find.byType(Switch)).value, true);
+    expect(find.text('Save'), findsOneWidget);
+    expect(find.text('OK'), findsNothing);
     expect(find.text('runtime-owned-token'), findsOneWidget);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
@@ -144,7 +171,107 @@ void main() {
       true,
     );
     expect(find.text('Fixed address and port'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
   });
+  testWidgets('discovery changes are applied only by the footer save', (
+    tester,
+  ) async {
+    final bridge = TestBridge();
+    await mount(tester, bridge);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(find.byType(Switch)).value, false);
+    expect(bridge.config!['discoveryEnabled'], true);
+    expect(bridge.calls, ['localHostConfig', 'listenerCapabilities']);
+    expect(bridge.writes, isEmpty);
+    await save(tester);
+    expect(bridge.config!['discoveryEnabled'], false);
+    expect(bridge.calls, [
+      'localHostConfig',
+      'listenerCapabilities',
+      'stopListening',
+      'saveLocalHostConfig',
+      'startListening',
+      'localHostConfig',
+    ]);
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
+  });
+
+  testWidgets('dismissing the dialog discards unsaved discovery changes', (
+    tester,
+  ) async {
+    final bridge = TestBridge();
+    await mount(tester, bridge);
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
+    expect(bridge.config!['discoveryEnabled'], true);
+    expect(bridge.writes, isEmpty);
+  });
+
+  testWidgets('failed save keeps the dialog open and allows retry', (
+    tester,
+  ) async {
+    final bridge = TestBridge()..failSave = true;
+    await mount(tester, bridge);
+    await save(tester);
+    expect(find.byType(PeerListenerSettingsDialog), findsOneWidget);
+    expect(
+      find.textContaining('Cannot save listener configuration'),
+      findsOneWidget,
+    );
+    expect(bridge.writes, isEmpty);
+    bridge.failSave = false;
+    await save(tester);
+    expect(bridge.writes, hasLength(1));
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
+  });
+
+  testWidgets('save is disabled until settings finish loading', (tester) async {
+    final bridge = TestBridge()..loadGate = Completer<void>();
+    await mount(tester, bridge, settle: false);
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Save'))
+          .onPressed,
+      isNull,
+    );
+    bridge.loadGate!.complete();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Save'))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('saving blocks duplicate submissions and premature dismissal', (
+    tester,
+  ) async {
+    final bridge = TestBridge()..startGate = Completer<void>();
+    await mount(tester, bridge);
+    await tester.tap(find.text('Save'));
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Save'))
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('Save'));
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pump();
+    expect(find.byType(PeerListenerSettingsDialog), findsOneWidget);
+    expect(bridge.writes, hasLength(1));
+    expect(bridge.startedTransports, hasLength(1));
+    bridge.startGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
+  });
+
   testWidgets('token refresh updates the remote connection credential', (
     tester,
   ) async {
@@ -167,6 +294,10 @@ void main() {
     await tester.pumpAndSettle();
     await save(tester);
     expect(bridge.config!['transports'], ['http', 'webSocket']);
+    expect(find.byType(PeerListenerSettingsDialog), findsNothing);
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilterChip, 'TCP'));
     await tester.pumpAndSettle();
     final count = bridge.calls.length;
@@ -185,6 +316,37 @@ void main() {
     expect(bridge.config!['portMode'], 'fixed');
     expect(bridge.config!['bindAddress'], '0.0.0.0:37195');
   });
+  testWidgets('splits IPv6 listen address and keeps fixed port editable', (
+    tester,
+  ) async {
+    final bridge = TestBridge();
+    bridge.config!['bindAddress'] = '[::1]:41234';
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-bind-host')))
+          .controller
+          ?.text,
+      '::1',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-bind-port')))
+          .controller
+          ?.text,
+      '41234',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-bind-port')))
+          .enabled,
+      isTrue,
+    );
+    await save(tester);
+    expect(bridge.config!['bindAddress'], '[::1]:41234');
+  });
   testWidgets('automatic mode reloads runtime-selected port after save', (
     tester,
   ) async {
@@ -199,7 +361,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Automatic port'));
     await tester.pumpAndSettle();
-    expect(find.text('0.0.0.0:37195'), findsOneWidget);
+    final portField = tester.widget<TextField>(
+      find.byKey(const ValueKey('peer-bind-port')),
+    );
+    expect(portField.controller?.text, '37195');
+    expect(portField.enabled, isFalse);
     await save(tester);
     expect(bridge.config!['bindAddress'], '0.0.0.0:37196');
     expect(bridge.config!['portMode'], 'automatic');
@@ -241,7 +407,20 @@ void main() {
     expect(tester.widget<Switch>(find.byType(Switch)).value, false);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
-    expect(find.text('127.0.0.1:48123'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-bind-host')))
+          .controller
+          ?.text,
+      '127.0.0.1',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-bind-port')))
+          .controller
+          ?.text,
+      '48123',
+    );
     await save(tester);
     expect(bridge.config!['bindAddress'], '127.0.0.1:48123');
     expect(bridge.config!['token'], 'existing-remote-token');
@@ -440,6 +619,12 @@ void main() {
       findsOneWidget,
     );
     expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Save'))
+          .onPressed,
+      isNull,
+    );
     expect(bridge.writes, isEmpty);
     expect(bridge.startedTransports, isEmpty);
   });

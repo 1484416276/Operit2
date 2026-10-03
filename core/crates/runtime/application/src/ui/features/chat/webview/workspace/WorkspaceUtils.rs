@@ -24,6 +24,16 @@ pub fn createAndGetDefaultWorkspace(
     chatId: String,
     projectType: Option<String>,
 ) -> Result<String, String> {
+    workspaceSyncStore().track(|| createDefaultWorkspace(chatId, projectType))
+}
+
+fn workspaceSyncStore() -> operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore {
+    operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
+        defaultRuntimeStorageHost(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+    )
+}
+
+fn createDefaultWorkspace(chatId: String, projectType: Option<String>) -> Result<String, String> {
     let projectType = resolveProjectType(projectType)?;
     let workspaceRelativePath = getWorkspaceRelativePath(&chatId);
 
@@ -39,9 +49,9 @@ pub fn createAndGetDefaultWorkspace(
 pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String> {
     let workspaceRelativePath = getWorkspaceRelativePath(&chatId);
     let storage = defaultRuntimeStorageHost();
-    storage
+    workspaceSyncStore().track(|| storage
         .delete(&workspaceRelativePath, true)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string()))?;
     PathMapper::workspacePath(&chatId)
 }
 

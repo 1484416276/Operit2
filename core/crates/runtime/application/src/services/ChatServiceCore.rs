@@ -1,5 +1,17 @@
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::CharacterCardManager::CharacterCardManager;
+use crate::data::preferences::ApiPreferences::ApiPreferences;
+use crate::data::preferences::ActivePromptManager::ActivePromptManager;
+use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::ModelConfigManager::ModelConfigManager;
+use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
+use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::InputMenuToggleDefinitionSnapshot;
+use crate::services::MemoryManagementService::MemoryManagementService;
+use operit_model::ActivePrompt::ActivePrompt;
+use operit_model::CharacterCard::CharacterCard;
+use operit_model::MemorySettings::MemorySettings;
+use operit_model::MemorySearchConfig::MemorySearchConfig;
+use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, ToolPermissionSystem};
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
     ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
     CHAT_INPUT_EVENT_INPUT_CHANGED, CHAT_INPUT_EVENT_SUBMITTED, CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
@@ -45,6 +57,8 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeSupport;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
 use operit_store::repository::MemoryAutoSaveCandidateRepository::MemoryAutoSaveCandidateRepository;
+use operit_store::repository::MemoryRepository::MemoryRepository;
+use operit_model::MemorySearchDebugInfo::MemorySearchDebugInfo;
 use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
 use operit_store::PreferencesDataStore::{
     combine4, combine5, mutableStateFlow, MutableStateFlow, StateFlow,
@@ -101,6 +115,26 @@ fn serializeChatInputHookResult(result: Option<ChatInputHookResult>) -> serde_js
         }),
         None => serde_json::Value::Null,
     }
+}
+
+/// Settings belong to the execution Core selected by the chat binding, not the UI device.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatInputMenuSettings {
+    pub enableMemoryAutoUpdate: bool,
+    pub permissionMode: AiPermissionMode,
+    pub disableStreamOutput: bool,
+    pub disableUserPreferenceDescription: bool,
+    pub pluginChangeVersion: i64,
+    pub pluginToggles: Vec<InputMenuToggleDefinitionSnapshot>,
+}
+
+/// Context and accounting for an explicit chat on its execution Core.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatInputMenuSummary {
+    pub currentWindowSize: i64,
+    pub inputTokenCount: i64,
+    pub outputTokenCount: i64,
+    pub maxContextLength: f64,
 }
 
 /// Describes the runtime state of one explicitly routed chat.
@@ -988,7 +1022,11 @@ impl ChatServiceCore {
     /// The binding, shared-memory mapping, and group-chat active-card fallback stay in Core;
     /// clients must not duplicate these rules.
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
-    pub fn memoryOwnerKeyForChat(&self, chatId: String) -> Result<String, String> {
+    pub async fn memoryOwnerKeyForChat(&self, chatId: String) -> Result<String, String> {
+        self.localMemoryOwnerKeyForChat(chatId)
+    }
+
+    fn localMemoryOwnerKeyForChat(&self, chatId: String) -> Result<String, String> {
         let chat = self.chatHistoryDelegate.chatHistoryManager
             .loadChatHistory(chatId.clone()).map_err(|error| error.to_string())?
             .ok_or_else(|| format!("memory owner chat not found: {chatId}"))?;
@@ -1006,7 +1044,7 @@ impl ChatServiceCore {
         chatId: String,
         messageTimestamps: Vec<i64>,
     ) -> Result<(), String> {
-        let ownerKey = self.memoryOwnerKeyForChat(chatId.clone())?;
+        let ownerKey = self.localMemoryOwnerKeyForChat(chatId.clone())?;
         let selected = messageTimestamps.into_iter().collect::<std::collections::BTreeSet<_>>();
         let timestamps = self.chatHistoryDelegate.chatHistoryManager.loadChatMessages(&chatId)
             .map_err(|e|e.to_string())?.into_iter()
@@ -2289,10 +2327,254 @@ impl ChatServiceCore {
         flow
     }
 
+    fn inputMenuBridge(&self) -> ToolPkgInputMenuToggleBridge {
+        let handler = self.runtimeToolHandler();
+        ToolPkgInputMenuToggleBridge::new(ToolPkgBridgeRuntime::new(
+            handler.clone(),
+            handler.getContext(),
+        ))
+    }
+
+    /// Reads all composer behavior settings from the chat's execution Core.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatInputMenuSettings(
+        &self,
+        chatId: Option<String>,
+    ) -> Result<ChatInputMenuSettings, String> {
+        let preferences = ApiPreferences::getInstance();
+        let bridge = self.inputMenuBridge();
+        Ok(ChatInputMenuSettings {
+            enableMemoryAutoUpdate: preferences
+                .enableMemoryAutoUpdateFlow()
+                .first()
+                .map_err(|e| e.to_string())?,
+            permissionMode: ToolPermissionSystem::getInstance()
+                .getAiPermissionMode()
+                .map_err(|e| e.to_string())?,
+            disableStreamOutput: preferences
+                .disableStreamOutputFlow()
+                .first()
+                .map_err(|e| e.to_string())?,
+            disableUserPreferenceDescription: preferences
+                .disableUserPreferenceDescriptionFlow()
+                .first()
+                .map_err(|e| e.to_string())?,
+            pluginChangeVersion: bridge.changeVersion(),
+            pluginToggles: bridge.createToggleDefinitionsForFlutter(
+                chatId,
+                Default::default(),
+                Some("main".into()),
+            ),
+        })
+    }
+
+    /// Writes only the supplied fields, preserving concurrent changes to other settings.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn saveChatInputMenuSettings(
+        &self,
+        chatId: Option<String>,
+        enableMemoryAutoUpdate: Option<bool>,
+        permissionMode: Option<AiPermissionMode>,
+        disableStreamOutput: Option<bool>,
+        disableUserPreferenceDescription: Option<bool>,
+    ) -> Result<(), String> {
+        let _ = chatId;
+        let preferences = ApiPreferences::getInstance();
+        if let Some(value) = enableMemoryAutoUpdate {
+            preferences
+                .saveEnableMemoryAutoUpdate(value)
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(value) = permissionMode {
+            ToolPermissionSystem::getInstance()
+                .saveAiPermissionMode(value)
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(value) = disableStreamOutput {
+            preferences
+                .saveDisableStreamOutput(value)
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(value) = disableUserPreferenceDescription {
+            preferences
+                .saveDisableUserPreferenceDescription(value)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn triggerChatInputMenuToggle(
+        &self,
+        chatId: Option<String>,
+        toggleId: String,
+    ) -> bool {
+        self.inputMenuBridge()
+            .triggerToggleForFlutter(toggleId, chatId, Some("main".into()))
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatInputMenuSummary(
+        &self,
+        chatId: Option<String>,
+    ) -> Result<ChatInputMenuSummary, String> {
+        let binding = FunctionalConfigManager::default()
+            .getModelBindingForFunction(FunctionType::CHAT)
+            .map_err(|e| e.to_string())?;
+        let config = ModelConfigManager::default()
+            .getResolvedModelConfig(&binding.providerId, &binding.modelId)
+            .map_err(|e| e.to_string())?;
+        let chat = match chatId {
+            Some(id) => self
+                .chatHistoryDelegate
+                .chatHistoryManager
+                .loadChatHistory(id)
+                .map_err(|e| e.to_string())?,
+            None => None,
+        };
+        Ok(ChatInputMenuSummary {
+            currentWindowSize: chat.as_ref().map(|c| c.currentWindowSize).unwrap_or(0),
+            inputTokenCount: chat.as_ref().map(|c| c.inputTokens).unwrap_or(0),
+            outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
+            maxContextLength: f64::from(config.context.maxContextLength),
+        })
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatCharacterCards(
+        &self,
+        chatId: Option<String>,
+    ) -> Result<Vec<CharacterCard>, String> {
+        let _ = chatId;
+        self.chatHistoryDelegate
+            .characterCardManager
+            .getAllCharacterCards()
+            .map_err(|e| e.to_string())
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatActivePromptFlow(&self, chatId: Option<String>) -> StateFlow<ActivePrompt> {
+        let _ = chatId;
+        ActivePromptManager::getInstance().activePromptFlow()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn switchChatCharacterCardTarget(
+        &mut self,
+        chatId: Option<String>,
+        characterCardId: String,
+    ) {
+        let _ = chatId;
+        self.switchActiveCharacterCardTarget(characterCardId);
+    }
+
+    /// Resolve memory ownership at the destination; never trust a UI-local owner key.
+    fn chatMemoryService(&self, chatId: String) -> Result<MemoryManagementService, String> {
+        let owner = self.localMemoryOwnerKeyForChat(chatId)?;
+        let runtime = self
+            .enhancedAiService
+            .as_ref()
+            .ok_or_else(|| "memory controls require an enhanced AI service".to_string())?;
+        Ok(MemoryManagementService::new(
+            owner,
+            runtime.provider_runtime_context.clone(),
+        ))
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatMemorySettings(&self, chatId: String) -> Result<MemorySettings, String> {
+        self.chatMemoryService(chatId)?.loadSettings()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn saveChatMemorySettings(
+        &self,
+        chatId: String,
+        settings: MemorySettings,
+    ) -> Result<(), String> {
+        self.chatMemoryService(chatId)?.saveSettings(settings)
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatMemorySearchConfig(
+        &self,
+        chatId: String,
+    ) -> Result<MemorySearchConfig, String> {
+        self.chatMemoryService(chatId)?.loadSearchConfig()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn saveChatMemorySearchConfig(
+        &self,
+        chatId: String,
+        config: MemorySearchConfig,
+    ) -> Result<(), String> {
+        self.chatMemoryService(chatId)?.saveSearchConfig(config)
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatMemoryBoundChats(&self, chatId: String) -> Result<Vec<ChatHistory>, String> {
+        self.chatMemoryService(chatId)?.boundChats()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatMemoryAutoSaveStatus(
+        &self,
+        chatId: String,
+    ) -> Result<operit_model::MemorySettings::MemoryAutoSaveStatus, String> {
+        self.chatMemoryService(chatId)?.autoSaveStatus()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn chatMemoryRebuildProgress(
+        &self,
+        chatId: String,
+    ) -> Result<operit_model::MemorySettings::MemoryRebuildProgress, String> {
+        Ok(self.chatMemoryService(chatId)?.rebuildProgress())
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn cancelChatMemoryRebuild(&self, chatId: String) -> Result<(), String> {
+        Ok(self.chatMemoryService(chatId)?.cancelRebuild())
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn startChatMemoryRebuild(
+        &self,
+        chatId: String,
+        chatIds: Vec<String>,
+        windowMessageCount: i32,
+        fromInclusive: Option<i64>,
+        toInclusive: Option<i64>,
+    ) -> Result<(), String> {
+        self.chatMemoryService(chatId)?.startRebuild(
+            chatIds,
+            windowMessageCount,
+            fromInclusive,
+            toInclusive,
+        )
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
+    pub async fn rebuildChatMemoryEmbeddings(&self, chatId: String) -> Result<i32, String> {
+        MemoryRepository::new(self.localMemoryOwnerKeyForChat(chatId)?).rebuildEmbeddings()
+    }
+
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub async fn searchChatMemoriesDebug(
+        &self,
+        chatId: String,
+        query: String,
+        config: MemorySearchConfig,
+    ) -> Result<MemorySearchDebugInfo, String> {
+        MemoryRepository::new(self.localMemoryOwnerKeyForChat(chatId)?)
+            .searchMemoriesDebug(&query, None, 0.0, None, None, config)
+    }
+
     /// Responds to a tool permission request through the owning chat route.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
-    pub fn respondChatToolPermission(
+    pub async fn respondChatToolPermission(
         &self,
         chatId: String,
         requestId: String,

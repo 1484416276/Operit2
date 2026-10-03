@@ -40,6 +40,27 @@ helpers, and sync operation logs.
 extensions, MCP configuration, caches, logs, exports, and the SQLite database
 path. Workspace directories are rooted at `workspaces/` beside `runtime/`.
 
+## ObjectBox Synchronization
+
+`ObjectBoxStore.rs` owns both entity persistence and typed sync replay. Register
+models once in `registerObjectBoxEntities!`; the declaration generates the sealed
+`ObjectBoxEntity` implementation, its stable `ENTITY_TYPE` wire name, and the
+incoming operation handler. Repositories open `ObjectBox::<T>::new(path)` without
+supplying a second, independently maintained type name. `OperitApplication` only
+routes the `objectbox` domain to `applyObjectBoxSyncOperation`.
+
+The registered types are `Memory`, `MemoryLink`, `MemoryAutoSaveCandidate`, and
+`DocumentChunk`. All support `upsert` and `delete`. Incoming payload type names
+must match the operation type; unknown types, unsupported operations, and invalid
+typed payloads fail explicitly. Replay does not append new local operations;
+clock/conflict handling remains with the existing sync operation store.
+
+Persisted type names, entity IDs, payloads, and database schemas are unchanged.
+Existing queued operations can be replayed without clearing data. Deploy the fix
+to all participating CoreNodes: an older receiver still rejects the newly handled
+types. This is data replication, not distributed task claiming; the memory
+scheduler's process-local guard is not a cross-node execution lock.
+
 ## Memory Search Read Semantics
 
 Like the Kotlin memory repository, memory searches read a snapshot without

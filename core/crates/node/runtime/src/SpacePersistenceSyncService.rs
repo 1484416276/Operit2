@@ -4,6 +4,8 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceStore};
 use operit_store::NetworkControlStore::NetworkControlStore;
+use operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use operit_store::RuntimeFileSyncStore::{RuntimeFileSyncReference, RuntimeFileSyncStore};
 use operit_store::SyncOperationStore::{subscribeSyncMutations, syncMutationRevision, SyncMutationSubscription, SyncOperation};
 use serde::de::DeserializeOwned;
@@ -39,6 +41,7 @@ struct SpacePersistenceSyncState {
     mutationSubscription: Mutex<Option<SyncMutationSubscription>>,
     peerChangesStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     synchronizationRequested: AtomicBool,
+    workspaceScanStop: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 /// 通过 Router 与可达的 Space 成员同步持久化数据，不拥有配对、发现或传输。
@@ -72,6 +75,7 @@ impl SpacePersistenceSyncService {
                 mutationSubscription: Mutex::new(None),
                 peerChangesStop: Mutex::new(None),
                 synchronizationRequested: AtomicBool::new(false),
+                workspaceScanStop: Mutex::new(None),
             }),
         }
     }
@@ -121,7 +125,7 @@ impl SpacePersistenceSyncService {
             .map_err(|error| format!("Space sync subscription lock poisoned: {error}"))? =
             Some(subscription);
 
-        if let Err(error) = self.startPeerChangeWatcher() {
+        if let Err(error) = self.startWorkspaceScanner().and_then(|_| self.startPeerChangeWatcher()) {
             let _ = self.stop();
             return Err(error);
         }
@@ -151,6 +155,9 @@ impl SpacePersistenceSyncService {
     /// Stops this CoreNode's persistence synchronizer and detaches its mutation listener.
     pub fn stop(&self) -> Result<(), String> {
         self.state.active.store(false, Ordering::Release);
+        if let Some(stop) = self.state.workspaceScanStop.lock().map_err(|e| e.to_string())?.take() {
+            let _ = stop.send(());
+        }
         if let Some(stop) = self.state.peerChangesStop.lock()
             .map_err(|error| format!("peer change subscription lock poisoned: {error}"))?.take() {
             let _ = stop.send(());
@@ -171,6 +178,41 @@ impl SpacePersistenceSyncService {
             services.remove(&localNodeId);
         }
         Ok(())
+    }
+
+    /// Observe shell/editor changes even while peers are offline. Uses the Host scheduler
+    /// so desktop, mobile and Web share one lifecycle and stop mechanism.
+    fn startWorkspaceScanner(&self) -> Result<(), String> {
+        let weakState = Arc::downgrade(&self.state);
+        let (sender, mut stopped) = tokio::sync::oneshot::channel();
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+            "core-node-workspace-file-scan",
+            Box::new(move || Box::pin(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut stopped => break,
+                        result = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(2000) => {
+                            if result.is_err() { break; }
+                        }
+                    }
+                    let Some(state) = weakState.upgrade() else { break; };
+                    if !state.active.load(Ordering::Acquire) { break; }
+                    let service = SpacePersistenceSyncService { state };
+                    if let Err(error) = service.workspaceFiles().scan() {
+                        operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService",
+                            &format!("Workspace scan failed; no missing-file deletions published: {error}"));
+                    }
+                    // Also retry interrupted transfers even when no new edits occur.
+                    let _ = service.scheduleSynchronization();
+                }
+            })),
+        ).map_err(|e| e.to_string())?;
+        *self.state.workspaceScanStop.lock().map_err(|e| e.to_string())? = Some(sender);
+        Ok(())
+    }
+
+    fn workspaceFiles(&self) -> WorkspaceFileSyncStore {
+        WorkspaceFileSyncStore::new(self.state.localRuntime.runtimeStorageHost(), RUNTIME_SYNC_DIR_PATH)
     }
 
     /// 只消费 runtime 的连接变化；不订阅发现端点，不读取或修改配对记录。
@@ -208,6 +250,7 @@ impl SpacePersistenceSyncService {
     /// Exchanges Space projections through direct pairings, then synchronizes every reachable member.
     pub async fn synchronizeOnce(&self) -> Result<(), String> {
         self.state.spaceStore.initialize()?;
+        self.workspaceFiles().scan()?;
         let services = self.state.nodeRouter.nodeServices()?;
         let activePeers = services.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
         let localNodeId = self.state.nodeRouter.localNodeId();

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use operit_host_api::{
-    HostManager::HostManager, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
+    HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager},
+    HostRuntimeTaskSchedulerHost, RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost,
 };
 use operit_store::db::AppDatabase::AppDatabase;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -108,19 +109,37 @@ impl SnapshotImportManager {
 
     /// Imports one sealed Operit1 snapshot and publishes progress events.
     #[allow(non_snake_case)]
-    pub fn importOperit1Snapshot(
+    pub async fn importOperit1Snapshot(
         &self,
         archive: StagedArchive,
     ) -> Result<Operit1SnapshotImportResult, String> {
-        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
-            stage: "parse".to_string(),
-            title: "解析快照".to_string(),
-            detail: "正在读取 Operit1 快照内容。".to_string(),
-            progress: 0.04,
-            active: true,
-        });
-        self.operit1Importer()
-            .importSnapshotSource(self.archiveTransferManager.openStagedArchive(&archive)?)
+        let source = self.archiveTransferManager.openStagedArchive(&archive)?;
+        let importer = self.operit1Importer();
+        let (resultSender, resultReceiver) = tokio::sync::oneshot::channel();
+        // Keep the synchronous migration on the host-owned scheduler. The
+        // importer performs blocking storage/SQLite work, and the scheduler
+        // is the runtime's supported boundary for that work; do not create a
+        // task/thread directly here.
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "operit1-snapshot-import",
+                Box::new(move || {
+                    Box::pin(async move {
+                        publishOperit1SnapshotImportProgress(Operit1SnapshotImportProgress {
+                            stage: "parse".to_string(),
+                            title: "解析快照".to_string(),
+                            detail: "正在读取 Operit1 快照内容。".to_string(),
+                            progress: 0.04,
+                            active: true,
+                        });
+                        let _ = resultSender.send(importer.importSnapshotSource(source));
+                    })
+                }),
+            )
+            .map_err(|error| format!("无法调度 Operit1 快照导入任务：{error}"))?;
+        resultReceiver
+            .await
+            .map_err(|error| format!("Operit1 快照导入任务未返回结果：{error}"))?
     }
 
     /// Observes the latest Operit1 snapshot import progress state.

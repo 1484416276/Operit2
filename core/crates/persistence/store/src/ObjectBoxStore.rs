@@ -12,7 +12,8 @@ use crate::RuntimeStorageHost::runtimeStoragePath;
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{toSqliteValue, SqliteRowGet, SqliteStore, SqliteStoreError};
 use crate::SyncOperationStore::{
-    NewSyncOperation, SyncOperationSemantics, SyncOperationStore, SyncOperationStoreError,
+    NewSyncOperation, SyncOperation, SyncOperationSemantics, SyncOperationStore,
+    SyncOperationStoreError,
 };
 
 /// Sync domain used for persisted ObjectBox-compatible entity operations.
@@ -31,8 +32,16 @@ pub enum ObjectBoxStoreError {
     Message(String),
 }
 
+mod registered {
+    pub trait Entity {}
+}
+
 /// Entity contract required by the ObjectBox compatibility layer.
-pub trait ObjectBoxEntity: Clone {
+///
+/// Sealed: register new entities below so writes and sync replay share the same wire type.
+pub trait ObjectBoxEntity: Clone + registered::Entity {
+    const ENTITY_TYPE: &'static str;
+
     /// Returns the stable ObjectBox-style numeric identifier.
     fn objectBoxId(&self) -> i64;
 
@@ -40,11 +49,53 @@ pub trait ObjectBoxEntity: Clone {
     fn setObjectBoxId(&mut self, id: i64);
 }
 
+// One declaration binds each model to its persisted wire name and typed replay handler.
+// Keep these names stable: existing databases and operation logs use them verbatim.
+macro_rules! registerObjectBoxEntities {
+    ($($entity:ty => $wireName:literal),+ $(,)?) => {
+        $(
+            impl registered::Entity for $entity {}
+
+            impl ObjectBoxEntity for $entity {
+                const ENTITY_TYPE: &'static str = $wireName;
+
+                fn objectBoxId(&self) -> i64 { self.id }
+                fn setObjectBoxId(&mut self, id: i64) { self.id = id; }
+            }
+        )+
+
+        /// Applies ObjectBox-domain operations without creating new outgoing operations.
+        #[allow(non_snake_case)]
+        pub fn applyObjectBoxSyncOperation(operation: &SyncOperation) -> Result<(), ObjectBoxStoreError> {
+            match (operation.domain.as_str(), operation.entityType.as_str(), operation.operation.as_str()) {
+                $(
+                    (OBJECTBOX_SYNC_DOMAIN, $wireName, "upsert" | "delete") => {
+                        ObjectBox::<$entity>::applySyncedEntity(
+                            &operation.entityId,
+                            &operation.operation,
+                            operation.payload.clone(),
+                        )
+                    }
+                )+
+                (domain, entityType, operationName) => Err(ObjectBoxStoreError::Message(format!(
+                    "unsupported sync operation: {domain}/{entityType}/{operationName}"
+                ))),
+            }
+        }
+    };
+}
+
+registerObjectBoxEntities! {
+    operit_model::Memory::Memory => "Memory",
+    operit_model::Memory::MemoryLink => "MemoryLink",
+    operit_model::MemoryAutoSaveCandidate::MemoryAutoSaveCandidate => "MemoryAutoSaveCandidate",
+    operit_model::DocumentChunk::DocumentChunk => "DocumentChunk",
+}
+
 #[derive(Clone)]
 /// SQLite-backed store that mimics the subset of ObjectBox APIs used by runtime data models.
 pub struct ObjectBox<T> {
     databaseStoragePath: String,
-    entityType: String,
     sqliteStore: SqliteStore,
     syncOperationStore: SyncOperationStore,
     changeSignal: Arc<ObjectBoxChangeSignal>,
@@ -62,7 +113,7 @@ where
     T: ObjectBoxEntity + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     /// Opens an ObjectBox-compatible entity store at the supplied database path.
-    pub fn new(path: PathBuf, entityType: impl Into<String>) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         let databasePath = path.with_extension("sqlite");
         let databaseStoragePath = runtimeStoragePath(&databasePath);
         let sqliteStore =
@@ -71,7 +122,6 @@ where
         let changeSignal = objectBoxChangeSignal(&databasePath);
         Self {
             databaseStoragePath,
-            entityType: entityType.into(),
             sqliteStore,
             syncOperationStore: SyncOperationStore::native(RuntimeStorePaths::default()),
             changeSignal,
@@ -88,7 +138,7 @@ where
     pub fn get(&self, id: i64) -> Result<Option<T>, ObjectBoxStoreError> {
         let row = self.sqliteStore.queryOne(
             "SELECT payload FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
-            vec![toSqliteValue(&self.entityType), toSqliteValue(&id)],
+            vec![toSqliteValue(T::ENTITY_TYPE), toSqliteValue(&id)],
         )?;
         match row {
             Some(row) => {
@@ -117,7 +167,7 @@ where
     pub fn put(&self, mut entity: T) -> Result<T, ObjectBoxStoreError> {
         let saved = self.sqliteStore.transaction(|transaction| {
             if entity.objectBoxId() == 0 {
-                entity.setObjectBoxId(newObjectBoxId(transaction, &self.entityType)?);
+                entity.setObjectBoxId(newObjectBoxId(transaction, T::ENTITY_TYPE)?);
             }
             let payload = serde_json::to_string(&entity)
                 .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
@@ -127,7 +177,7 @@ where
                  ON CONFLICT(entity_type, id)
                  DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
                 vec![
-                    toSqliteValue(&self.entityType),
+                    toSqliteValue(T::ENTITY_TYPE),
                     toSqliteValue(&entity.objectBoxId()),
                     toSqliteValue(&payload),
                     toSqliteValue(&nowMillis()),
@@ -147,7 +197,7 @@ where
             let mut saved = Vec::with_capacity(incoming.len());
             for mut entity in incoming {
                 if entity.objectBoxId() == 0 {
-                    entity.setObjectBoxId(newObjectBoxId(transaction, &self.entityType)?);
+                    entity.setObjectBoxId(newObjectBoxId(transaction, T::ENTITY_TYPE)?);
                 }
                 let payload = serde_json::to_string(&entity)
                     .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
@@ -157,7 +207,7 @@ where
                      ON CONFLICT(entity_type, id)
                      DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
                     vec![
-                        toSqliteValue(&self.entityType),
+                        toSqliteValue(T::ENTITY_TYPE),
                         toSqliteValue(&entity.objectBoxId()),
                         toSqliteValue(&payload),
                         toSqliteValue(&nowMillis()),
@@ -178,7 +228,7 @@ where
     pub fn remove(&self, id: i64) -> Result<bool, ObjectBoxStoreError> {
         let affected = self.sqliteStore.execute(
             "DELETE FROM objectbox_entities WHERE entity_type = ?1 AND id = ?2",
-            vec![toSqliteValue(&self.entityType), toSqliteValue(&id)],
+            vec![toSqliteValue(T::ENTITY_TYPE), toSqliteValue(&id)],
         )?;
         let removed = affected > 0;
         if removed {
@@ -233,10 +283,6 @@ where
         operation: &str,
         payload: serde_json::Value,
     ) -> Result<(), ObjectBoxStoreError> {
-        let (databaseStoragePath, id) = parseSyncedEntityId(entityId)?;
-        let databasePath = RuntimeStorePaths::default().runtime_storage_path(&databaseStoragePath);
-        let sqliteStore = SqliteStore::open(databasePath.clone())?;
-        initializeSchema(&sqliteStore)?;
         let entityType = payload
             .get("__entityType")
             .and_then(serde_json::Value::as_str)
@@ -246,6 +292,21 @@ where
                     "ObjectBox sync payload missing __entityType".to_string(),
                 )
             })?;
+        if entityType != T::ENTITY_TYPE {
+            return Err(ObjectBoxStoreError::Message(format!(
+                "ObjectBox sync entity type mismatch: expected {}, got {entityType}",
+                T::ENTITY_TYPE,
+            )));
+        }
+        if !matches!(operation, "upsert" | "delete") {
+            return Err(ObjectBoxStoreError::Message(format!(
+                "unsupported ObjectBox sync operation: {operation}"
+            )));
+        }
+        let (databaseStoragePath, id) = parseSyncedEntityId(entityId)?;
+        let databasePath = RuntimeStorePaths::default().runtime_storage_path(&databaseStoragePath);
+        let sqliteStore = SqliteStore::open(databasePath.clone())?;
+        initializeSchema(&sqliteStore)?;
         match operation {
             "upsert" => {
                 let entityPayload = payload.get("entity").cloned().ok_or_else(|| {
@@ -294,7 +355,7 @@ where
     fn readEntities(&self) -> Result<Vec<T>, ObjectBoxStoreError> {
         let rows = self.sqliteStore.queryRows(
             "SELECT payload FROM objectbox_entities WHERE entity_type = ?1 ORDER BY id ASC",
-            vec![toSqliteValue(&self.entityType)],
+            vec![toSqliteValue(T::ENTITY_TYPE)],
         )?;
         rows.into_iter()
             .map(|row| {
@@ -308,7 +369,7 @@ where
         self.sqliteStore.transaction(|transaction| {
             transaction.execute(
                 "DELETE FROM objectbox_entities WHERE entity_type = ?1",
-                vec![toSqliteValue(&self.entityType)],
+                vec![toSqliteValue(T::ENTITY_TYPE)],
             )?;
             for entity in entities {
                 let payload = serde_json::to_string(entity)
@@ -317,7 +378,7 @@ where
                     "INSERT INTO objectbox_entities(entity_type, id, payload, updated_at)
                      VALUES(?1, ?2, ?3, ?4)",
                     vec![
-                        toSqliteValue(&self.entityType),
+                        toSqliteValue(T::ENTITY_TYPE),
                         toSqliteValue(&entity.objectBoxId()),
                         toSqliteValue(&payload),
                         toSqliteValue(&nowMillis()),
@@ -340,12 +401,12 @@ where
             &deviceId,
             NewSyncOperation {
                 domain: OBJECTBOX_SYNC_DOMAIN.to_string(),
-                entityType: self.entityType.clone(),
+                entityType: T::ENTITY_TYPE.to_string(),
                 entityId: self.syncedEntityId(entity.objectBoxId()),
                 operation: "upsert".to_string(),
                 semantics: SyncOperationSemantics::EntityState,
                 payload: serde_json::json!({
-                    "__entityType": self.entityType,
+                    "__entityType": T::ENTITY_TYPE,
                     "entity": entity,
                 }),
             },
@@ -360,12 +421,12 @@ where
             &deviceId,
             NewSyncOperation {
                 domain: OBJECTBOX_SYNC_DOMAIN.to_string(),
-                entityType: self.entityType.clone(),
+                entityType: T::ENTITY_TYPE.to_string(),
                 entityId: self.syncedEntityId(id),
                 operation: "delete".to_string(),
                 semantics: SyncOperationSemantics::EntityState,
                 payload: serde_json::json!({
-                    "__entityType": self.entityType,
+                    "__entityType": T::ENTITY_TYPE,
                 }),
             },
         )?;

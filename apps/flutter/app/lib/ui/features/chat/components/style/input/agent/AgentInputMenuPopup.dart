@@ -1,10 +1,10 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
-import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../common/CharacterAvatar.dart';
@@ -37,19 +37,16 @@ class AgentInputMenuPopup extends StatefulWidget {
 class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   Future<_AgentInputMenuData>? _settingsFuture;
   Timer? _pluginChangeTimer;
-  int? _observedPluginChangeVersion;
+  String? _settingsSignature;
   bool _checkingPluginChangeVersion = false;
   bool _memoryExpanded = false;
   bool _memoryBusy = false;
   Timer? _memoryTimer;
   core_proxy.MemoryAutoSaveStatus? _queue;
-  String? _ownerKey;
   bool _pollingMemory = false;
   bool _toolsExpanded = false;
   bool _behaviorExpanded = false;
   bool _pluginsExpanded = false;
-
-  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
 
   @override
   void initState() {
@@ -64,6 +61,18 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   @override
+  void didUpdateWidget(covariant AgentInputMenuPopup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _settingsSignature = null;
+      _queue = null;
+      _settingsFuture = _loadSettings();
+      unawaited(_pollMemory());
+    }
+  }
+
+  @override
   void dispose() {
     _pluginChangeTimer?.cancel();
     _memoryTimer?.cancel();
@@ -74,17 +83,21 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     if (_pollingMemory || widget.currentChatId == null) return;
     _pollingMemory = true;
     try {
-      final owner = await widget.viewModel.memoryOwnerForChat(
-        widget.currentChatId!,
+      final chatId = widget.currentChatId!;
+      final viewModel = widget.viewModel;
+      final status = await viewModel.chatCore.chatMemoryAutoSaveStatus(
+        chatId: chatId,
       );
-      final status = await _clients.application
-          .memoryManagementService(ownerKey: owner)
-          .autoSaveStatus();
-      if (mounted)
+      if (!mounted ||
+          widget.currentChatId != chatId ||
+          widget.viewModel != viewModel) {
+        return;
+      }
+      if (mounted) {
         setState(() {
-          _ownerKey = owner;
           _queue = status;
         });
+      }
     } catch (error) {
       debugPrint('Memory queue status: $error');
     } finally {
@@ -97,23 +110,25 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     setState(() => _memoryBusy = true);
     try {
       await widget.viewModel.updateMemory(widget.currentChatId!);
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('记忆提取完成')));
+      }
       await _pollMemory();
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('记忆提取失败：$error')));
+      }
     } finally {
       if (mounted) setState(() => _memoryBusy = false);
     }
   }
 
   void _startPluginChangeObserver() {
-    _pluginChangeTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _pluginChangeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _checkPluginChangeVersion();
     });
   }
@@ -123,48 +138,61 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
       return;
     }
     _checkingPluginChangeVersion = true;
-    final int version;
     try {
-      version = await _clients.application
-          .inputMenuToggleBridge()
-          .changeVersion();
+      final chatId = widget.currentChatId;
+      final viewModel = widget.viewModel;
+      final settings = await viewModel.chatCore.chatInputMenuSettings(
+        chatId: chatId,
+      );
+      if (!mounted ||
+          widget.currentChatId != chatId ||
+          widget.viewModel != viewModel) {
+        return;
+      }
+      final signature = jsonEncode(settings.toJson());
+      if (_settingsSignature != signature) {
+        _settingsSignature = signature;
+        setState(() {
+          _settingsFuture = Future.value(_menuData(settings));
+        });
+      }
+    } catch (error) {
+      debugPrint('Chat input menu refresh: $error');
     } finally {
       _checkingPluginChangeVersion = false;
-    }
-    if (!mounted) {
-      return;
-    }
-    final observed = _observedPluginChangeVersion;
-    _observedPluginChangeVersion = version;
-    if (observed != null && observed != version) {
-      _reloadSettings();
     }
   }
 
   Future<_AgentInputMenuData> _loadSettings() async {
-    final inputMenuToggleBridge = _clients.application.inputMenuToggleBridge();
-    _observedPluginChangeVersion = await inputMenuToggleBridge.changeVersion();
-    final pluginToggles = await inputMenuToggleBridge
-        .createToggleDefinitionsForFlutter(
-          chatId: widget.currentChatId,
-          featureStates: const <String, bool>{},
-          runtime: 'main',
-        );
+    final settings = await widget.viewModel.chatCore.chatInputMenuSettings(
+      chatId: widget.currentChatId,
+    );
+    return _menuData(settings);
+  }
+
+  _AgentInputMenuData _menuData(core_proxy.ChatInputMenuSettings settings) {
     return _AgentInputMenuData(
-      enableMemoryAutoUpdate: await _clients.preferencesApiPreferences
-          .enableMemoryAutoUpdateFlow()
-          .first,
-      permissionMode: await _clients.permissionsToolPermissionSystem
-          .getAiPermissionMode(),
-      disableStreamOutput: await _clients.preferencesApiPreferences
-          .disableStreamOutputFlow()
-          .first,
-      disableUserPreferenceDescription: await _clients.preferencesApiPreferences
-          .disableUserPreferenceDescriptionFlow()
-          .first,
-      pluginToggles: pluginToggles,
+      enableMemoryAutoUpdate: settings.enableMemoryAutoUpdate,
+      permissionMode: settings.permissionMode,
+      disableStreamOutput: settings.disableStreamOutput,
+      disableUserPreferenceDescription:
+          settings.disableUserPreferenceDescription,
+      pluginToggles: settings.pluginToggles,
     );
   }
+
+  Future<void> _saveSettings({
+    bool? enableMemoryAutoUpdate,
+    core_proxy.AiPermissionMode? permissionMode,
+    bool? disableStreamOutput,
+    bool? disableUserPreferenceDescription,
+  }) => widget.viewModel.chatCore.saveChatInputMenuSettings(
+    chatId: widget.currentChatId,
+    enableMemoryAutoUpdate: enableMemoryAutoUpdate,
+    permissionMode: permissionMode,
+    disableStreamOutput: disableStreamOutput,
+    disableUserPreferenceDescription: disableUserPreferenceDescription,
+  );
 
   void _reloadSettings() {
     setState(() {
@@ -176,39 +204,31 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     _AgentInputMenuData data,
     bool enabled,
   ) async {
-    await _clients.preferencesApiPreferences
-        .saveDisableUserPreferenceDescription(isDisabled: !enabled);
+    await _saveSettings(disableUserPreferenceDescription: !enabled);
     _reloadSettings();
   }
 
   Future<void> _toggleMemoryAutoUpdate(_AgentInputMenuData data) async {
-    await _clients.preferencesApiPreferences.saveEnableMemoryAutoUpdate(
-      isEnabled: !data.enableMemoryAutoUpdate,
-    );
+    await _saveSettings(enableMemoryAutoUpdate: !data.enableMemoryAutoUpdate);
     _reloadSettings();
   }
 
   Future<void> _setPermissionMode(_ToolPermissionMode mode) async {
-    await _clients.permissionsToolPermissionSystem.saveAiPermissionMode(
-      mode: mode.permissionMode,
-    );
+    await _saveSettings(permissionMode: mode.permissionMode);
     _reloadSettings();
   }
 
   Future<void> _toggleDisableStreamOutput(_AgentInputMenuData data) async {
-    await _clients.preferencesApiPreferences.saveDisableStreamOutput(
-      isDisabled: !data.disableStreamOutput,
-    );
+    await _saveSettings(disableStreamOutput: !data.disableStreamOutput);
     _reloadSettings();
   }
 
   Future<void> _togglePlugin(
     core_proxy.InputMenuToggleDefinitionSnapshot toggle,
   ) async {
-    await _clients.application.inputMenuToggleBridge().triggerToggleForFlutter(
+    await widget.viewModel.chatCore.triggerChatInputMenuToggle(
       toggleId: toggle.id,
       chatId: widget.currentChatId,
-      runtime: 'main',
     );
     _reloadSettings();
   }
@@ -230,9 +250,18 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
             future: _settingsFuture,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                Error.throwWithStackTrace(
-                  snapshot.error!,
-                  snapshot.stackTrace!,
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('菜单加载失败：${snapshot.error}'),
+                      TextButton(
+                        onPressed: _reloadSettings,
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
                 );
               }
               final data = snapshot.data;
@@ -250,6 +279,7 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                   children: <Widget>[
                     _ChatSessionSummarySection(
                       viewModel: widget.viewModel,
+                      currentChatId: widget.currentChatId,
                       currentCharacterCardName: widget.currentCharacterCardName,
                       currentCharacterCardAvatarUri:
                           widget.currentCharacterCardAvatarUri,
@@ -311,14 +341,16 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                           dense: true,
                           leading: const Icon(Icons.tune),
                           title: const Text('沉淀、检索与历史重建'),
-                          enabled: _ownerKey != null,
+                          enabled: widget.currentChatId != null,
                           onTap: () async {
-                            final owner = _ownerKey;
-                            if (owner == null) return;
+                            final chatId = widget.currentChatId;
+                            if (chatId == null) return;
                             await MemoryOwnerControlsDialog.open(
                               context,
-                              _clients,
-                              owner,
+                              widget.viewModel.clients,
+                              '',
+                              chatCore: widget.viewModel.chatCore,
+                              chatId: chatId,
                             );
                             await _pollMemory();
                           },
@@ -406,12 +438,14 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
 class _ChatSessionSummarySection extends StatefulWidget {
   const _ChatSessionSummarySection({
     required this.viewModel,
+    required this.currentChatId,
     required this.currentCharacterCardName,
     required this.currentCharacterCardAvatarUri,
     required this.onDismiss,
   });
 
   final ChatViewModel viewModel;
+  final String? currentChatId;
   final String? currentCharacterCardName;
   final String? currentCharacterCardAvatarUri;
   final VoidCallback onDismiss;
@@ -424,85 +458,85 @@ class _ChatSessionSummarySection extends StatefulWidget {
 
 class _ChatSessionSummarySectionState
     extends State<_ChatSessionSummarySection> {
-  StreamSubscription<int>? _currentWindowSizeSubscription;
-  StreamSubscription<int>? _inputTokenCountSubscription;
-  StreamSubscription<int>? _outputTokenCountSubscription;
+  Timer? _summaryTimer;
+  bool _pollingSummary = false;
   Future<double>? _maxContextLengthFuture;
   int _currentWindowSize = 0;
   int _inputTokenCount = 0;
   int _outputTokenCount = 0;
   bool _statsExpanded = false;
 
-  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
-
-  /// Starts token statistic streams and loads the active model context size.
   @override
   void initState() {
     super.initState();
-    _maxContextLengthFuture = _loadMaxContextLength();
-    _subscribeToTokenStatistics();
+    _maxContextLengthFuture = _loadSummary();
+    _summaryTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_pollingSummary) return;
+      _pollingSummary = true;
+      try {
+        final chatId = widget.currentChatId;
+        final viewModel = widget.viewModel;
+        final value = await _loadSummary();
+        if (mounted &&
+            widget.currentChatId == chatId &&
+            widget.viewModel == viewModel) {
+          setState(() {
+            _maxContextLengthFuture = Future.value(value);
+          });
+        }
+      } catch (error) {
+        debugPrint('Chat menu summary refresh: $error');
+      } finally {
+        _pollingSummary = false;
+      }
+    });
   }
 
-  /// Opens the character card selector above the chat surface.
+  @override
+  void didUpdateWidget(covariant _ChatSessionSummarySection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _currentWindowSize = 0;
+      _inputTokenCount = 0;
+      _outputTokenCount = 0;
+      _maxContextLengthFuture = _loadSummary();
+    }
+  }
+
   void _showCharacterCardSelector() {
     final dialogFuture = showDialog<void>(
       context: context,
-      builder: (context) {
-        return _CharacterCardSelectorDialog(viewModel: widget.viewModel);
-      },
+      builder: (context) => _CharacterCardSelectorDialog(
+        viewModel: widget.viewModel,
+        currentChatId: widget.currentChatId,
+      ),
     );
     widget.onDismiss();
     unawaited(dialogFuture);
   }
 
-  /// Loads the context limit of the currently selected chat model.
-  Future<double> _loadMaxContextLength() async {
-    final binding = await _clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
-    final config = await _clients.preferencesModelConfigManager
-        .getResolvedModelConfig(
-          providerId: binding.providerId,
-          modelId: binding.modelId,
-        );
-    return config.context.maxContextLength;
+  Future<double> _loadSummary() async {
+    final chatId = widget.currentChatId;
+    final viewModel = widget.viewModel;
+    final summary = await viewModel.chatCore.chatInputMenuSummary(
+      chatId: chatId,
+    );
+    if (mounted &&
+        widget.currentChatId == chatId &&
+        widget.viewModel == viewModel) {
+      setState(() {
+        _currentWindowSize = summary.currentWindowSize;
+        _inputTokenCount = summary.inputTokenCount;
+        _outputTokenCount = summary.outputTokenCount;
+      });
+    }
+    return summary.maxContextLength;
   }
 
-  /// Subscribes to the runtime-owned token statistic streams.
-  void _subscribeToTokenStatistics() {
-    final holder = widget.viewModel.chatCore;
-    _currentWindowSizeSubscription = holder.currentWindowSizeFlow().listen((
-      value,
-    ) {
-      if (mounted) {
-        setState(() {
-          _currentWindowSize = value;
-        });
-      }
-    });
-    _inputTokenCountSubscription = holder.inputTokenCountFlow().listen((value) {
-      if (mounted) {
-        setState(() {
-          _inputTokenCount = value;
-        });
-      }
-    });
-    _outputTokenCountSubscription = holder.outputTokenCountFlow().listen((
-      value,
-    ) {
-      if (mounted) {
-        setState(() {
-          _outputTokenCount = value;
-        });
-      }
-    });
-  }
-
-  /// Stops token statistic streams when the menu closes.
   @override
   void dispose() {
-    unawaited(_currentWindowSizeSubscription?.cancel());
-    unawaited(_inputTokenCountSubscription?.cancel());
-    unawaited(_outputTokenCountSubscription?.cancel());
+    _summaryTimer?.cancel();
     super.dispose();
   }
 
@@ -693,9 +727,13 @@ class _ChatSessionSummarySectionState
 }
 
 class _CharacterCardSelectorDialog extends StatefulWidget {
-  const _CharacterCardSelectorDialog({required this.viewModel});
+  const _CharacterCardSelectorDialog({
+    required this.viewModel,
+    required this.currentChatId,
+  });
 
   final ChatViewModel viewModel;
+  final String? currentChatId;
 
   /// Creates the state for the character card selector dialog.
   @override
@@ -710,15 +748,13 @@ class _CharacterCardSelectorDialogState
   core_proxy.ActivePrompt? _activePrompt;
   String? _switchingCharacterCardId;
 
-  GeneratedCoreProxyClients get _clients => widget.viewModel.clients;
-
   /// Starts loading cards and observing the active prompt.
   @override
   void initState() {
     super.initState();
     _cardsFuture = _loadCharacterCards();
-    _activePromptSubscription = _clients.preferencesActivePromptManager
-        .activePromptFlow()
+    _activePromptSubscription = widget.viewModel.chatCore
+        .chatActivePromptFlow(chatId: widget.currentChatId)
         .listen((prompt) {
           if (mounted) {
             setState(() {
@@ -731,13 +767,16 @@ class _CharacterCardSelectorDialogState
 
   /// Loads the character cards shown in the selector dialog.
   Future<List<core_proxy.CharacterCard>> _loadCharacterCards() {
-    return _clients.preferencesCharacterCardManager.getAllCharacterCards();
+    return widget.viewModel.chatCore.chatCharacterCards(
+      chatId: widget.currentChatId,
+    );
   }
 
   /// Reads the active prompt for the initial selection marker.
   Future<void> _loadActivePrompt() async {
-    final prompt = await _clients.preferencesActivePromptManager
-        .getActivePrompt();
+    final prompt = await widget.viewModel.chatCore
+        .chatActivePromptFlow(chatId: widget.currentChatId)
+        .first;
     if (mounted) {
       setState(() {
         _activePrompt = prompt;
@@ -754,7 +793,8 @@ class _CharacterCardSelectorDialogState
       _switchingCharacterCardId = card.id;
     });
     try {
-      await widget.viewModel.chatCore.switchActiveCharacterCardTarget(
+      await widget.viewModel.chatCore.switchChatCharacterCardTarget(
+        chatId: widget.currentChatId,
         characterCardId: card.id,
       );
       if (mounted) {

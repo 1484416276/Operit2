@@ -27,6 +27,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 rusqlite.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -71,7 +71,7 @@ jobs:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - name: Check build environment
-        run: python3 tools/build_scripts/check_environment.py --products "${{ inputs.products }}" --cli-arches all --github-runner
+        run: python3 tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches all --github-runner
 
       - name: Cache Cargo outputs
         uses: actions/cache@v4

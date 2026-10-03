@@ -11,18 +11,28 @@ class MemoryOwnerControlsDialog extends StatefulWidget {
     super.key,
     required this.clients,
     required this.ownerKey,
+    this.chatCore,
+    this.chatId,
   });
   final GeneratedCoreProxyClients clients;
   final String ownerKey;
+  final GeneratedChatRuntimeHolderMainCoreProxy? chatCore;
+  final String? chatId;
 
   static Future<void> open(
     BuildContext context,
     GeneratedCoreProxyClients clients,
-    String ownerKey,
-  ) => showDialog<void>(
+    String ownerKey, {
+    GeneratedChatRuntimeHolderMainCoreProxy? chatCore,
+    String? chatId,
+  }) => showDialog<void>(
     context: context,
-    builder: (_) =>
-        MemoryOwnerControlsDialog(clients: clients, ownerKey: ownerKey),
+    builder: (_) => MemoryOwnerControlsDialog(
+      clients: clients,
+      ownerKey: ownerKey,
+      chatCore: chatCore,
+      chatId: chatId,
+    ),
   );
 
   @override
@@ -31,8 +41,13 @@ class MemoryOwnerControlsDialog extends StatefulWidget {
 }
 
 class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
-  late final service = widget.clients.application.memoryManagementService(
-    ownerKey: widget.ownerKey,
+  late final service = _MemoryOwnerControlsService(
+    widget.clients.application.memoryManagementService(
+      ownerKey: widget.ownerKey,
+    ),
+    widget.chatCore,
+    widget.chatId,
+    widget.clients.repositoryMemoryRepositoryForOwner(widget.ownerKey),
   );
   final rules = TextEditingController();
   final endpoint = TextEditingController();
@@ -105,11 +120,12 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
     try {
       final q = await service.autoSaveStatus();
       final p = await service.rebuildProgress();
-      if (mounted)
+      if (mounted) {
         setState(() {
           queue = q;
           progress = p;
         });
+      }
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
@@ -149,10 +165,11 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
       ),
     );
     await service.saveSearchConfig(config: search!);
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('记忆设置已保存')));
+    }
   });
 
   void weight(int index, double value) {
@@ -176,7 +193,7 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
       firstDate: DateTime(2000),
       lastDate: now.add(const Duration(days: 1)),
     );
-    if (date != null && mounted)
+    if (date != null && mounted) {
       setState(() {
         if (start) {
           from = date;
@@ -184,6 +201,7 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
           to = date;
         }
       });
+    }
   }
 
   bool get rebuilding => ['running', 'preparing'].contains(progress?.status);
@@ -204,7 +222,7 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('所属记忆库：${widget.ownerKey}'),
+                    Text('所属记忆库：${q?.ownerKey ?? widget.ownerKey}'),
                     if (q != null) ...[
                       Text(
                         '待处理 ${q.pendingCandidates} 条 / ${q.pendingChats} 个聊天 · 处理中 ${q.processingCandidates} · 失败 ${q.failedCandidates}',
@@ -333,11 +351,7 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
                         onPressed: busy
                             ? null
                             : () => run(() async {
-                                await widget.clients
-                                    .repositoryMemoryRepositoryForOwner(
-                                      widget.ownerKey,
-                                    )
-                                    .rebuildEmbeddings();
+                                await service.rebuildEmbeddings();
                               }),
                         child: const Text('重建向量缓存（使用已保存设置）'),
                       ),
@@ -350,22 +364,15 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
                       onPressed: busy
                           ? null
                           : () => run(() async {
-                              final result = await widget.clients
-                                  .repositoryMemoryRepositoryForOwner(
-                                    widget.ownerKey,
-                                  )
-                                  .searchMemoriesDebug(
-                                    query: query.text,
-                                    folderPath: null,
-                                    relevanceThreshold: 0,
-                                    createdAtStartMs: null,
-                                    createdAtEndMs: null,
-                                    config: search!,
-                                  );
-                              if (mounted)
+                              final result = await service.searchMemoriesDebug(
+                                query: query.text,
+                                config: search!,
+                              );
+                              if (mounted) {
                                 setState(
                                   () => simulation = result.toJson().toString(),
                                 );
+                              }
                             }),
                       child: const Text('模拟当前权重'),
                     ),
@@ -498,4 +505,86 @@ class _MemoryOwnerControlsDialogState extends State<MemoryOwnerControlsDialog> {
       ],
     );
   }
+}
+
+/// Chat entry points route by chat id; settings-screen entry points remain owner-local.
+class _MemoryOwnerControlsService {
+  const _MemoryOwnerControlsService(
+    this.local,
+    this.chat,
+    this.chatId,
+    this.repository,
+  ) : assert((chat == null) == (chatId == null));
+
+  final GeneratedApplicationMemoryManagementServiceCoreProxy local;
+  final GeneratedChatRuntimeHolderMainCoreProxy? chat;
+  final String? chatId;
+  final GeneratedRepositoryMemoryRepositoryCoreProxy repository;
+
+  Future<core.MemorySettings> loadSettings() => chat == null
+      ? local.loadSettings()
+      : chat!.chatMemorySettings(chatId: chatId!);
+  Future<void> saveSettings({required core.MemorySettings settings}) =>
+      chat == null
+      ? local.saveSettings(settings: settings)
+      : chat!.saveChatMemorySettings(chatId: chatId!, settings: settings);
+  Future<core.MemorySearchConfig> loadSearchConfig() => chat == null
+      ? local.loadSearchConfig()
+      : chat!.chatMemorySearchConfig(chatId: chatId!);
+  Future<void> saveSearchConfig({required core.MemorySearchConfig config}) =>
+      chat == null
+      ? local.saveSearchConfig(config: config)
+      : chat!.saveChatMemorySearchConfig(chatId: chatId!, config: config);
+  Future<List<core.ChatHistory>> boundChats() => chat == null
+      ? local.boundChats()
+      : chat!.chatMemoryBoundChats(chatId: chatId!);
+  Future<core.MemoryAutoSaveStatus> autoSaveStatus() => chat == null
+      ? local.autoSaveStatus()
+      : chat!.chatMemoryAutoSaveStatus(chatId: chatId!);
+  Future<core.MemoryRebuildProgress> rebuildProgress() => chat == null
+      ? local.rebuildProgress()
+      : chat!.chatMemoryRebuildProgress(chatId: chatId!);
+  Future<void> cancelRebuild() => chat == null
+      ? local.cancelRebuild()
+      : chat!.cancelChatMemoryRebuild(chatId: chatId!);
+  Future<int> rebuildEmbeddings() => chat == null
+      ? repository.rebuildEmbeddings()
+      : chat!.rebuildChatMemoryEmbeddings(chatId: chatId!);
+  Future<core.MemorySearchDebugInfo> searchMemoriesDebug({
+    required String query,
+    required core.MemorySearchConfig config,
+  }) => chat == null
+      ? repository.searchMemoriesDebug(
+          query: query,
+          config: config,
+          folderPath: null,
+          relevanceThreshold: 0,
+          createdAtStartMs: null,
+          createdAtEndMs: null,
+        )
+      : chat!.searchChatMemoriesDebug(
+          chatId: chatId!,
+          query: query,
+          config: config,
+        );
+
+  Future<void> startRebuild({
+    required List<String> chatIds,
+    required int windowMessageCount,
+    required int? fromInclusive,
+    required int? toInclusive,
+  }) => chat == null
+      ? local.startRebuild(
+          chatIds: chatIds,
+          windowMessageCount: windowMessageCount,
+          fromInclusive: fromInclusive,
+          toInclusive: toInclusive,
+        )
+      : chat!.startChatMemoryRebuild(
+          chatId: chatId!,
+          chatIds: chatIds,
+          windowMessageCount: windowMessageCount,
+          fromInclusive: fromInclusive,
+          toInclusive: toInclusive,
+        );
 }

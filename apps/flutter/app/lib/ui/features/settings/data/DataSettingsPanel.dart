@@ -89,6 +89,12 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
               error: error,
               stackTrace: stackTrace,
             );
+            _operit1ImportProgressSubscription = null;
+          },
+          onDone: () {
+            // Core watch streams are one-shot and close after the terminal
+            // event. Clear the handle so a later import can subscribe again.
+            _operit1ImportProgressSubscription = null;
           },
         );
   }
@@ -370,6 +376,27 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
+  /// Publishes a local progress state for the file-selection and staging phase.
+  void _setOperit1ImportProgress({
+    required String stage,
+    required String title,
+    required String detail,
+    required double progress,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _operit1ImportProgress = Operit1SnapshotImportProgress(
+        stage: stage,
+        title: title,
+        detail: detail,
+        progress: progress.clamp(0.0, 1.0).toDouble(),
+        active: true,
+      );
+    });
+  }
+
   /// Selects, previews, confirms, and imports a complete Operit1 snapshot.
   Future<void> _importOperit1Snapshot() async {
     final l10n = AppLocalizations.of(context)!;
@@ -377,15 +404,52 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     if (file == null) {
       return;
     }
+    if (!mounted) {
+      await file.close();
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _operit1ImportProgress = const Operit1SnapshotImportProgress(
+        stage: 'prepare',
+        title: '准备导入',
+        detail: '正在准备 Operit1 快照。',
+        progress: 0.0,
+        active: true,
+      );
+    });
     ClientLogger.i(
       'settings snapshot selected name=${file.name} bytes=${file.byteLength}',
       tag: _operit1SnapshotImportLogTag,
     );
-    setState(() => _busy = true);
     SnapshotImportSession? stagedSession;
     late final Operit1SnapshotPreview preview;
+    var lastUploadPercent = -1;
     try {
-      stagedSession = await SnapshotImportUploader(widget.clients).stage(file);
+      stagedSession = await SnapshotImportUploader(widget.clients).stage(
+        file,
+        onProgress: (uploadedBytes, totalBytes) {
+          final uploadPercent = totalBytes <= 0
+              ? 100
+              : (uploadedBytes * 100 / totalBytes).floor().clamp(0, 100);
+          if (uploadPercent == lastUploadPercent) {
+            return;
+          }
+          lastUploadPercent = uploadPercent;
+          _setOperit1ImportProgress(
+            stage: 'upload',
+            title: '上传快照',
+            detail: '正在读取并上传快照文件（$uploadPercent%）。',
+            progress: 0.18 * uploadPercent / 100,
+          );
+        },
+      );
+      _setOperit1ImportProgress(
+        stage: 'inspect',
+        title: '检查快照',
+        detail: '正在检查 Operit1 快照内容，请稍候。',
+        progress: 0.20,
+      );
       ClientLogger.i(
         'settings snapshot upload completed bytes=${stagedSession.byteLength}; inspection started',
         tag: _operit1SnapshotImportLogTag,
@@ -406,6 +470,9 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       if (session != null) {
         await session.discard();
       }
+      if (mounted) {
+        setState(() => _operit1ImportProgress = null);
+      }
       if (!mounted) {
         return;
       }
@@ -425,6 +492,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
       await session.discard();
       return;
     }
+    setState(() => _operit1ImportProgress = null);
     final confirmed = await _Operit1SnapshotImportDialog.show(
       context: context,
       fileName: file.name,
@@ -437,7 +505,13 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
     setState(() {
       _busy = true;
-      _operit1ImportProgress = null;
+      _operit1ImportProgress = const Operit1SnapshotImportProgress(
+        stage: 'start',
+        title: '开始导入',
+        detail: '正在启动 Operit1 数据迁移。',
+        progress: 0.02,
+        active: true,
+      );
     });
     try {
       ClientLogger.i(
@@ -451,6 +525,9 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         tag: _operit1SnapshotImportLogTag,
       );
       await session.discard();
+      if (mounted) {
+        setState(() => _operit1ImportProgress = null);
+      }
       if (!mounted) {
         return;
       }

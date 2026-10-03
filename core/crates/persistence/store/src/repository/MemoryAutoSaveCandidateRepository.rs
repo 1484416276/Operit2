@@ -2,19 +2,7 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_model::MemoryAutoSaveCandidate::MemoryAutoSaveCandidate;
 use operit_util::OperitPaths::memoryAutoSaveCandidateSqlitePath;
 
-use crate::ObjectBoxStore::{ObjectBox, ObjectBoxEntity};
-
-impl ObjectBoxEntity for MemoryAutoSaveCandidate {
-    /// Returns the persisted candidate identifier.
-    fn objectBoxId(&self) -> i64 {
-        self.id
-    }
-
-    /// Assigns the persisted candidate identifier.
-    fn setObjectBoxId(&mut self, id: i64) {
-        self.id = id;
-    }
-}
+use crate::ObjectBoxStore::ObjectBox;
 
 /// Persists deferred memory extraction requests for one owner namespace.
 #[derive(Clone)]
@@ -29,7 +17,6 @@ impl MemoryAutoSaveCandidateRepository {
             candidateBox: ObjectBox::new(
                 memoryAutoSaveCandidateSqlitePath(ownerKey)
                     .expect("memory auto-save candidate path must be valid"),
-                "MemoryAutoSaveCandidate",
             ),
         }
     }

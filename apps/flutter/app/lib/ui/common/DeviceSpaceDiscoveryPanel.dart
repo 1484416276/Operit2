@@ -113,23 +113,9 @@ class _DeviceSpaceDiscoveryPanelState extends State<DeviceSpaceDiscoveryPanel> {
     } else {
       await showDialog<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(l10n.deviceSpaceConnectionSettings),
-          content: SizedBox(
-            width: 440,
-            child: SingleChildScrollView(
-              child: PeerListenerSettings(
-                clients: widget.clients,
-                onBusyChanged: widget.onBusyChanged,
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(l10n.ok),
-            ),
-          ],
+        builder: (_) => PeerListenerSettingsDialog(
+          clients: widget.clients,
+          onBusyChanged: widget.onBusyChanged,
         ),
       );
     }

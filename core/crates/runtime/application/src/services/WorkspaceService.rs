@@ -58,6 +58,7 @@ pub struct WorkspaceService {
     chatDao: ChatDao,
     workspaceStore: WorkspacePreferenceStore,
     fileSystemHost: Arc<dyn FileSystemHost>,
+    runtimeStorageHost: Arc<dyn operit_host_api::RuntimeStorageHost>,
     runtimeStoreRoot: std::path::PathBuf,
     workspaceCollectionRoot: std::path::PathBuf,
 }
@@ -85,6 +86,7 @@ impl WorkspaceService {
                 .fileSystemHost
                 .clone()
                 .expect("FileSystemHost must be configured for WorkspaceService"),
+            runtimeStorageHost: runtimeStorageHost.clone(),
             runtimeStoreRoot,
             workspaceCollectionRoot,
         }
@@ -246,8 +248,8 @@ impl WorkspaceService {
     ) -> Result<(), String> {
         let workspace = self.boundWorkspace(&chatId)?;
         let filePath = resolveWorkspaceRelativePath(&workspace, &relativePath)?;
-        self.vfsForWorkspace(&filePath)
-            .writeFile(&filePath, &content, false)
+        self.trackWorkspaceChange(&filePath, || self.vfsForWorkspace(&filePath)
+            .writeFile(&filePath, &content, false))
     }
 
     /// Writes base64-decoded bytes into a chat-bound workspace file.
@@ -263,8 +265,8 @@ impl WorkspaceService {
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
-        self.vfsForWorkspace(&filePath)
-            .writeFileBytes(&filePath, &bytes)
+        self.trackWorkspaceChange(&filePath, || self.vfsForWorkspace(&filePath)
+            .writeFileBytes(&filePath, &bytes))
     }
 
     /// Opens a chat-bound workspace file through the host file opener.
@@ -387,6 +389,14 @@ impl WorkspaceService {
     #[allow(non_snake_case)]
     fn workspaceRoot(&self, chatId: String) -> Result<String, String> {
         Ok(self.boundWorkspace(&chatId)?.primaryFolder().path.clone())
+    }
+
+    fn trackWorkspaceChange<T>(&self, path: &str, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        if PathMapper::relativePath(PathMapper::workspaceCollectionPath(), path)?.is_some() {
+            operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(
+                self.runtimeStorageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            ).track(change)
+        } else { change() }
     }
 
     /// Creates a VFS instance scoped to the configured workspace roots.

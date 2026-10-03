@@ -1150,7 +1150,7 @@ def check_release_environment(products, cli_arches, no_wsl, wsl_distro):
         environment_products = "all"
     command = [
         sys.executable,
-        BUILD_SCRIPTS_DIR / "check_environment.py",
+        BUILD_SCRIPTS_DIR / "check_build_environment.py",
         "--products",
         environment_products,
         "--cli-arches",

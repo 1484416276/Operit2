@@ -11,32 +11,7 @@ use operit_model::MemoryExportModel::{
 };
 use operit_util::OperitPaths::{memoryLinkSqlitePath, memorySqlitePath};
 
-use crate::ObjectBoxStore::{ObjectBox, ObjectBoxEntity};
-
-impl ObjectBoxEntity for Memory {
-    fn objectBoxId(&self) -> i64 {
-        self.id
-    }
-
-    fn setObjectBoxId(&mut self, id: i64) {
-        self.id = id;
-    }
-}
-
-impl ObjectBoxEntity for MemoryLink {
-    fn objectBoxId(&self) -> i64 {
-        self.id
-    }
-
-    fn setObjectBoxId(&mut self, id: i64) {
-        self.id = id;
-    }
-}
-
-impl ObjectBoxEntity for operit_model::DocumentChunk::DocumentChunk {
-    fn objectBoxId(&self) -> i64 { self.id }
-    fn setObjectBoxId(&mut self, id: i64) { self.id = id; }
-}
+use crate::ObjectBoxStore::ObjectBox;
 
 /// Repository for memories and typed links owned by one memory namespace.
 #[derive(Clone)]
@@ -70,12 +45,12 @@ impl MemoryRepository {
             ownerKey: ownerKey.clone(),
             memoryBox: ObjectBox::new(
                 memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"),
-                "Memory",
             ),
-            chunkBox: ObjectBox::new(memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"), "DocumentChunk"),
+            chunkBox: ObjectBox::new(
+                memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"),
+            ),
             linkBox: ObjectBox::new(
                 memoryLinkSqlitePath(&ownerKey).expect("memory link sqlite path must be valid"),
-                "MemoryLink",
             ),
         }
     }

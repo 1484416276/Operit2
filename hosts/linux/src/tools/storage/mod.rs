@@ -224,11 +224,21 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).readBytes(path);
+        }
         Ok(fs::read(self.resolve(path)?)?)
     }
 
     /// Reads one bounded byte range from Linux runtime storage.
     fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).readBytesRange(path, offset, length);
+        }
         let mut file = fs::File::open(self.resolve(path)?)?;
         file.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; length];
@@ -238,6 +248,11 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
     }
 
     fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).writeBytes(path, content);
+        }
         let path = self.resolve(path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -248,6 +263,11 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
 
     /// Appends bytes to a Linux runtime storage file.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).appendBytes(path, content);
+        }
         let path = self.resolve(path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -258,6 +278,11 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
     }
 
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).delete(path, recursive);
+        }
         let path = self.resolve(path)?;
         if !path.exists() {
             return Ok(());
@@ -275,10 +300,22 @@ impl RuntimeStorageHost for LinuxRuntimeStorageHost {
     }
 
     fn exists(&self, path: &str) -> HostResult<bool> {
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(), self.workspaceRoot.clone(),
+            ).exists(path);
+        }
         Ok(self.resolve(path)?.exists())
     }
 
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        // Use the shared non-following traversal for managed workspace contents.
+        if normalizeStoragePath(prefix)?.first().map(String::as_str) == Some("workspaces") {
+            return operit_host_native_common::NativeRuntimeStorageHost::new(
+                self.runtimeRoot.clone(),
+                self.workspaceRoot.clone(),
+            ).list(prefix);
+        }
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
         if !directory.exists() {

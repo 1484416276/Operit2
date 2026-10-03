@@ -293,6 +293,29 @@ impl NativeRuntimeStorageHost {
         }
     }
 
+    // Enforce non-following workspace access at the actual storage boundary too:
+    // recheck components before reads/writes, rather than trusting an earlier listing.
+    fn resolveFile(&self, path: &str) -> HostResult<PathBuf> {
+        let resolved = self.resolve(path)?;
+        let segments = normalizeStoragePath(path)?;
+        if segments.first().map(String::as_str) == Some("workspaces") {
+            let mut current = self.workspaceRoot.clone();
+            for segment in segments.iter().skip(1) {
+                current.push(segment);
+                match fs::symlink_metadata(&current) {
+                    Ok(metadata) if isStorageLink(&metadata) =>
+                        return Err(HostError::new("Workspace storage does not follow links")),
+                    Ok(metadata) if !metadata.is_dir() && !metadata.is_file() =>
+                        return Err(HostError::new("Workspace storage requires a regular file or directory")),
+                    Ok(_) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(resolved)
+    }
+
     fn storagePathForPhysical(&self, path: &Path) -> HostResult<String> {
         if let Ok(relative) = path.strip_prefix(&self.runtimeRoot) {
             return Ok(prefixedPath("runtime", relative));
@@ -326,7 +349,7 @@ impl NativeRuntimeStorageHost {
 impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
     /// Opens one private streaming write session for a validated storage path.
     fn createWriteSession(&self, path: &str) -> HostResult<Box<dyn RuntimeStorageWriteSession>> {
-        let targetPath = self.resolve(path)?;
+        let targetPath = self.resolveFile(path)?;
         let parent = targetPath
             .parent()
             .ok_or_else(|| HostError::new("Runtime storage file has no parent directory"))?;
@@ -354,12 +377,12 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-        Ok(fs::read(self.resolve(path)?)?)
+        Ok(fs::read(self.resolveFile(path)?)?)
     }
 
     /// Reads one bounded byte range from native runtime storage.
     fn readBytesRange(&self, path: &str, offset: u64, length: usize) -> HostResult<Vec<u8>> {
-        let mut file = fs::File::open(self.resolve(path)?)?;
+        let mut file = fs::File::open(self.resolveFile(path)?)?;
         file.seek(SeekFrom::Start(offset))?;
         let mut bytes = vec![0; length];
         let count = file.read(&mut bytes)?;
@@ -375,7 +398,7 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
 
     /// Appends bytes to a native runtime storage file.
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-        let path = self.resolve(path)?;
+        let path = self.resolveFile(path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -388,7 +411,7 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
-        let path = self.resolve(path)?;
+        let path = self.resolveFile(path)?;
         if !path.exists() {
             return Ok(());
         }
@@ -405,18 +428,63 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn exists(&self, path: &str) -> HostResult<bool> {
-        Ok(self.resolve(path)?.exists())
+        let resolved = self.resolve(path)?;
+        if normalizeStoragePath(path)?.first().map(String::as_str) == Some("workspaces") {
+            // A dangling link is still an occupied destination, never a new writable file.
+            return match fs::symlink_metadata(resolved) {
+                Ok(_) => Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error.into()),
+            };
+        }
+        Ok(resolved.exists())
     }
 
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
+        let managedWorkspace = normalizeStoragePath(prefix)?.first().map(String::as_str)
+            == Some("workspaces");
+        if managedWorkspace {
+            // Never descend into links, even when a caller lists a linked directory directly.
+            // The configured workspace root itself is trusted; only its descendants are scanned.
+            let relative = directory.strip_prefix(&self.workspaceRoot)
+                .map_err(|_| HostError::new("Workspace listing escaped its root"))?;
+            let mut current = self.workspaceRoot.clone();
+            for component in relative.components() {
+                current.push(component);
+                match fs::symlink_metadata(&current) {
+                    Ok(metadata) if isStorageLink(&metadata) => return Ok(entries),
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
         if !directory.exists() {
             return Ok(entries);
         }
         for entry in fs::read_dir(directory)? {
             let entry = entry?;
-            let metadata = entry.metadata()?;
+            let metadata = if managedWorkspace {
+                // The host's atomic writer stages a private sibling until commit.
+                // Never publish that transient file as user workspace content.
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') && name.strip_suffix(".partial")
+                    .and_then(|stem| stem.rsplit_once('.'))
+                    .is_some_and(|(_, id)| uuid::Uuid::parse_str(id).is_ok()) {
+                    continue;
+                }
+                let metadata = fs::symlink_metadata(entry.path())?;
+                // Do not copy link targets or try reading sockets, devices and FIFOs as files.
+                if isStorageLink(&metadata) || (!metadata.is_dir() && !metadata.is_file()) {
+                    continue;
+                }
+                metadata
+            } else {
+                entry.metadata()?
+            };
             entries.push(RuntimeStorageEntry {
                 path: self.storagePathForPhysical(&entry.path())?,
                 isDirectory: metadata.is_dir(),
@@ -425,6 +493,21 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         }
         Ok(entries)
     }
+}
+
+/// Detects symbolic links and Windows junctions without resolving their targets.
+#[allow(non_snake_case)]
+fn isStorageLink(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return metadata.file_attributes() & 0x400 != 0; // FILE_ATTRIBUTE_REPARSE_POINT
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 /// Atomically publishes one sibling staging file over its target path.
@@ -720,6 +803,55 @@ mod tests {
     use operit_host_api::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_listing_skips_file_directory_broken_and_cyclic_links() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("operit-workspace-links-{}", uuid::Uuid::new_v4()));
+        let workspace = root.join("workspaces");
+        let body = workspace.join("project");
+        let outside = root.join("outside");
+        fs::create_dir_all(&body).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(body.join("normal.txt"), b"portable").unwrap();
+        fs::write(outside.join("secret.txt"), b"local only").unwrap();
+        symlink(outside.join("secret.txt"), body.join("file-link")).unwrap();
+        symlink(&outside, body.join("directory-link")).unwrap();
+        symlink(&body, body.join("loop")).unwrap();
+        symlink(body.join("missing"), body.join("broken-link")).unwrap();
+        symlink(&outside, workspace.join("linked-workspace")).unwrap();
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), workspace);
+        let entries = host.list("workspaces/project").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "workspaces/project/normal.txt");
+        assert_eq!(host.list("workspaces").unwrap().len(), 1);
+        for path in ["workspaces/project/loop", "workspaces/project/loop/loop",
+            "workspaces/project/directory-link", "workspaces/linked-workspace"] {
+            assert!(host.list(path).unwrap().is_empty(), "{path}");
+        }
+        assert!(host.writeBytes("workspaces/project/file-link", b"overwrite").is_err());
+        assert!(host.writeBytes("workspaces/project/directory-link/new.txt", b"overwrite").is_err());
+        assert!(host.writeBytes("workspaces/project/broken-link", b"overwrite").is_err());
+        assert!(host.readBytes("workspaces/project/file-link").is_err());
+        assert!(!outside.join("new.txt").exists());
+        assert_eq!(fs::read(outside.join("secret.txt")).unwrap(), b"local only");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_listing_hides_uncommitted_atomic_write_staging() {
+        let root = std::env::temp_dir().join(format!("operit-workspace-stage-{}", uuid::Uuid::new_v4()));
+        let host = NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"));
+        let mut session = host.createWriteSession("workspaces/project/data.txt").unwrap();
+        session.writeChunk(b"new").unwrap();
+        assert!(host.list("workspaces/project").unwrap().is_empty());
+        session.commitFast().unwrap();
+        let files = host.list("workspaces/project").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "workspaces/project/data.txt");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// Verifies that a native staged archive rejects excess bytes and seals only at its declared length.
     #[test]

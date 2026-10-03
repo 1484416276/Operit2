@@ -12,7 +12,7 @@ use crate::SyncOperationStore::{
 pub const RUNTIME_FILE_SYNC_DOMAIN: &str = "runtime_file";
 const RUNTIME_FILE_SYNC_ENTITY_TYPE: &str = "file";
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeFileSyncReference {
     pub contentHash: String,
     pub size: i64,
@@ -41,9 +41,20 @@ impl RuntimeFileSyncStore {
     #[allow(non_snake_case)]
     pub fn writeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if storagePath.starts_with("workspaces/") {
+            return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
+                .track(|| self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
+        }
         self.storageHost
             .writeBytes(storagePath, content)
             .map_err(|error| error.to_string())?;
+        self.recordSnapshot(storagePath, content)?;
+        Ok(())
+    }
+
+    /// Records observed bytes without rewriting an externally edited workspace file.
+    pub(crate) fn recordSnapshot(&self, storagePath: &str, content: &[u8]) -> Result<RuntimeFileSyncReference, String> {
+        requireSpaceFile(storagePath)?;
         let reference = self.storeBlob(content)?;
         let deviceId = self
             .syncOperationStore
@@ -58,11 +69,11 @@ impl RuntimeFileSyncStore {
                     entityId: storagePath.to_string(),
                     operation: "upsert".to_string(),
                     semantics: SyncOperationSemantics::EntityState,
-                    payload: serde_json::to_value(reference).map_err(|error| error.to_string())?,
+                    payload: serde_json::to_value(&reference).map_err(|error| error.to_string())?,
                 },
             )
             .map_err(|error| error.to_string())?;
-        Ok(())
+        Ok(reference)
     }
 
     /// Appends bytes to a Space file and records the resulting complete snapshot.
@@ -87,6 +98,15 @@ impl RuntimeFileSyncStore {
     /// Deletes a Space file and records a synchronized tombstone.
     pub fn delete(&self, storagePath: &str) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if storagePath.starts_with("workspaces/") {
+            return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
+                .track(|| {
+                    if self.storageHost.exists(storagePath).map_err(|e| e.to_string())? {
+                        self.storageHost.delete(storagePath, false).map_err(|e| e.to_string())?;
+                    }
+                    Ok(())
+                });
+        }
         if self
             .storageHost
             .exists(storagePath)
@@ -96,6 +116,12 @@ impl RuntimeFileSyncStore {
                 .delete(storagePath, false)
                 .map_err(|error| error.to_string())?;
         }
+        self.recordDeletion(storagePath)
+    }
+
+    /// Records an observed deletion without deleting a possibly recreated local file.
+    pub(crate) fn recordDeletion(&self, storagePath: &str) -> Result<(), String> {
+        requireSpaceFile(storagePath)?;
         let deviceId = self
             .syncOperationStore
             .localDeviceId()
@@ -193,6 +219,11 @@ impl RuntimeFileSyncStore {
         payload: serde_json::Value,
     ) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        let syncRootPath = syncRootPath.into();
+        if storagePath.starts_with("workspaces/") {
+            return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(storageHost, syncRootPath)
+                .apply(storagePath, operation, payload);
+        }
         let store = Self::new(storageHost.clone(), syncRootPath);
         match operation {
             "upsert" => {
@@ -319,7 +350,7 @@ impl RuntimeFileSyncStore {
 
     /// Reads and verifies one complete content-addressed blob.
     #[allow(non_snake_case)]
-    fn readBlob(&self, reference: &RuntimeFileSyncReference) -> Result<Vec<u8>, String> {
+    pub(crate) fn readBlob(&self, reference: &RuntimeFileSyncReference) -> Result<Vec<u8>, String> {
         validateBlobReference(reference)?;
         let content = self
             .storageHost

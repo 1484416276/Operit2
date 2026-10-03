@@ -16,6 +16,8 @@ pub mod ObjectBoxStore;
 pub mod PreferencesDataStore;
 #[path = "PreferencesEncryption.rs"]
 pub mod PreferencesEncryption;
+#[path = "WorkspaceFileSyncStore.rs"]
+pub mod WorkspaceFileSyncStore;
 #[path = "RuntimeFileSyncStore.rs"]
 pub mod RuntimeFileSyncStore;
 #[path = "RuntimeStorageHost.rs"]

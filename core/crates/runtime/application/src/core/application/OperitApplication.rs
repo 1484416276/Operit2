@@ -20,7 +20,6 @@ use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_host_api::{HostRuntimeEventRegistration, HostRuntimeTaskSchedulerHost};
 #[cfg(feature = "javascript")]
 use operit_js_bridge::javascript::JsExecutionProvider::QuickJsExecutionProvider;
-use operit_model::Memory::{Memory, MemoryLink};
 use operit_providers::chat::library::MemoryAutoSaveScheduler::MemoryAutoSaveScheduler;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::ModelConnectionTestReport;
 use operit_providers::runtime_support::ProviderRuntimeContext;
@@ -28,7 +27,7 @@ use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::sync::SqlChatSyncStore::{SqlChatSyncStore, CHAT_SYNC_DOMAIN};
 use operit_store::CoreNodeBindingStore::{CoreNodeBindingStore, BINDING_SYNC_DOMAIN};
 use operit_store::NetworkControlStore::{NetworkControlStore, NETWORK_CONTROL_SYNC_DOMAIN};
-use operit_store::ObjectBoxStore::{ObjectBox, OBJECTBOX_SYNC_DOMAIN};
+use operit_store::ObjectBoxStore::{applyObjectBoxSyncOperation, OBJECTBOX_SYNC_DOMAIN};
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_store::PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry};
 use operit_store::RuntimeFileSyncStore::{
@@ -687,6 +686,7 @@ impl OperitApplication {
     /// Combines sync clocks from key-value/object stores and SQL chat storage.
     #[allow(non_snake_case)]
     pub fn syncClock(&self) -> Result<serde_json::Value, String> {
+        self.runtimeWorkspaceFileSyncStore()?.scan()?;
         let store = self.runtimeSyncOperationStore()?;
         let mut clock = store.localClock().map_err(|error| error.to_string())?;
         let sqlStore = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
@@ -774,6 +774,7 @@ impl OperitApplication {
             sqlStore
                 .markLocalOperationsUnexportable()
                 .map_err(|error| error.to_string())?;
+            self.runtimeWorkspaceFileSyncStore()?.prepareSpaceJoin()?;
             return Ok(serde_json::json!({ "applied": 0 }));
         }
         if forceApply {
@@ -856,8 +857,15 @@ impl OperitApplication {
             }
             appliedPersistentOperations.push(operation.clone());
         }
+        let workspaceOperations = nonPreferenceOperations.iter().copied()
+            .filter(|operation| operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns(operation))
+            .collect::<Vec<_>>();
+        // Do not advance the vector clock ahead of preceding preferences/files.
+        self.runtimeWorkspaceFileSyncStore()?.materializeOperations(&workspaceOperations, forceApply)?;
         for operation in nonPreferenceOperations {
-            self.applyNonPreferenceSyncOperation(operation)?;
+            if !operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns(operation) {
+                self.applyNonPreferenceSyncOperation(operation)?;
+            }
         }
         if !preferenceEntriesByPath.is_empty() {
             let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {
@@ -1063,6 +1071,12 @@ impl OperitApplication {
         NetworkControlStore::new(storageHost)
     }
 
+    fn runtimeWorkspaceFileSyncStore(&self) -> Result<operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore, String> {
+        let host = self.hostManager.runtimeStorageHost.clone()
+            .ok_or_else(|| "RuntimeStorageHost is not registered for workspace synchronization".to_string())?;
+        Ok(operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(host, RUNTIME_SYNC_DIR_PATH))
+    }
+
     /// Creates the content-addressed runtime file store owned by this application instance.
     #[allow(non_snake_case)]
     fn runtimeFileSyncStore(&self) -> Result<RuntimeFileSyncStore, String> {
@@ -1083,21 +1097,8 @@ impl OperitApplication {
             operation.entityType.as_str(),
             operation.operation.as_str(),
         ) {
-            (OBJECTBOX_SYNC_DOMAIN, "Memory", "upsert" | "delete") => {
-                ObjectBox::<Memory>::applySyncedEntity(
-                    &operation.entityId,
-                    &operation.operation,
-                    operation.payload.clone(),
-                )
-                .map_err(|error| error.to_string())
-            }
-            (OBJECTBOX_SYNC_DOMAIN, "MemoryLink", "upsert" | "delete") => {
-                ObjectBox::<MemoryLink>::applySyncedEntity(
-                    &operation.entityId,
-                    &operation.operation,
-                    operation.payload.clone(),
-                )
-                .map_err(|error| error.to_string())
+            (OBJECTBOX_SYNC_DOMAIN, _, _) => {
+                applyObjectBoxSyncOperation(operation).map_err(|error| error.to_string())
             }
             (RUNTIME_FILE_SYNC_DOMAIN, "file", "upsert" | "delete") => {
                 let storageHost = self.hostManager.runtimeStorageHost.clone().ok_or_else(|| {

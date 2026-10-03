@@ -377,6 +377,7 @@ pub const OPERIT1_SNAPSHOT_OBJECTBOX_IMPORT_PATH: &str =
 
 /// Lists every runtime file path whose data ownership is explicitly declared.
 pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
+    RuntimeStoragePathDefinition::tree(WORKSPACE_DIR_PATH, RuntimeStorageOwnership::Space),
     DATA_MEMORY_CHARACTERS_USER_MARKDOWN,
     DATA_MEMORY_SHARED_USER_MARKDOWN,
     RUNTIME_USER_ASSETS,

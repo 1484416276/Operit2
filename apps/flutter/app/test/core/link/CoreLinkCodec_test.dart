@@ -419,6 +419,231 @@ void main() {
       expect(await second.single!.first, 'stream chunk');
     },
   );
+
+  test('list deltas decode only touched items and retain other identities', () {
+    final decoder = CoreLinkListEventDecoder<Map<String, Object?>>();
+    var decodedItems = 0;
+
+    /// Decodes one test item and records the number of typed decodes.
+    Map<String, Object?> readItem(CoreLinkValueReader reader) {
+      decodedItems += 1;
+      return reader.readValue() as Map<String, Object?>;
+    }
+
+    final first = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Snapshot',
+        value: [
+          {'text': 'old', 'other': 7},
+          {'text': 'unchanged'},
+        ],
+      ),
+      decodeItem: readItem,
+    );
+    expect(decodedItems, 2);
+    final second = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Delta',
+        value: {
+          r'$coreDelta': [
+            {
+              'op': 'set',
+              'path': [0, 'text'],
+              'value': 'new',
+            },
+            {
+              'op': 'set',
+              'path': [0, 'other'],
+              'value': 8,
+            },
+            {
+              'op': 'set',
+              'path': [2],
+              'value': {'text': 'appended'},
+            },
+          ],
+        },
+      ),
+      decodeItem: readItem,
+    );
+    expect(decodedItems, 4);
+    expect(second, [
+      {'text': 'new', 'other': 8},
+      {'text': 'unchanged'},
+      {'text': 'appended'},
+    ]);
+    expect(identical(first[1], second[1]), isTrue);
+    expect(first[0], {'text': 'old', 'other': 7});
+
+    final third = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Delta',
+        value: {
+          r'$coreDelta': [
+            {
+              'op': 'remove',
+              'path': [2],
+            },
+            {
+              'op': 'remove',
+              'path': [0, 'other'],
+            },
+          ],
+        },
+      ),
+      decodeItem: readItem,
+    );
+    expect(decodedItems, 5);
+    expect(third, [
+      {'text': 'new'},
+      {'text': 'unchanged'},
+    ]);
+    expect(identical(second[1], third[1]), isTrue);
+    final fourth = decoder.decode(
+      _rawCoreEvent(kind: 'Delta', value: {r'$coreDelta': []}),
+      decodeItem: readItem,
+    );
+    expect(decodedItems, 5);
+    expect(identical(third[0], fourth[0]), isTrue);
+    final changed = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Changed',
+        value: [
+          {'text': 'reset'},
+        ],
+      ),
+      decodeItem: readItem,
+    );
+    expect(changed, [
+      {'text': 'reset'},
+    ]);
+    expect(decodedItems, 6);
+  });
+
+  test(
+    'list deltas attach new embedded streams without reopening other items',
+    () async {
+      final decoder = CoreLinkListEventDecoder<Stream<String>?>();
+      final factory = _EmbeddedStreamFactoryRecorder();
+
+      /// Reads the embedded stream field of a single test item.
+      Stream<String>? readItem(CoreLinkValueReader reader) {
+        final fieldCount = reader.readMapLength();
+        Stream<String>? stream;
+        for (var index = 0; index < fieldCount; index += 1) {
+          final field = reader.readString();
+          if (field == 'contentStream') {
+            stream = reader.readNullable<Stream<String>>(
+              () => reader.readEmbeddedStream<String>(
+                (item) => item.readString(),
+              ),
+            );
+          } else {
+            reader.skipValue();
+          }
+        }
+        return stream;
+      }
+
+      final first = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Snapshot',
+          value: [
+            {'contentStream': null},
+            {'contentStream': null},
+          ],
+        ),
+        decodeItem: readItem,
+        embeddedStreamFactory: factory.open,
+      );
+      expect(first, [null, null]);
+      final second = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': [0, 'contentStream'],
+                'value': {
+                  r'$coreStream': {
+                    'streamId': 'stream-ai',
+                    'target': 'core/test64',
+                    'propertyName': 'openCoreStream',
+                    'args': {'streamId': 'stream-ai'},
+                  },
+                },
+              },
+            ],
+          },
+        ),
+        decodeItem: readItem,
+        embeddedStreamFactory: factory.open,
+      );
+      expect(factory.openedStreamIds, ['stream-ai']);
+      expect(await second.first!.first, 'stream chunk');
+      decoder.decode(
+        _rawCoreEvent(kind: 'Delta', value: {r'$coreDelta': []}),
+        decodeItem: readItem,
+        embeddedStreamFactory: factory.open,
+      );
+      expect(factory.openedStreamIds, ['stream-ai']);
+    },
+  );
+
+  test(
+    'long list decodes one changed message without decoding its history',
+    () {
+      final decoder = CoreLinkListEventDecoder<Map<String, Object?>>();
+      var decodedItems = 0;
+
+      /// Counts typed item decodes in the long-history transport test.
+      Map<String, Object?> readItem(CoreLinkValueReader reader) {
+        decodedItems += 1;
+        return reader.readValue() as Map<String, Object?>;
+      }
+
+      final history = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Snapshot',
+          value: List.generate(
+            1000,
+            (index) => {'id': index, 'content': 'text'},
+          ),
+        ),
+        decodeItem: readItem,
+      );
+      expect(decodedItems, 1000);
+      final updated = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': [999, 'content'],
+                'value': 'streaming',
+              },
+            ],
+          },
+        ),
+        decodeItem: readItem,
+      );
+      expect(decodedItems, 1001);
+      expect(identical(history.first, updated.first), isTrue);
+      expect(updated.last['content'], 'streaming');
+    },
+  );
+
+  test('list decoder rejects a delta before the first snapshot', () {
+    expect(
+      () => CoreLinkListEventDecoder<int>().decode(
+        _rawCoreEvent(kind: 'Delta', value: {r'$coreDelta': []}),
+        decodeItem: (reader) => reader.readInt(),
+      ),
+      throwsStateError,
+    );
+  });
 }
 
 /// Creates one raw Core watch event for protocol decoder tests.

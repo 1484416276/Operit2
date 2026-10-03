@@ -575,11 +575,17 @@ impl NativeMarkdownSplitter {
         Self::segments_to_stable_nodes(content, session.push(content), false)
     }
 
+    /// Converts character-indexed parser segments into nodes in linear total slice work.
     fn segments_to_stable_nodes(
         content: &str,
         segments: Vec<Segment>,
         parse_inline_children: bool,
     ) -> Vec<MarkdownNodeStable> {
+        let charByteOffsets = content
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .chain(std::iter::once(content.len()))
+            .collect::<Vec<_>>();
         let mut nodes = Vec::new();
         for segment in segments {
             if segment.r#type < 0 {
@@ -587,13 +593,14 @@ impl NativeMarkdownSplitter {
             }
             let node_type = MarkdownProcessorType::from_ordinal(segment.r#type)
                 .unwrap_or(MarkdownProcessorType::PlainText);
-            if segment.start > segment.end || segment.end > content.chars().count() {
-                continue;
-            }
+            assert!(
+                segment.start <= segment.end && segment.end < charByteOffsets.len(),
+                "Markdown segment must have valid character offsets"
+            );
             let node_content = if node_type == MarkdownProcessorType::HtmlBreak {
                 "\n".to_string()
             } else {
-                char_slice(content, segment.start, segment.end)
+                content[charByteOffsets[segment.start]..charByteOffsets[segment.end]].to_string()
             };
             if node_content.is_empty() {
                 continue;
@@ -620,10 +627,38 @@ impl NativeMarkdownSplitter {
     }
 }
 
-fn char_slice(content: &str, start: usize, end: usize) -> String {
-    content
-        .chars()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Extracts multibyte segments through character-aligned UTF-8 boundaries.
+    #[test]
+    fn stable_nodes_preserve_multibyte_segment_boundaries() {
+        let content = "a🌙汉e\u{301}**粗**";
+        let segments = vec![
+            Segment {
+                r#type: MarkdownProcessorType::PlainText as i32,
+                start: 0,
+                end: 2,
+            },
+            Segment {
+                r#type: MarkdownProcessorType::PlainText as i32,
+                start: 1,
+                end: 3,
+            },
+            Segment {
+                r#type: MarkdownProcessorType::PlainText as i32,
+                start: 7,
+                end: 10,
+            },
+        ];
+        let nodes = NativeMarkdownSplitter::segments_to_stable_nodes(content, segments, false);
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| node.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a🌙", "🌙汉", "粗**"]
+        );
+    }
 }

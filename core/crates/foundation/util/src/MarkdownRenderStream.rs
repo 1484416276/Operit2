@@ -167,6 +167,7 @@ struct ActiveInline {
 struct MarkdownGroupSession {
     session: MarkdownSession,
     content: String,
+    charByteOffsets: Vec<usize>,
     activeType: Option<Option<MarkdownProcessorType>>,
 }
 
@@ -318,7 +319,7 @@ impl MarkdownRenderEventStream {
                 continue;
             }
             let nodeType = markdownTypeFromSegment(&segment);
-            let nodeContent = markdownSegmentContent(&self.block.content, &segment, nodeType);
+            let nodeContent = markdownSegmentContent(&self.block, &segment, nodeType);
             if nodeContent.is_empty() {
                 continue;
             }
@@ -440,7 +441,7 @@ impl MarkdownRenderEventStream {
                 continue;
             }
             let nodeType = markdownTypeFromSegment(&segment);
-            let nodeContent = markdownSegmentContent(&inline.content, &segment, nodeType);
+            let nodeContent = markdownSegmentContent(inline, &segment, nodeType);
             if nodeContent.is_empty() {
                 continue;
             }
@@ -486,24 +487,35 @@ impl MarkdownRenderEventStream {
 }
 
 impl MarkdownGroupSession {
+    /// Creates a block parser with a byte boundary for the empty input.
     fn block() -> Self {
         Self {
             session: NativeMarkdownSplitter::create_block_session(),
             content: String::new(),
+            charByteOffsets: vec![0],
             activeType: None,
         }
     }
 
+    /// Creates an inline parser with a byte boundary for the empty input.
     fn inline() -> Self {
         Self {
             session: NativeMarkdownSplitter::create_inline_session(),
             content: String::new(),
+            charByteOffsets: vec![0],
             activeType: None,
         }
     }
 
+    /// Appends input and indexes new character boundaries for constant-time slicing.
     fn push(&mut self, chunk: &str) -> Vec<Segment> {
+        let baseByteOffset = self.content.len();
         self.content.push_str(chunk);
+        self.charByteOffsets.extend(
+            chunk
+                .char_indices()
+                .map(|(offset, ch)| baseByteOffset + offset + ch.len_utf8()),
+        );
         self.session.push(chunk)
     }
 }
@@ -570,19 +582,18 @@ fn headerLevel(nodeType: Option<MarkdownProcessorType>, content: &str) -> Option
     }
 }
 
+/// Extracts a parser segment through its indexed UTF-8 character boundaries.
 fn markdownSegmentContent(
-    content: &str,
+    group: &MarkdownGroupSession,
     segment: &Segment,
     nodeType: Option<MarkdownProcessorType>,
 ) -> String {
     if nodeType == Some(MarkdownProcessorType::HtmlBreak) {
         "\n".to_string()
     } else {
-        content
-            .chars()
-            .skip(segment.start)
-            .take(segment.end.saturating_sub(segment.start))
-            .collect()
+        let start = group.charByteOffsets[segment.start];
+        let end = group.charByteOffsets[segment.end];
+        group.content[start..end].to_string()
     }
 }
 
@@ -599,6 +610,34 @@ fn isInlineContainer(nodeType: Option<MarkdownProcessorType>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps character-indexed segments correct across UTF-8 chunks and parser types.
+    #[test]
+    fn slices_multibyte_segments_across_chunk_boundaries() {
+        for mut group in [
+            MarkdownGroupSession::block(),
+            MarkdownGroupSession::inline(),
+        ] {
+            for chunk in ["a🌙", "汉", "e\u{301}", "**粗**"] {
+                let _ = group.push(chunk);
+            }
+
+            for (start, end, expected) in [
+                (0, 2, "a🌙"),
+                (1, 3, "🌙汉"),
+                (3, 5, "e\u{301}"),
+                (5, 8, "**粗"),
+                (7, 10, "粗**"),
+            ] {
+                let segment = Segment {
+                    r#type: 17,
+                    start,
+                    end,
+                };
+                assert_eq!(markdownSegmentContent(&group, &segment, None), expected);
+            }
+        }
+    }
 
     /// Malformed XML retains its original block and unfinished metadata.
     #[test]

@@ -159,7 +159,7 @@ void main() {
       await tester.pumpAndSettle();
       scrollController.jumpTo(scrollController.position.maxScrollExtent - 60);
       await tester.pump();
-      await tester.drag(find.byType(ListView), const Offset(0, -200));
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -200));
       await tester.pumpAndSettle();
       expect(autoScrollToBottom.value, window.follows);
       await tester.pumpWidget(const SizedBox());
@@ -194,9 +194,132 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 270));
     await tester.pump();
-    await tester.drag(find.byType(ListView), const Offset(0, -200));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -200));
     await tester.pumpAndSettle();
     expect(scrollController.offset, greaterThan(100));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('keeps the locator target fixed while older Markdown loads', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(false);
+    final pending = <String, Completer<List<MarkdownStreamEvent>>>{};
+    addTearDown(scrollController.dispose);
+    addTearDown(autoScrollToBottom.dispose);
+    final messages = List.generate(
+      24,
+      (index) => _aiMessage(
+        timestamp: 20000 + index,
+        completedAt: 1,
+        parts: [
+          MessagePart(
+            partId: 'delayed-$index',
+            sequence: 0,
+            kind: MessagePartKind.markdown,
+            content: 'locator-delayed-$index',
+            toolCallId: null,
+            toolName: null,
+            attributes: const {},
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      _chatArea(
+        messages: messages,
+        isLoading: false,
+        bottomContentInset: 1600,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+        onAutoScrollToBottomChanged: (value) =>
+            autoScrollToBottom.value = value,
+        splitMarkdownContent: (content) => pending
+            .putIfAbsent(content, () => Completer<List<MarkdownStreamEvent>>())
+            .future,
+      ),
+    );
+    await tester.pumpAndSettle();
+    tester
+        .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+        .onJumpToMessage(12);
+    await tester.pumpAndSettle();
+    final target = find.byWidgetPredicate(
+      (widget) =>
+          widget is CursorStyleChatMessage && widget.message.timestamp == 20012,
+    );
+    final targetTop = tester.getTopLeft(target).dy;
+    final viewportTop = tester.getTopLeft(find.byType(CustomScrollView)).dy;
+    expect(targetTop, closeTo(viewportTop, 1));
+    expect(pending['locator-delayed-11'], isNotNull);
+    var scrollUpdates = 0;
+    scrollController.addListener(() => scrollUpdates++);
+    for (final index in [11, 10, 9]) {
+      // Resolve independent loads well beyond the old locator settle interval.
+      await tester.pump(const Duration(seconds: 1));
+      pending['locator-delayed-$index']!.complete([
+        _markdownBlockStart(),
+        _markdownBlockChunk(
+          List.filled(60, 'Expanded older message').join('\n'),
+        ),
+        _markdownCompleted(),
+      ]);
+      for (var frame = 0; frame < 24; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tester.getTopLeft(target).dy, closeTo(targetTop, 1));
+      }
+    }
+    expect(scrollUpdates, 0);
+    expect(autoScrollToBottom.value, isFalse);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('locates an unbuilt message without walking intermediate rows', (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final autoScrollToBottom = ValueNotifier<bool>(false);
+    addTearDown(scrollController.dispose);
+    addTearDown(autoScrollToBottom.dispose);
+    await tester.pumpWidget(
+      _chatArea(
+        messages: List.generate(
+          500,
+          (index) => _aiMessage(parts: const [], timestamp: 30000 + index),
+        ),
+        isLoading: false,
+        bottomContentInset: 1600,
+        scrollController: scrollController,
+        autoScrollToBottom: autoScrollToBottom,
+        onAutoScrollToBottomChanged: (value) =>
+            autoScrollToBottom.value = value,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final target = find.byWidgetPredicate(
+      (widget) =>
+          widget is CursorStyleChatMessage && widget.message.timestamp == 30400,
+    );
+    expect(target, findsNothing);
+    tester
+        .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+        .onJumpToMessage(400);
+    await tester.pumpAndSettle();
+    expect(target, findsOneWidget);
+    expect(
+      tester.getTopLeft(target).dy,
+      closeTo(tester.getTopLeft(find.byType(CustomScrollView)).dy, 1),
+    );
+    expect(find.byType(CursorStyleChatMessage).evaluate().length, lessThan(50));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 180));
+    await tester.pumpAndSettle();
+    final userOffset = scrollController.offset;
+    expect(userOffset, lessThan(0));
+    await tester.pump(const Duration(seconds: 2));
+    expect(scrollController.offset, userOffset);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -388,7 +511,7 @@ void main() {
       ..add(_markdownBlockChunk('before sidebar'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.textContaining('before sidebar'), findsWidgets);
-    final list = tester.widget<ListView>(find.byType(ListView));
+    final list = tester.widget<CustomScrollView>(find.byType(CustomScrollView));
     final position = scrollController.position;
     final rendererState = tester.state(find.byType(StreamMarkdownRenderer));
     final baselineListens = listens;
@@ -407,7 +530,10 @@ void main() {
       ]) {
         size.value = Size(width, 500);
         await tester.pump(const Duration(milliseconds: 16));
-        expect(tester.widget<ListView>(find.byType(ListView)), same(list));
+        expect(
+          tester.widget<CustomScrollView>(find.byType(CustomScrollView)),
+          same(list),
+        );
         expect(scrollController.position, same(position));
         expect(
           tester.state(find.byType(StreamMarkdownRenderer)),
@@ -421,7 +547,10 @@ void main() {
     size.value = const Size(744, 400);
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 200));
-    expect(tester.widget<ListView>(find.byType(ListView)), same(list));
+    expect(
+      tester.widget<CustomScrollView>(find.byType(CustomScrollView)),
+      same(list),
+    );
     expect(
       tester
           .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
@@ -555,8 +684,13 @@ void main() {
     );
     await tester.pump();
 
-    final listView = tester.widget<ListView>(find.byType(ListView));
-    expect(listView.padding, const EdgeInsets.fromLTRB(16, 16, 16, 48));
+    final listView = tester.widget<CustomScrollView>(
+      find.byType(CustomScrollView),
+    );
+    expect(
+      (listView.slivers.last as SliverPadding).padding,
+      const EdgeInsets.fromLTRB(16, 16, 16, 48),
+    );
   });
 
   testWidgets('does not render a trailing stream newline as a paragraph gap', (
@@ -1484,6 +1618,8 @@ Widget _chatArea({
   double bottomContentInset = 0,
   ValueChanged<bool>? onAutoScrollToBottomChanged,
   Widget Function(Widget)? bodyBuilder,
+  MarkdownContentSplitter splitMarkdownContent = _splitMarkdownContent,
+  RevealMessageForLocator? onRevealMessageForLocator,
 }) {
   final bridge = _ScriptedGeneratedChatBridge();
   final clients = GeneratedCoreProxyClients(bridge);
@@ -1504,7 +1640,8 @@ Widget _chatArea({
     hasNewerDisplayHistory: hasNewerDisplayHistory,
     isLoadingDisplayWindow: isLoadingDisplayWindow,
     loadLocatorEntries: (chatId, query) async => const [],
-    onRevealMessageForLocator: (timestamp) async => false,
+    onRevealMessageForLocator:
+        onRevealMessageForLocator ?? (timestamp) async => false,
     onAutoScrollToBottomChanged: onAutoScrollToBottomChanged ?? (_) {},
     onLoadOlderDisplayWindow: () async {},
     onLoadNewerDisplayWindow: () async {},
@@ -1525,7 +1662,7 @@ Widget _chatArea({
     onToggleMessageSelection: (_) {},
     onRefreshRequested: () async {},
     bottomContentInset: bottomContentInset,
-    splitMarkdownContent: _splitMarkdownContent,
+    splitMarkdownContent: splitMarkdownContent,
   );
   return OperitTheme(
     initialThemePreferenceSnapshot:

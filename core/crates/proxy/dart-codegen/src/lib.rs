@@ -579,6 +579,7 @@ fn render_dart_factory_method(
     output
 }
 
+/// Renders a typed watch, decoding list deltas at the element boundary.
 fn render_dart_watch_method(
     _object: &SourceObject,
     method: &SourceMethod,
@@ -594,7 +595,16 @@ fn render_dart_watch_method(
     output.push_str(&format!(
         "  Stream<{value_type}> {method_name}({params}) {{\n"
     ));
-    output.push_str("    final eventValueDecoder = CoreLinkEventValueDecoder();\n");
+    let list_item_type = value_type
+        .strip_prefix("List<")
+        .and_then(|inner| inner.strip_suffix('>'));
+    if let Some(item_type) = list_item_type {
+        output.push_str(&format!(
+            "    final eventValueDecoder = CoreLinkListEventDecoder<{item_type}>();\n"
+        ));
+    } else {
+        output.push_str("    final eventValueDecoder = CoreLinkEventValueDecoder();\n");
+    }
     output.push_str("    return bridge\n");
     output.push_str(&format!(
         "        .watchStream(CoreWatchRequest(requestId: _coreProxyRequestId(), target: objectId, propertyName: '{}', args: _coreProxyArgs({args}, objectArgs)))\n",
@@ -602,12 +612,19 @@ fn render_dart_watch_method(
     ));
     output.push_str("        .where((event) => event.kind != 'Completed')\n");
     output.push_str("        .map((event) {\n");
-    output.push_str(&format!(
-            "          return eventValueDecoder.decode<{}>(event, decode: (valueBytes) => decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, target: event.target, embeddedStreamFactory: bridge.openEmbeddedCoreStream));\n",
-        value_type,
-        value_type,
-        dart_message_pack_decode_expr("reader", &value_type, serializable_types)
-    ));
+    if let Some(item_type) = list_item_type {
+        output.push_str(&format!(
+            "          return eventValueDecoder.decode(event, decodeItem: (reader) => {}, embeddedStreamFactory: bridge.openEmbeddedCoreStream);\n",
+            dart_message_pack_decode_expr("reader", item_type, serializable_types)
+        ));
+    } else {
+        output.push_str(&format!(
+                "          return eventValueDecoder.decode<{}>(event, decode: (valueBytes) => decodeCoreLink<{}>(valueBytes, decode: (reader) => {}, target: event.target, embeddedStreamFactory: bridge.openEmbeddedCoreStream));\n",
+            value_type,
+            value_type,
+            dart_message_pack_decode_expr("reader", &value_type, serializable_types)
+        ));
+    }
     output.push_str("        });\n");
     output.push_str("  }\n\n");
     output

@@ -24,9 +24,6 @@ import 'style/cursor/CursorStyleChatMessage.dart';
 
 const Duration _navigatorHideDelay = Duration(milliseconds: 1200);
 const Duration _viewportResizeSettleDelay = Duration(milliseconds: 120);
-const Duration _messageJumpRetryDelay = Duration(milliseconds: 90);
-const Duration _messageJumpSettleDelay = Duration(milliseconds: 280);
-const double _messageJumpPositionTolerance = 2;
 const Duration _bottomFollowRateWindow = Duration(milliseconds: 600);
 const double _bottomFollowOutputVelocityGain = 0.65;
 const double _bottomFollowGapCorrectionRate = 0.8;
@@ -148,11 +145,10 @@ class _ChatAreaState extends State<ChatArea>
   bool _bottomFollowCompleting = false;
   double? _lastScrollMaxExtent;
   int? _pendingJumpToMessageTimestamp;
-  Timer? _pendingMessageJumpTimer;
-  double? _lastEstimatedPendingJumpOffset;
-  bool _pendingMessageJumpStabilityCheckRequested = false;
-  bool _pendingMessageJumpScheduled = false;
-  bool _pendingMessageJumpInFlight = false;
+  int _messageNavigationGeneration = 0;
+  int? _layoutAnchorTimestamp;
+  Key _scrollLayoutKey = UniqueKey();
+  static const _centerSliverKey = ValueKey<String>('chat-message-center');
   bool _bottomJumpScheduled = false;
 
   /// Initializes the frame-driven live-output follower.
@@ -181,10 +177,14 @@ class _ChatAreaState extends State<ChatArea>
       );
     }
 
-    final messageStartIndex = widget.hasOlderDisplayHistory ? 1 : 0;
-    final messageEndIndex = messageStartIndex + widget.messages.length;
+    final anchorIndex = widget.messages.indexWhere(
+      (message) => message.timestamp == _layoutAnchorTimestamp,
+    );
+    final centerIndex = anchorIndex < 0
+        ? 0
+        : anchorIndex + (widget.hasOlderDisplayHistory ? 1 : 0);
     // A sidebar width animation changes constraints, not message data. Reuse
-    // this viewport so LayoutBuilder does not recreate ListView's delegate and
+    // this viewport so LayoutBuilder does not recreate the scroll view's delegate and
     // rebuild all visible rows on every animation frame.
     final viewport = Stack(
       key: _viewportKey,
@@ -201,79 +201,35 @@ class _ChatAreaState extends State<ChatArea>
                 onPointerCancel: _handleUserPointerEnd,
                 onPointerPanZoomStart: _handleUserPointerStart,
                 onPointerPanZoomEnd: _handleUserPointerEnd,
-                child: ListView.builder(
+                child: CustomScrollView(
+                  key: _scrollLayoutKey,
                   controller: widget.scrollController,
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    16,
-                    16,
-                    16 + widget.bottomContentInset,
-                  ),
-                  itemCount: itemCount,
-                  itemBuilder: (context, index) {
-                    late final Widget child;
-                    var observesLiveBottomGrowth = false;
-                    if (widget.hasOlderDisplayHistory && index == 0) {
-                      child = _DisplayWindowAction(
-                        text: 'Load more history',
-                        isLoading: widget.isLoadingDisplayWindow,
-                        onTap: () {
-                          widget.onAutoScrollToBottomChanged(false);
-                          if (!widget.isLoadingDisplayWindow) {
-                            widget.onLoadOlderDisplayWindow();
-                          }
-                        },
-                      );
-                    } else if (index >= messageStartIndex &&
-                        index < messageEndIndex) {
-                      final message =
-                          widget.messages[index - messageStartIndex];
-                      final messageIndex = index - messageStartIndex;
-                      child = _messageRowFor(messageIndex, message);
-                      if (messageIndex == widget.messages.length - 1 &&
-                          _isStreamingMessage(messageIndex)) {
-                        observesLiveBottomGrowth = true;
-                      }
-                    } else if (widget.hasNewerDisplayHistory &&
-                        index == messageEndIndex) {
-                      child = _DisplayWindowAction(
-                        text: 'Load newer history',
-                        isLoading: widget.isLoadingDisplayWindow,
-                        onTap: () {
-                          if (!widget.isLoadingDisplayWindow) {
-                            widget.onLoadNewerDisplayWindow();
-                          }
-                        },
-                      );
-                    } else if (widget.errorMessage != null) {
-                      child = _StatusMessage(
-                        text: widget.errorMessage!,
-                        isError: true,
-                      );
-                    } else {
-                      child = const Padding(
-                        padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                        child: StreamingCursor(),
-                      );
-                    }
-                    return Padding(
-                      padding: EdgeInsets.only(
-                        bottom: index == itemCount - 1 ? 0 : 8,
-                      ),
-                      child: SizeChangedLayoutNotifier(
-                        key: _rowKeyForIndex(
-                          index,
-                          messageStartIndex,
-                          messageEndIndex,
-                        ),
-                        child: _LiveBottomStreamSizeObserver(
-                          observesGrowth: observesLiveBottomGrowth,
-                          onSizeGrown: _scheduleBottomFollow,
-                          child: _ChatAreaContentColumn(child: child),
+                  center: _centerSliverKey,
+                  slivers: [
+                    if (centerIndex > 0)
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        sliver: SliverList.builder(
+                          itemCount: centerIndex,
+                          itemBuilder: (context, index) =>
+                              _buildListRow(centerIndex - index - 1, itemCount),
                         ),
                       ),
-                    );
-                  },
+                    SliverPadding(
+                      key: _centerSliverKey,
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        _layoutAnchorTimestamp == null ? 16 : 0,
+                        16,
+                        16 + widget.bottomContentInset,
+                      ),
+                      sliver: SliverList.builder(
+                        itemCount: itemCount - centerIndex,
+                        itemBuilder: (context, index) =>
+                            _buildListRow(centerIndex + index, itemCount),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -335,6 +291,65 @@ class _ChatAreaState extends State<ChatArea>
     );
   }
 
+  /// Builds one chronological row shared by both growth directions.
+  Widget _buildListRow(int index, int itemCount) {
+    final messageStartIndex = widget.hasOlderDisplayHistory ? 1 : 0;
+    final messageEndIndex = messageStartIndex + widget.messages.length;
+    late final Widget child;
+    var observesLiveBottomGrowth = false;
+    if (widget.hasOlderDisplayHistory && index == 0) {
+      child = _DisplayWindowAction(
+        text: 'Load more history',
+        isLoading: widget.isLoadingDisplayWindow,
+        onTap: () {
+          widget.onAutoScrollToBottomChanged(false);
+          if (!widget.isLoadingDisplayWindow) {
+            widget.onLoadOlderDisplayWindow();
+          }
+        },
+      );
+    } else if (index >= messageStartIndex && index < messageEndIndex) {
+      final message = widget.messages[index - messageStartIndex];
+      final messageIndex = index - messageStartIndex;
+      child = _messageRowFor(messageIndex, message);
+      if (messageIndex == widget.messages.length - 1 &&
+          _isStreamingMessage(messageIndex)) {
+        observesLiveBottomGrowth = true;
+      }
+    } else if (widget.hasNewerDisplayHistory && index == messageEndIndex) {
+      child = _DisplayWindowAction(
+        text: 'Load newer history',
+        isLoading: widget.isLoadingDisplayWindow,
+        onTap: () {
+          if (!widget.isLoadingDisplayWindow) {
+            widget.onLoadNewerDisplayWindow();
+          }
+        },
+      );
+    } else if (widget.errorMessage != null) {
+      child = _StatusMessage(text: widget.errorMessage!, isError: true);
+    } else {
+      child = const Padding(
+        padding: EdgeInsets.only(left: 16, top: 2, bottom: 2),
+        child: StreamingCursor(),
+      );
+    }
+    return Padding(
+      key: ValueKey<Key>(
+        _rowKeyForIndex(index, messageStartIndex, messageEndIndex),
+      ),
+      padding: EdgeInsets.only(bottom: index == itemCount - 1 ? 0 : 8),
+      child: SizeChangedLayoutNotifier(
+        key: _rowKeyForIndex(index, messageStartIndex, messageEndIndex),
+        child: _LiveBottomStreamSizeObserver(
+          observesGrowth: observesLiveBottomGrowth,
+          onSizeGrown: _scheduleBottomFollow,
+          child: _ChatAreaContentColumn(child: child),
+        ),
+      ),
+    );
+  }
+
   /// Keeps the chat bottom aligned while the viewport changes size.
   bool _handleScrollMetricsNotification(
     ScrollMetricsNotification notification,
@@ -382,18 +397,11 @@ class _ChatAreaState extends State<ChatArea>
     return true;
   }
 
-  /// Rechecks a pending message jump after a chat row changes size.
+  /// Refreshes navigation geometry after asynchronously rendered content changes.
   bool _handleSizeChangedLayoutNotification(
     SizeChangedLayoutNotification notification,
   ) {
-    if (_pendingJumpToMessageTimestamp == null) {
-      return false;
-    }
-    _pendingMessageJumpStabilityCheckRequested = false;
-    _pendingMessageJumpTimer?.cancel();
-    _pendingMessageJumpTimer = null;
     _scheduleMessageAnchorCollection();
-    _schedulePendingMessageJump();
     return false;
   }
 
@@ -724,197 +732,65 @@ class _ChatAreaState extends State<ChatArea>
     );
   }
 
-  /// Starts a locator jump by timestamp and reveals the display window when needed.
+  /// Reveals a timestamp and ignores completions superseded by user navigation.
   Future<void> _jumpToMessageTimestamp(int timestamp) async {
-    _beginPendingMessageJump(timestamp);
-    final targetIndex = widget.messages.indexWhere(
-      (message) => message.timestamp == timestamp,
-    );
-    if (targetIndex >= 0) {
-      _jumpToMessageIndex(targetIndex);
+    _clearPendingMessageJump();
+    final generation = _messageNavigationGeneration;
+    _pendingJumpToMessageTimestamp = timestamp;
+    _stopBottomFollow();
+    widget.onAutoScrollToBottomChanged(false);
+    if (widget.messages.any((message) => message.timestamp == timestamp)) {
+      setState(_applyPendingMessageJump);
       return;
     }
 
-    final currentChatId = widget.currentChatId;
-    widget.onAutoScrollToBottomChanged(false);
     final didReveal = await widget.onRevealMessageForLocator(timestamp);
-    if (!mounted || widget.currentChatId != currentChatId) {
+    if (!mounted || generation != _messageNavigationGeneration) {
       return;
     }
-    final targetVisible = widget.messages.any(
-      (message) => message.timestamp == timestamp,
-    );
-    if (!didReveal &&
-        !targetVisible &&
-        _pendingJumpToMessageTimestamp == timestamp) {
-      _pendingJumpToMessageTimestamp = null;
+    if (!didReveal) {
+      _clearPendingMessageJump();
       return;
     }
-    _scheduleMessageAnchorCollection();
-    _schedulePendingMessageJump();
+    setState(_applyPendingMessageJump);
   }
 
-  /// Starts a locator jump by the message index visible in the active window.
+  /// Resolves navigator indices to stable message identities.
   void _jumpToMessageIndex(int targetIndex) {
     if (targetIndex < 0 || targetIndex >= widget.messages.length) {
       return;
     }
-    final isActualLatestMessage =
-        targetIndex == widget.messages.length - 1 &&
-        !widget.hasNewerDisplayHistory;
-    widget.onAutoScrollToBottomChanged(isActualLatestMessage);
-    _beginPendingMessageJump(widget.messages[targetIndex].timestamp);
-    _scheduleMessageAnchorCollection();
-    _schedulePendingMessageJump();
+    unawaited(_jumpToMessageTimestamp(widget.messages[targetIndex].timestamp));
   }
 
-  /// Starts tracking one message until its rendered position becomes stable.
-  void _beginPendingMessageJump(int timestamp) {
-    _pendingMessageJumpTimer?.cancel();
-    _pendingMessageJumpTimer = null;
-    _pendingJumpToMessageTimestamp = timestamp;
-    _lastEstimatedPendingJumpOffset = null;
-    _pendingMessageJumpStabilityCheckRequested = false;
-  }
-
-  /// Stops tracking the active message locator jump and clears its timers.
-  void _clearPendingMessageJump() {
-    _pendingMessageJumpTimer?.cancel();
-    _pendingMessageJumpTimer = null;
-    _pendingJumpToMessageTimestamp = null;
-    _lastEstimatedPendingJumpOffset = null;
-    _pendingMessageJumpStabilityCheckRequested = false;
-  }
-
-  /// Schedules a delayed check for Markdown layout changes during a jump.
-  void _schedulePendingMessageJumpCheck(Duration delay) {
-    _pendingMessageJumpTimer?.cancel();
-    _pendingMessageJumpTimer = Timer(delay, () {
-      _pendingMessageJumpTimer = null;
-      if (!mounted || _pendingJumpToMessageTimestamp == null) {
-        return;
-      }
-      _pendingMessageJumpStabilityCheckRequested = true;
-      _schedulePendingMessageJump();
-    });
-  }
-
-  /// Estimates an initial offset that brings an unbuilt message near the viewport.
-  double _estimateMessageOffset(int targetIndex, double maxScrollExtent) {
-    final anchors = _messageAnchorsNotifier.value.values.toList()
-      ..sort((left, right) => left.index.compareTo(right.index));
-    if (anchors.length >= 2) {
-      final first = anchors.first;
-      final last = anchors.last;
-      final indexSpan = last.index - first.index;
-      if (indexSpan > 0) {
-        final averageMessageStep =
-            (last.absoluteTopPx - first.absoluteTopPx) / indexSpan;
-        final estimatedOffset =
-            first.absoluteTopPx +
-            (targetIndex - first.index) * averageMessageStep;
-        return estimatedOffset.clamp(0, maxScrollExtent).toDouble();
-      }
-    }
-    final messageCount = widget.messages.length;
-    if (messageCount <= 1) {
-      return 0;
-    }
-    final progress = targetIndex / (messageCount - 1);
-    return (maxScrollExtent * progress).clamp(0, maxScrollExtent).toDouble();
-  }
-
-  /// Schedules one post-layout attempt to complete a pending locator jump.
-  void _schedulePendingMessageJump() {
-    if (_pendingMessageJumpScheduled) {
+  /// Makes the target the layout origin so earlier rows grow away from it.
+  void _applyPendingMessageJump() {
+    final timestamp = _pendingJumpToMessageTimestamp;
+    if (timestamp == null) {
       return;
     }
-    _pendingMessageJumpScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pendingMessageJumpScheduled = false;
-      if (!mounted) {
-        return;
-      }
-      _collectMessageAnchors();
-    });
-  }
-
-  /// Completes a pending locator jump once the target row anchor is available.
-  Future<void> _tryCompletePendingMessageJump() async {
-    final targetTimestamp = _pendingJumpToMessageTimestamp;
-    if (targetTimestamp == null ||
-        _pendingMessageJumpInFlight ||
-        !mounted ||
-        !widget.scrollController.hasClients) {
-      return;
-    }
-    final targetIndex = widget.messages.indexWhere(
-      (message) => message.timestamp == targetTimestamp,
+    final index = widget.messages.indexWhere(
+      (message) => message.timestamp == timestamp,
     );
-    if (targetIndex < 0) {
+    if (index < 0) {
       return;
     }
-    final anchor = _messageAnchorsNotifier.value[targetTimestamp];
-    _pendingMessageJumpInFlight = true;
-    try {
-      final maxScrollExtent = widget.scrollController.position.maxScrollExtent;
-      if (anchor == null) {
-        final estimatedOffset = _estimateMessageOffset(
-          targetIndex,
-          maxScrollExtent,
-        );
-        final shouldMove =
-            _lastEstimatedPendingJumpOffset == null ||
-            (_lastEstimatedPendingJumpOffset! - estimatedOffset).abs() >
-                _messageJumpPositionTolerance;
-        if (shouldMove) {
-          _lastEstimatedPendingJumpOffset = estimatedOffset;
-          await widget.scrollController.animateTo(
-            estimatedOffset,
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeOutCubic,
-          );
-        }
-        await WidgetsBinding.instance.endOfFrame;
-        if (mounted && _pendingJumpToMessageTimestamp == targetTimestamp) {
-          _collectMessageAnchors();
-          _schedulePendingMessageJumpCheck(_messageJumpRetryDelay);
-        }
-        return;
-      }
-      _lastEstimatedPendingJumpOffset = null;
-      final isActualLatestMessage =
-          targetIndex == widget.messages.length - 1 &&
-          !widget.hasNewerDisplayHistory;
-      widget.onAutoScrollToBottomChanged(isActualLatestMessage);
-      final targetOffset = isActualLatestMessage
-          ? maxScrollExtent
-          : anchor.absoluteTopPx.clamp(0, maxScrollExtent).toDouble();
-      final needsCorrection =
-          (targetOffset - widget.scrollController.offset).abs() >
-          _messageJumpPositionTolerance;
-      if (needsCorrection) {
-        await widget.scrollController.animateTo(
-          targetOffset,
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
-        );
-      }
-      await WidgetsBinding.instance.endOfFrame;
-      if (mounted) {
-        _collectMessageAnchors();
-        if (_pendingJumpToMessageTimestamp == targetTimestamp) {
-          if (!needsCorrection && _pendingMessageJumpStabilityCheckRequested) {
-            _clearPendingMessageJump();
-          } else {
-            _pendingMessageJumpStabilityCheckRequested = false;
-            _schedulePendingMessageJumpCheck(_messageJumpSettleDelay);
-          }
-        }
-      }
-    } finally {
-      _pendingMessageJumpInFlight = false;
-    }
+    _pendingJumpToMessageTimestamp = null;
+    _layoutAnchorTimestamp = timestamp;
+    _scrollLayoutKey = UniqueKey();
+    _lastScrollMaxExtent = null;
+    _messageAnchorsNotifier.value = const <int, ChatScrollMessageAnchor>{};
+    final isLatest =
+        index == widget.messages.length - 1 && !widget.hasNewerDisplayHistory;
+    widget.onAutoScrollToBottomChanged(isLatest);
+    _scheduleMessageAnchorCollection();
+    _scheduleBottomJump();
+  }
+
+  /// Cancels pending reveals without changing the established layout origin.
+  void _clearPendingMessageJump() {
+    _messageNavigationGeneration++;
+    _pendingJumpToMessageTimestamp = null;
   }
 
   /// Collects render anchors for currently visible chat message rows.
@@ -948,13 +824,14 @@ class _ChatAreaState extends State<ChatArea>
       );
     }
     _messageAnchorsNotifier.value = anchors;
-    unawaited(_tryCompletePendingMessageJump());
   }
 
+  /// Returns the persistent render key for one message identity.
   GlobalKey _keyForMessage(int timestamp) {
     return _messageKeys.putIfAbsent(timestamp, GlobalKey.new);
   }
 
+  /// Identifies message and action rows independently of their list index.
   Key _rowKeyForIndex(int index, int messageStartIndex, int messageEndIndex) {
     if (index >= messageStartIndex && index < messageEndIndex) {
       return _keyForMessage(
@@ -985,8 +862,8 @@ class _ChatAreaState extends State<ChatArea>
       _userScrollSessionActive = false;
       _userScrollDirection = ScrollDirection.idle;
       _clearPendingMessageJump();
-      _pendingMessageJumpScheduled = false;
-      _pendingMessageJumpInFlight = false;
+      _layoutAnchorTimestamp = null;
+      _scrollLayoutKey = UniqueKey();
     }
     if (_bottomStreamCompleted(oldWidget)) {
       _beginBottomFollowCompletion();
@@ -998,18 +875,24 @@ class _ChatAreaState extends State<ChatArea>
             widget.messages.firstOrNull?.timestamp ||
         oldWidget.messages.lastOrNull?.timestamp !=
             widget.messages.lastOrNull?.timestamp;
+    if (_layoutAnchorTimestamp != null &&
+        !widget.messages.any(
+          (message) => message.timestamp == _layoutAnchorTimestamp,
+        )) {
+      _layoutAnchorTimestamp = null;
+      _scrollLayoutKey = UniqueKey();
+    }
+    _applyPendingMessageJump();
     final bottomInsetChanged =
         oldWidget.bottomContentInset != widget.bottomContentInset;
     if (messagesChanged || bottomInsetChanged) {
       _scheduleBottomJump();
       _scheduleMessageAnchorCollection();
-      _schedulePendingMessageJump();
     } else if (oldWidget.isLoading != widget.isLoading ||
         oldWidget.errorMessage != widget.errorMessage ||
         oldWidget.hasNewerDisplayHistory != widget.hasNewerDisplayHistory ||
         oldWidget.isLoadingDisplayWindow != widget.isLoadingDisplayWindow) {
       _scheduleMessageAnchorCollection();
-      _schedulePendingMessageJump();
     }
     final timestamps = widget.messages
         .map((message) => message.timestamp)
@@ -1027,7 +910,6 @@ class _ChatAreaState extends State<ChatArea>
   void dispose() {
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
-    _pendingMessageJumpTimer?.cancel();
     _bottomFollowTicker.dispose();
     _bottomFollowClock.stop();
     _bottomGrowthSamples.clear();

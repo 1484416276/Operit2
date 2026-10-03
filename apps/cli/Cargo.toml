@@ -1,6 +1,6 @@
 [package]
 name = "operit-cli"
-version = "2.0.0-preview.10"
+version = "2.0.0-preview.11"
 edition = "2021"
 license = "MIT"
 publish = false

@@ -1,5 +1,5 @@
 import { type Project, type Request, type Snapshot, type Command, type Receipt, type PlaybackStatus, copy, uid, LIMITS } from "./shared/model";
-import { parseProject, object, number, text, choice, array, id, SYNTH_RANGES } from "./shared/validation";
+import { parseProject, object, number, text, choice, array, id, SYNTH_RANGES, SYNTH_INTEGERS } from "./shared/validation";
 import { applyOperations } from "./shared/operations";
 import { demoProject, TEMPLATES } from "./shared/composition";
 import { emptyProject } from "./shared/model";
@@ -48,7 +48,7 @@ export class StudioService {
     const r = object(raw, "request") as Request; const action = text(r.action, "action");
     const db = await this.load(); const p = this.current();
     for (const command of [...this.commands]) if (Date.now() - command.createdAt > (command.type === "render" ? 600000 : 120000)) { this.commands = this.commands.filter(c => c.id !== command.id); this.receipts = [...this.receipts.filter(c => c.id !== command.id), { id: command.id, state: "failed" as const, message: "UI command timed out" }].slice(-30); }
-    if (action === "catalog") return { presets: PRESETS, effects: EFFECTS, templates: TEMPLATES, synthRanges: SYNTH_RANGES, automation: { targets: { level: [0, 1.5], pan: [-1, 1], cutoff: [40, 18000] }, maxLanes: 3, maxPoints: 1024, interpolation: "linear", beatUnit: "quarter-note" }, limits: LIMITS, units: "start/duration = quarter-note beats; pitch = MIDI; gain/velocity = linear; time is zero-based" };
+    if (action === "catalog") return { presets: PRESETS, effects: EFFECTS, templates: TEMPLATES, synthRanges: SYNTH_RANGES, synthIntegers: Array.from(SYNTH_INTEGERS), automation: { targets: { level: [0, 1.5], pan: [-1, 1], cutoff: [40, 18000] }, maxLanes: 3, maxPoints: 1024, interpolation: "linear", beatUnit: "quarter-note" }, limits: LIMITS, units: "start/duration = quarter-note beats; pitch = MIDI; gain/velocity = linear; time is zero-based" };
     if (action === "get") return this.snapshot();
     if (action === "sync") {
       if (r.status !== undefined) {

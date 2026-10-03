@@ -1,11 +1,16 @@
 import { type Project, type Effect, audible, eventBeat } from '../../src/shared/model';
+import { canUpdateInPlace } from './project-update';
+import { parseSynth } from '../../src/shared/validation';
 import { automationValue } from '../../src/shared/automation';
 export interface DspExports {
   memory: WebAssembly.Memory; scratch(): number; output(): number;
   init(rate: number, gain: number): void; set_track(t: number): void;
   add_fx(t: number, type: number, mix: number): number;
+  update_fx(f: number,mix: number): number; has_note(t: number,pitch: number): number;
+  update_track(t: number): void; set_gain(t: number,gain: number): void; set_master(gain: number): void;
   automate(t: number, level: number, pan: number, cutoff: number): void;
   reset(): void; note(t: number, pitch: number, velocity: number, frames: number): void;
+  note_off(t: number, pitch: number): void;
   render(frames: number): void; active(): number; dropped(): number; max_active(): number; track_peak(t: number): number;
 }
 interface Event { frame: number; duration: number; track: number; pitch: number; velocity: number }
@@ -69,10 +74,7 @@ export class DspRuntime {
     this.project=project; this.playing=false;this.blocks=this.wraps=0;
     this.api.init(this.rate,project.masterGain);
     project.tracks.forEach((t,i)=>{
-      const s=t.synth;
-      this.scratch.fill(0);
-      this.scratch.set([engines.indexOf(s.engine), waves.indexOf(s.wave), waves.indexOf(s.waveB), s.blend,s.detune,s.unison,s.attack,s.decay,s.sustain,s.release,s.cutoff,s.resonance,s.fmRatio,s.fmDepth,s.brightness,s.width,s.filterEnv,s.lfoRate,s.lfoDepth,s.pitchSweep,audible(t,project)?t.gain:0,t.pan]);
-      this.api.set_track(i);
+      this.writeTrack(project,i);this.api.set_track(i);
       for(const e of t.effects.filter(e=>e.enabled)) {
         this.scratch.fill(0);this.scratch.set(effectParams(e,this.rate,project.bpm));
         if(this.api.add_fx(i,effects.indexOf(e.type),e.mix)<0) throw Error('DSP 效果器固定内存不足，请减少长延迟效果器');
@@ -84,6 +86,60 @@ export class DspRuntime {
     this.loop=allowLoop&&project.loop.enabled;this.loopStart=Math.round(project.loop.start*unit);this.loopEnd=Math.round(project.loop.end*unit);
     this.seek(0);
   }
+  private writeTrack(project: Project,i: number): void {
+    const t=project.tracks[i];
+      const s=parseSynth(t.synth);
+      this.scratch.fill(0);
+      this.scratch.set([engines.indexOf(s.engine), waves.indexOf(s.wave), waves.indexOf(s.waveB), s.blend,s.detune,s.unison,s.attack,s.decay,s.sustain,s.release,s.cutoff,s.resonance,s.fmRatio,s.fmDepth,s.brightness,s.width,s.filterEnv,s.lfoRate,s.lfoDepth,s.pitchSweep,audible(t,project)?t.gain:0,t.pan,s.unisonB,s.detuneB,s.widthB,s.oscBOctave,s.oscBSemitone,s.oscBFine,s.subLevel,s.subOctave,s.noiseLevel,s.phase,s.phaseRandom,s.haasMs,s.haasMix,s.bassMono]);
+
+  }
+  /** Returns false only when track/effect topology needs a crossfaded replacement. */
+  updateProject(project: Project): boolean {
+    if(!canUpdateInPlace(this.project,project))return false;
+    const beat=this.beat,changedTempo=this.project.bpm!==project.bpm;
+    let fxIndex=0;
+    for(const t of project.tracks)for(const e of t.effects.filter(e=>e.enabled)) {
+      this.scratch.fill(0);this.scratch.set(effectParams(e,this.rate,project.bpm));
+      if(this.api.update_fx(fxIndex++,e.mix)<0)return false;
+    }
+    const previous=this.project;this.project=project;
+    project.tracks.forEach((t,i)=>{this.writeTrack(project,i);this.api.update_track(i);});
+    this.api.set_master(project.masterGain);
+    const unit=60/project.bpm*this.rate;
+    this.events=project.tracks.flatMap((t,track)=>audible(t,project)?t.notes.map(n=>({frame:Math.round(eventBeat(n,project.swing)*unit),duration:Math.max(1,Math.round(n.duration*unit)),track,pitch:n.pitch,velocity:n.velocity})):[]).sort((a,b)=>a.frame-b.frame||a.pitch-b.pitch);
+    this.end=Math.round(project.bars*project.beatsPerBar*unit);
+    this.loop=project.loop.enabled;this.loopStart=Math.round(project.loop.start*unit);this.loopEnd=Math.round(project.loop.end*unit);
+    if(changedTempo)this.frame=Math.round(beat*unit);
+    this.index=0;while(this.index<this.events.length&&this.events[this.index].frame<this.frame)this.index++;
+    this.nextClick=Math.ceil(this.frame/unit);
+    // When a previously muted track becomes audible mid-note, resume its held notes.
+    if(this.playing)project.tracks.forEach((t,i)=>{
+      if(audible(previous.tracks[i],previous)||!audible(t,project))return;
+      for(const n of t.notes){const start=Math.round(eventBeat(n,project.swing)*unit),end=start+Math.round(n.duration*unit);if(start<this.frame&&end>this.frame&&!this.api.has_note(i,n.pitch))this.api.note(i,n.pitch,n.velocity,end-this.frame);}
+    });
+    this.updateAutomation();return true;
+  }
+  liveParameter(trackId: string | undefined,group: string,key: string,value: number,effectId?: string): boolean {
+    if(group==='project'&&key==='masterGain'){this.project.masterGain=value;this.api.set_master(value);return true;}
+    const i=this.project.tracks.findIndex(t=>t.id===trackId);if(i<0)return false;
+    const t=this.project.tracks[i];
+    if(group==='track'&&key==='gain'){t.gain=value;this.api.set_gain(i,audible(t,this.project)?value:0);return true;}
+    if(group==='track'&&key==='pan'){t.pan=value;this.updateAutomation();return true;}
+    if(group==='synth'){t.synth={...t.synth,[key]:value};this.writeTrack(this.project,i);this.api.update_track(i);return true;}
+    if(group==='effect'||group==='fxparam') {
+      const e=t.effects.find(e=>e.id===effectId);if(!e)return false;
+      const next={...e,params:{...e.params}};if(group==='effect'&&key==='mix')next.mix=value;else next.params[key]=value;
+      let fxIndex=0;for(let ti=0;ti<this.project.tracks.length;ti++)for(const f of this.project.tracks[ti].effects.filter(f=>f.enabled)) {
+        if(ti===i&&f.id===effectId){this.scratch.fill(0);this.scratch.set(effectParams(next,this.rate,this.project.bpm));if(this.api.update_fx(fxIndex,next.mix)<0)return false;Object.assign(e,next);return true;}fxIndex++;
+      }
+    }
+    return false;
+  }
+  /** Reconstruct only notes held at the current musical position after a topology change. */
+  resumeHeldNotes(): void {
+    const unit=60/this.project.bpm*this.rate;
+    this.project.tracks.forEach((t,i)=>{if(!audible(t,this.project))return;for(const n of t.notes){const start=Math.round(eventBeat(n,this.project.swing)*unit),end=start+Math.round(n.duration*unit);if(start<this.frame&&end>this.frame&&!this.api.has_note(i,n.pitch))this.api.note(i,n.pitch,n.velocity,end-this.frame);}});
+  }
   seek(beat: number): void {
     let frame=Math.round(beat*60/this.project.bpm*this.rate);
     if(this.loop&&(frame<this.loopStart||frame>=this.loopEnd))frame=this.loopStart;
@@ -91,6 +147,12 @@ export class DspRuntime {
     this.updateAutomation();this.api.reset();
     while(this.index<this.events.length&&this.events[this.index].frame<this.frame)this.index++;
     this.nextClick=Math.ceil(this.frame/(60/this.project.bpm*this.rate));
+  }
+  /** Isolated audition mode: no scheduler, automation or transport position advances. */
+  previewOn(pitch: number, velocity = .75): void { this.api.note(0,pitch,velocity,Math.round(this.rate*60)); }
+  previewOff(pitch = -1): void { this.api.note_off(0,pitch); }
+  processPreview(left: Float32Array, right: Float32Array): void {
+    this.api.render(left.length); left.set(this.left.subarray(0,left.length)); right.set(this.right.subarray(0,right.length));
   }
   get beat(): number {return this.frame/this.rate*this.project.bpm/60;}
   private updateAutomation(): void {

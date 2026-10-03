@@ -47,7 +47,7 @@
     },
     {
       "name": "design",
-      "description": "修改 synth JSON：engine(spectral/fm/ensemble/drums/atmosphere),wave/waveB(sine/triangle/sawtooth/square/glass/hollow),blend(0..1),unison(1..4),detune(0..50音分),attack(.001..3秒),decay(.01..3),sustain(0..1),release(.02..3),cutoff(40..18000Hz),resonance(.1..12),fmRatio(.25..12),fmDepth(0..10),brightness(0..1),width(0..1),filterEnv(-6..6八度，负值渐开),lfoRate(0..16Hz),lfoDepth(0..3八度),pitchSweep(-48..48半音)。",
+      "description": "修改 synth JSON：engine(spectral/fm/ensemble/drums/atmosphere),wave/waveB(sine/triangle/sawtooth/square/glass/hollow),blend(0..1),unison/unisonB(整数1..8),detune/detuneB(0..50音分),attack(.001..3秒),decay(.01..3),sustain(0..1),release(.02..3),cutoff(40..18000Hz),resonance(.1..12),fmRatio(.25..12),fmDepth(0..10),brightness(0..1),width/widthB(0..1),oscBOctave(整数-3..3),oscBSemitone(整数-12..12),oscBFine(-100..100音分),subLevel(0..1),subOctave(整数-2..0),noiseLevel(0..1),phase/phaseRandom(0..1),haasMs(-35..35ms，正延迟R/负延迟L/0关闭),haasMix(0..1),bassMono(0..500Hz，0关闭，效果器后低频收窄),filterEnv(-6..6八度，负值渐开),lfoRate(0..16Hz),lfoDepth(0..3八度),pitchSweep(-48..48半音)。",
       "parameters": [
         {
           "name": "projectId",
@@ -86,5 +86,5 @@ export async function catalog(): Promise<unknown> { return call({action:"catalog
 /** 切换乐器预置并重置合成参数，保留音符和效果器。 */
 export async function preset(p: { projectId: string; revision: number; trackId: string; preset: string }): Promise<unknown> { return batch(p,[{type:"track.preset",trackId:p.trackId,preset:p.preset}]); }
 
-/** 修改 synth JSON：engine(spectral/fm/ensemble/drums/atmosphere),wave/waveB(sine/triangle/sawtooth/square/glass/hollow),blend(0..1),unison(1..4),detune(0..50音分),attack(.001..3秒),decay(.01..3),sustain(0..1),release(.02..3),cutoff(40..18000Hz),resonance(.1..12),fmRatio(.25..12),fmDepth(0..10),brightness(0..1),width(0..1),filterEnv(-6..6八度，负值渐开),lfoRate(0..16Hz),lfoDepth(0..3八度),pitchSweep(-48..48半音)。 */
+/** 修改 synth JSON：engine(spectral/fm/ensemble/drums/atmosphere),wave/waveB(sine/triangle/sawtooth/square/glass/hollow),blend(0..1),unison/unisonB(整数1..8),detune/detuneB(0..50音分),attack(.001..3秒),decay(.01..3),sustain(0..1),release(.02..3),cutoff(40..18000Hz),resonance(.1..12),fmRatio(.25..12),fmDepth(0..10),brightness(0..1),width/widthB(0..1),oscBOctave(整数-3..3),oscBSemitone(整数-12..12),oscBFine(-100..100音分),subLevel(0..1),subOctave(整数-2..0),noiseLevel(0..1),phase/phaseRandom(0..1),haasMs(-35..35ms，正延迟R/负延迟L/0关闭),haasMix(0..1),bassMono(0..500Hz，0关闭，效果器后低频收窄),filterEnv(-6..6八度，负值渐开),lfoRate(0..16Hz),lfoDepth(0..3八度),pitchSweep(-48..48半音)。 */
 export async function design(p: { projectId: string; revision: number; trackId: string; patch: string }): Promise<unknown> { return batch(p,[{type:"synth.set",trackId:p.trackId,patch:json(p.patch)}]); }

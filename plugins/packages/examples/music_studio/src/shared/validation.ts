@@ -8,14 +8,22 @@ export function id(value: unknown): string { const s = text(value, "id", 100); i
 export function array(value: unknown, max: number, label: string): unknown[] { if (!Array.isArray(value) || value.length > max) throw new Error(`${label}: expected array ≤${max}`); return value; }
 export function choice<T extends string>(value: unknown, options: readonly T[], label: string): T { if (!options.includes(value as T)) throw new Error(`${label}: expected ${options.join("|")}`); return value as T; }
 function unique<T extends { id: string }>(items: T[], label: string): T[] { if (new Set(items.map(i => i.id)).size !== items.length) throw new Error(`${label}: duplicate id`); return items; }
-export const SYNTH_RANGES: Record<string, [number, number]> = { blend: [0, 1], detune: [0, 50], unison: [1, 4], attack: [0.001, 3], decay: [0.01, 3], sustain: [0, 1], release: [0.02, 3], cutoff: [40, 18000], resonance: [0.1, 12], fmRatio: [0.25, 12], fmDepth: [0, 10], brightness: [0, 1], width: [0, 1], filterEnv: [-6, 6], lfoRate: [0, 16], lfoDepth: [0, 3], pitchSweep: [-48, 48] };
+export const SYNTH_RANGES: Record<string, [number, number]> = { blend: [0, 1], detune: [0, 50], unison: [1, 8], attack: [0.001, 3], decay: [0.01, 3], sustain: [0, 1], release: [0.02, 3], cutoff: [40, 18000], resonance: [0.1, 12], fmRatio: [0.25, 12], fmDepth: [0, 10], brightness: [0, 1], width: [0, 1], filterEnv: [-6, 6], lfoRate: [0, 16], lfoDepth: [0, 3], pitchSweep: [-48, 48], unisonB: [1, 8], detuneB: [0, 50], widthB: [0, 1], oscBOctave: [-3, 3], oscBSemitone: [-12, 12], oscBFine: [-100, 100], subLevel: [0, 1], subOctave: [-2, 0], noiseLevel: [0, 1], phase: [0, 1], phaseRandom: [0, 1], haasMs: [-35, 35], haasMix: [0, 1], bassMono: [0, 500] };
+export const SYNTH_INTEGERS = new Set(["unison", "unisonB", "oscBOctave", "oscBSemitone", "subOctave"]);
 export function parseSynth(raw: unknown): Synth {
   const o = object(raw, "synth"); const s: Record<string, unknown> = {
     engine: choice(o.engine, ["spectral", "fm", "ensemble", "drums", "atmosphere"], "engine"),
     wave: choice(o.wave, ["sine", "triangle", "sawtooth", "square", "glass", "hollow"], "wave"),
     waveB: choice(o.waveB, ["sine", "triangle", "sawtooth", "square", "glass", "hollow"], "waveB"),
   };
-  for (const [key, [min, max]] of Object.entries(SYNTH_RANGES)) s[key] = number(o[key] ?? ({ width: 0.65, filterEnv: 0, lfoRate: 0, lfoDepth: 0, pitchSweep: 0 } as Record<string, number>)[key], min, max, key, key === "unison");
+  // Preserve v1 oscillator settings: B previously inherited A's spread/count,
+  // used 87% of its detune, +3 cents, and an octave up in ensemble mode.
+  const defaults: Record<string, unknown> = { width: 0.65, filterEnv: 0, lfoRate: 0, lfoDepth: 0, pitchSweep: 0,
+    unisonB: o.unison, detuneB: typeof o.detune === "number" ? o.detune * 0.87 : o.detune,
+    widthB: o.width ?? 0.65, oscBOctave: o.engine === "ensemble" ? 1 : 0, oscBSemitone: 0,
+    oscBFine: typeof o.detune === "number" && o.detune > 0 ? 3 : 0,
+    subLevel: 0, subOctave: -1, noiseLevel: 0, phase: 0, phaseRandom: 1, haasMs: 0, haasMix: 1, bassMono: 0 };
+  for (const [key, [min, max]] of Object.entries(SYNTH_RANGES)) s[key] = number(o[key] ?? defaults[key], min, max, key, SYNTH_INTEGERS.has(key));
   return s as unknown as Synth;
 }
 export function parseNote(raw: unknown, end: number): Note {

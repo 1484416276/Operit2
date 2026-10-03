@@ -58,7 +58,7 @@
 
 `music_instruments.design` 接受部分 synth patch。新增参数：`width` 0..1、`filterEnv` -6..6 八度、`lfoRate` 0..16 Hz、`lfoDepth` 0..3 八度、`pitchSweep` -48..48 半音。filterEnv 为负时随音符时长渐开，为正时从高频衰减；LFO 调制声部滤波，pitchSweep 在音符内滑向相对终点。
 
-`atmosphere` 是运行时噪声/弱谐波环境，不是音频文件。`ensemble` 是合成弦/管等近似音色，不是采样乐器。FM 只有两算子。低频建议 width=0、detune=0、unison=1，并与宽中高频分层。
+`atmosphere` 是三段共振气流与同调谐波的运行时环境，不是音频文件。此引擎的 `noiseLevel` 是气流量（0关闭），`blend` 是谐波比例（1为纯谐波），`brightness` 调整分频位置/高频权重，`width=0` 使引擎输出居中；参数范围均为0..1。`ensemble` 是合成弦/管等近似音色，不是采样乐器。FM 只有两算子。低频建议 width=0、detune=0、unison=1，并与宽中高频分层。
 
 Effect 链按数组顺序串联。delay 的 `pingPong >= 0.5` 开启左右交替；并非连续宽度控制。所有具体参数从 catalog 查询，未知键会报错。
 
@@ -69,3 +69,21 @@ Effect 链按数组顺序串联。delay 的 `pingPong >= 0.5` 开启左右交替
 `control` / `render_wav` 返回 queued 后，轮询 `status` 的 receipts，只有 `done` 和真实保存路径才表示导出成功。渲染期间修改工程会作废该命令。渲染命令最多等待 10 分钟，其余命令 2 分钟；设备速度与页面可见性影响完成时间。
 
 WAV 为 44.1 kHz PCM16 双声道，包含自动化和效果，不含节拍器；长度限制和文件位置见 README。不要把 JSON 导出冒充音频，也不要承诺专业响度/真机性能而未测量。
+
+
+## 可控双振荡器与 Bass 叠层
+
+`catalog.synthRanges` 返回全部范围，`catalog.synthIntegers` 标记只能使用整数的参数。
+
+- `wave/waveB`: sine / triangle / sawtooth / square / glass / hollow。
+- A: `unison` 1..8、`detune` 0..50 ct、`width` 0..1；B: `unisonB/detuneB/widthB` 同范围，独立设置。
+- `blend` 为 B 占比 0..1；B 调音：`oscBOctave` −3..3、`oscBSemitone` −12..12（整数）、`oscBFine` −100..100 ct。
+- `phase` 0..1 周期；`phaseRandom` 0..1，0 固定起始相位。单声部不额外随机化。
+- `subLevel/noiseLevel` 0..1，默认 0。Sub 为居中正弦层，`subOctave` −2/−1/0（相对 MIDI 音高）。这三项用于 spectral/ensemble/fm。
+- `haasMs` −35..35 ms，正值延迟 R，负值延迟 L；0 关闭。`haasMix` 0..1，0 旁通。
+- `bassMono` 0..500 Hz，0 关闭；在效果器与 Haas 后对侧信号做 12 dB/oct 高通，衰减低频立体声差异，但不是完全消除截止频率以下的所有侧信号。
+- FM 仍为两算子；A/B 波形与声部设置只用于 spectral/ensemble。drums 用 decay/brightness，atmosphere 为立体声噪声。
+
+例如厚低音：`{"wave":"sawtooth","waveB":"sawtooth","blend":0.45,"unison":5,"unisonB":4,"detune":22,"detuneB":15,"oscBFine":-7,"subLevel":0.45,"subOctave":-1,"bassMono":150}`。
+
+需要 Haas 可再设 `{"haasMs":12,"haasMix":1}`，但应检查单声道折叠。`phaseRandom=0` 可用于固定起相。更多声部增加计算开销，不会提高同时音符上限（64）。

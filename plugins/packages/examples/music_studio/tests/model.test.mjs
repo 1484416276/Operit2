@@ -30,7 +30,7 @@ test("cross-reference a new AI track inside one transaction", () => {
 });
 test("malformed projects, unsafe IDs, NaN, limits and duplicate IDs fail", () => {
   const p = demoProject();
-  for (const modify of [p => p.version = 2, p => p.bpm = NaN, p => p.tracks[0].id = "../x", p => p.tracks[1].id = p.tracks[0].id, p => p.tracks[0].synth.unison = 5, p => p.loop.end = p.loop.start, p => p.tracks[0].notes[0].duration = -1, p => p.tracks[0].notes[0].start = 900, p => p.tracks[0].color = "url(x)", p => p.tracks[0].mute = "false", p => p.bars = 129]) { const next = clone(p); modify(next); assert.throws(() => parseProject(next)); }
+  for (const modify of [p => p.version = 2, p => p.bpm = NaN, p => p.tracks[0].id = "../x", p => p.tracks[1].id = p.tracks[0].id, p => p.tracks[0].synth.unison = 9, p => p.loop.end = p.loop.start, p => p.tracks[0].notes[0].duration = -1, p => p.tracks[0].notes[0].start = 900, p => p.tracks[0].color = "url(x)", p => p.tracks[0].mute = "false", p => p.bars = 129]) { const next = clone(p); modify(next); assert.throws(() => parseProject(next)); }
   const next = clone(p); next.tracks[0].notes = Array.from({ length: 6001 }, (_, i) => ({ id: "n" + i, pitch: 60, start: 0, duration: 1, velocity: 0.5 })); assert.throws(() => parseProject(next));
 });
 test("preset switches preserve notes; partial effects patches preserve parameters", () => {
@@ -82,4 +82,32 @@ test("automation validates transactions, interpolates seek boundaries and import
   for (const lanes of [[{target:'pan',points:[{beat:0,value:2}]}],[{target:'level',points:[]}],[{target:'level',points:[{beat:2,value:1},{beat:1,value:0}]}],[{target:'cutoff',points:[{beat:193,value:1000}]}]]) assert.throws(()=>applyOperations(p,[{type:'automation.set',trackId,lanes}]));
   const old = clone(p); for (const t of old.tracks) { delete t.automation; for (const k of ['width','filterEnv','lfoRate','lfoDepth','pitchSweep']) delete t.synth[k]; for (const fx of t.effects) delete fx.params.pingPong; }
   const restored = parseProject(old); assert.deepEqual(restored.tracks[0].automation,[]); assert.equal(restored.tracks[0].synth.width,0.65);
+});
+
+test('legacy synths inherit B controls and disable new layers without losing original tuning', () => {
+  const keys = ['unisonB', 'detuneB', 'widthB', 'oscBOctave', 'oscBSemitone', 'oscBFine', 'subLevel', 'subOctave', 'noiseLevel', 'phase', 'phaseRandom', 'haasMs', 'haasMix', 'bassMono'];
+  for (const engine of ['spectral', 'ensemble']) {
+    const legacy = { ...PRESETS[0].synth, engine, unison: 4, detune: 20, width: .8 };
+    for (const key of keys) delete legacy[key];
+    const s = parseSynth(legacy);
+    assert.equal(s.unisonB, 4); assert.equal(s.detuneB, 17.4); assert.equal(s.widthB, .8);
+    assert.equal(s.oscBOctave, engine === 'ensemble' ? 1 : 0); assert.equal(s.oscBFine, 3);
+    for (const key of ['subLevel', 'noiseLevel', 'haasMs', 'bassMono']) assert.equal(s[key], 0);
+    assert.deepEqual(parseSynth(JSON.parse(JSON.stringify(s))), s);
+  }
+});
+test('new synthesis parameters validate bounds and integer fields in atomic patches', async () => {
+  const { SYNTH_RANGES, SYNTH_INTEGERS } = await load('src/shared/validation.ts');
+  const p = demoProject(), trackId = p.tracks[0].id;
+  const patch = { unison: 8, unisonB: 7, detuneB: 25, widthB: .9, oscBOctave: -1, oscBSemitone: 7, oscBFine: -12, subLevel: .6, subOctave: -2, noiseLevel: .05, phase: .3, phaseRandom: 0, haasMs: -12.1, haasMix: .8, bassMono: 150 };
+  const next = applyOperations(p, [{ type: 'synth.set', trackId, patch }]);
+  for (const [key, value] of Object.entries(patch)) assert.equal(next.tracks[0].synth[key], value);
+  for (const key of Object.keys(patch)) {
+    const [min, max] = SYNTH_RANGES[key];
+    for (const value of [min - 1, max + 1, NaN, Infinity, '2', ...(SYNTH_INTEGERS.has(key) ? [min + .5] : [])]) {
+      assert.throws(() => applyOperations(p, [{ type: 'synth.set', trackId, patch: { [key]: value } }]));
+    }
+    for (const value of [min, max]) assert.doesNotThrow(() => applyOperations(p, [{ type: 'synth.set', trackId, patch: { [key]: value } }]));
+  }
+  assert.equal(p.revision, 0);
 });

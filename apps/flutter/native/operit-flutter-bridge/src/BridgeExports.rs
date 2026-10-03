@@ -7,7 +7,7 @@ use crate::RuntimeBootstrapStore::{
 
 /// Creates a reference-counted runtime using the platform storage roots.
 #[no_mangle]
-#[cfg(not(target_env = "ohos"))]
+#[cfg(not(any(target_env = "ohos", target_os = "android")))]
 pub extern "C" fn operit_flutter_bridge_create() -> *mut OperitFlutterBridge {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(OperitFlutterBridge::new)) {
         Ok(Ok(bridge)) => Arc::into_raw(Arc::new(bridge)) as *mut OperitFlutterBridge,
@@ -41,8 +41,9 @@ impl OperitByteBuffer {
     }
 }
 
+/// Creates a C-hosted runtime; Android creation is owned by its JNI host entry point.
 #[no_mangle]
-#[cfg(not(target_env = "ohos"))]
+#[cfg(not(any(target_env = "ohos", target_os = "android")))]
 pub unsafe extern "C" fn operit_flutter_bridge_create_with_storage_roots(
     runtime_root: *const c_char,
     workspace_root: *const c_char,

@@ -187,7 +187,7 @@ impl RuntimeRemoteLinkService {
         self.nodeRouter.nodeServices()
     }
 
-    /// 由现有 Proxy 生成类型化入口；只做参数适配，操作委托共享 RuntimePeerService。
+    /// Exposes the Core's unpaired discovery candidates uniformly through generated application proxies.
     pub async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<crate::NodeServices::DiscoveredPeer>, String> {
         self.nodeServices()?.peers().discoverPeers(timeoutMs).await.map_err(|error| error.to_string())
     }

@@ -1,11 +1,54 @@
 import java.io.FileInputStream
 import java.util.Properties
+import javax.inject.Inject
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+/** Stages ordinary assets and only the runtime ABIs selected for this build. */
+abstract class StageOperitAndroidAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceDirectory: DirectoryProperty
+
+    @get:Input
+    abstract val selectedAbis: ListProperty<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    /** Synchronizes the complete asset output so previous build ABIs cannot remain. */
+    @TaskAction
+    fun stageAssets() {
+        fileSystemOperations.sync {
+            from(sourceDirectory) {
+                exclude("android-runtime/**")
+            }
+            selectedAbis.get().forEach { abi ->
+                from(sourceDirectory.dir("android-runtime/$abi")) {
+                    into("android-runtime/$abi")
+                }
+            }
+            into(outputDirectory)
+        }
+    }
 }
 
 val localProperties = Properties()
@@ -88,6 +131,8 @@ android {
         versionName = flutter.versionName
     }
 
+    sourceSets.getByName("main").assets.setSrcDirs(emptyList<String>())
+
     splits {
         abi {
             isEnable = true
@@ -112,6 +157,20 @@ android {
         }
     }
 
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val stagedAssets = tasks.register<StageOperitAndroidAssets>(
+            "stageOperitAndroidAssets" + variant.name.replaceFirstChar { it.uppercase() },
+        ) {
+            sourceDirectory.set(layout.projectDirectory.dir("src/main/assets"))
+            selectedAbis.set(selectedOperitRustTargets.map { it.abi })
+        }
+        val assets = variant.sources.assets
+            ?: throw GradleException("Android variant ${variant.name} has no asset sources")
+        assets.addGeneratedSourceDirectory(stagedAssets) { it.outputDirectory }
+    }
 }
 
 flutter {

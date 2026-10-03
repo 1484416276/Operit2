@@ -602,3 +602,26 @@ fn package_owner_tracks_scope_moves() {
     store.moveScope("package", "demo", "space").unwrap();
     assert_eq!(store.packageOwner("demo.tools").unwrap().scope, "space");
 }
+
+/// Resolves device and space registration paths before any installation record exists.
+#[test]
+fn configuration_paths_exist_before_package_registration() {
+    let store = ExtensionStore::new(host());
+    assert!(store.records("package").unwrap().is_empty());
+    assert_eq!(ExtensionStore::configPathForScope("first_import", "device").unwrap(),
+        "runtime/extensions/device/plugins/configs/first_import");
+    assert_eq!(ExtensionStore::configPathForScope("first_import", "space").unwrap(),
+        "runtime/extensions/space/plugins/configs/first_import");
+    assert!(store.records("package").unwrap().is_empty());
+    assert!(ExtensionStore::configPathForScope("first_import", "invalid_scope").is_err());
+    assert!(ExtensionStore::configPathForScope("", "device").is_err());
+}
+
+/// Uses the same stable path before and after an installation record is committed.
+#[test]
+fn configuration_path_does_not_change_after_registration() {
+    let store = ExtensionStore::new(host());
+    let path = ExtensionStore::configPathForScope("first_import", "device").unwrap();
+    register_package_owner(&store, "first_import", &["first_import"]);
+    assert_eq!(store.configPath("first_import").unwrap(), path);
+}

@@ -14,8 +14,9 @@ use operit_peer_link::{PeerEndpoint, PeerTransport};
 /// 生产实现见 HostRuntimePeerService；契约不依赖具体传输。
 #[async_trait(?Send)]
 pub trait RuntimePeerService: Send + Sync {
-    /// 通过 Host 的局域网发现能力取得候选节点；此阶段不鉴权、不返回 token。
-    /// 返回的节点仍必须经过下面的 pairing 流程，发现结果不是身份或 Space 成员证明。
+    /// Returns unpaired local-discovery candidates for every application using this Core.
+    /// Excludes local and paired node IDs in either authorization direction, including offline peers.
+    /// Discovery is not authentication or Space membership proof; candidates still require pairing.
     async fn discoverPeers(
         &self,
         timeoutMs: u64,

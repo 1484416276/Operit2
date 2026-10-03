@@ -2116,7 +2116,7 @@ pub struct LocationData {
     pub country: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceInfoData {
     pub deviceId: String,
     pub model: String,

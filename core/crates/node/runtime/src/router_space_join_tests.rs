@@ -451,9 +451,10 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
             assert!(client.startPairing(serverRouter.localNodeId(), endpoint.clone(), transport,
                 Some("wrong-token".into())).await.is_err());
             assert!(server.pairingPrompts().unwrap().is_empty());
-            let pairing = client.startPairing(serverRouter.localNodeId(), endpoint, transport,
+            let pairing = client.startPairing(serverRouter.localNodeId(), endpoint.clone(), transport,
                 Some("required-test-token".into())).await.unwrap();
             let prompts = server.pairingPrompts().unwrap();
+            assert_eq!(prompts.len(), 1);
             let code = prompts.iter().find(|prompt| prompt.pairingId == pairing.pairingId)
                 .unwrap().confirmationCode.clone();
             assert_eq!(code.len(), 6);
@@ -470,6 +471,19 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
             assert_eq!(stored.len(), 1);
             assert!(stored[0].outbound && !stored[0].inbound);
             assert!(serverPeer.pairedPeers().unwrap()[0].inbound);
+            for nodeId in [serverRouter.localNodeId(), String::new()] {
+                let duplicate = clientPeer.startPairing(PeerEndpoint { nodeId, address: endpoint.clone() },
+                    transport, Some("required-test-token")).await.unwrap_err();
+                assert_eq!(duplicate.code, "PEER_ALREADY_PAIRED");
+            }
+            let reverse = serverPeer.startPairing(PeerEndpoint { nodeId: clientRouter.localNodeId(), address: endpoint.clone() },
+                transport, Some("required-test-token")).await.unwrap_err();
+            assert_eq!(reverse.code, "PEER_ALREADY_PAIRED");
+            assert!(server.pairingPrompts().unwrap().is_empty());
+            let clientStore = PeerStateStore::new(clientRouter.localCore.runtimeStorageHost());
+            let serverStore = PeerStateStore::new(serverRouter.localCore.runtimeStorageHost());
+            assert_eq!(clientStore.records::<crate::PeerStateStore::StoredOutbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH).unwrap().len(), 1);
+            assert_eq!(serverStore.records::<crate::PeerStateStore::StoredInbound>(operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH).unwrap().len(), 1);
             drop((promptFlow, clientPromptFlow, overview));
             clientPeer.stop().await.unwrap();
             let restored = HostRuntimePeerService::new(clientHost.clone(), &clientRouter,
@@ -545,5 +559,80 @@ async fn listener_capabilities_validate_all_transports_before_binding() {
     let config = store.hostConfig().unwrap().unwrap();
     assert!(config.discoveryEnabled);
     assert_eq!(config.transports, vec![PeerTransport::Tcp, PeerTransport::Http]);
+    peer.stop().await.unwrap();
+}
+
+
+/// Filters inbound and outbound pairings in Core discovery and exposes removed devices again.
+#[tokio::test]
+async fn core_discovery_returns_only_unpaired_devices_for_all_callers() {
+    use crate::HostRuntimePeerService::HostRuntimePeerService;
+    use crate::PeerStateStore::{PeerStateStore, StoredInbound, StoredOutbound, PAIRING_SERVICE_VERSION};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use operit_host_api::HostManager::HostManager;
+    use operit_host_api::ServiceDiscovery::{DiscoveredService, DiscoveryCallback, DiscoverySubscription, ServiceDiscoveryHost};
+    use operit_host_api::{HostError, HostResult};
+    use operit_link::protocol::LinkDeviceInfo;
+    use operit_util::RuntimeStorageLayout::{RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH};
+
+    struct SnapshotDiscovery(Vec<DiscoveredService>);
+    impl ServiceDiscoveryHost for SnapshotDiscovery {
+        /// Declares this test Host's snapshot-only discovery capability.
+        fn supportsAdvertisement(&self) -> bool { false }
+        /// Returns advertisements without granting authentication to any discovered device.
+        fn discover(&self, serviceType: &str, _: u64) -> HostResult<Vec<DiscoveredService>> {
+            assert_eq!(serviceType, "_operit-link._tcp.local.");
+            Ok(self.0.clone())
+        }
+        /// Rejects subscriptions outside this test's snapshot discovery contract.
+        fn subscribe(&self, _: &str, _: DiscoveryCallback) -> HostResult<Box<dyn DiscoverySubscription>> {
+            Err(HostError::new("Snapshot discovery does not provide subscriptions"))
+        }
+    }
+
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (router, _) = approvalService("discovery-local");
+    let router = Arc::new(router);
+    let record = |node: &str, ip: &str| DiscoveredService {
+        fullName: "test".into(), hostname: "test.local.".into(), port: 37195,
+        addresses: vec![ip.parse().unwrap()],
+        properties: [("nodeId".into(), node.into()), ("displayName".into(), "Same name".into()),
+            ("transports".into(), "http,ws,tcp".into())].into_iter().collect(),
+    };
+    let host = Arc::new(HostManager {
+        runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
+        serviceDiscoveryHost: Some(Arc::new(SnapshotDiscovery(vec![
+            record("discovery-local", "192.168.1.1"), record("incoming", "192.168.1.2"),
+            record("incoming", "fd00::2"), record("outgoing", "192.168.1.3"), record("new", "192.168.1.4"),
+        ]))),
+        hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+        ..HostManager::default()
+    });
+    let info = LinkDeviceInfo { platform: "test".into(), model: "test".into() };
+    let peer = HostRuntimePeerService::new(host, &router, info.clone()).unwrap();
+    router.installNodeServices(NodeServices::new(peer.clone())).unwrap();
+    let service = RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), (*router).clone());
+    assert_eq!(peer.discoverPeers(1).await.unwrap().len(), 3);
+    let store = PeerStateStore::new(router.localCore.runtimeStorageHost());
+    store.putRecord(RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, "incoming-session", &StoredInbound {
+        deviceId: "incoming".into(), deviceInfo: info.clone(), pairingServiceVersion: PAIRING_SERVICE_VERSION,
+        sessionSecret: BASE64.encode([1; 32]),
+    }).unwrap();
+    store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, "outgoing-session", &StoredOutbound {
+        endpoint: "192.168.1.3:37195".into(), sessionId: "outgoing-session".into(), deviceId: router.localNodeId(),
+        peerNodeId: "outgoing".into(), peerDeviceInfo: info, pairingServiceVersion: PAIRING_SERVICE_VERSION,
+        sessionSecret: BASE64.encode([2; 32]), transport: "tcp".into(),
+    }).unwrap();
+    assert!(peer.activePeerNodeIds().unwrap().is_empty());
+    let direct = peer.discoverPeers(1).await.unwrap();
+    let app = service.discoverPeers(1).await.unwrap();
+    assert_eq!(direct, app);
+    assert_eq!(app.iter().map(|candidate| candidate.nodeId.as_str()).collect::<Vec<_>>(), vec!["new"]);
+    peer.removePairedPeer("incoming").await.unwrap();
+    let app = service.discoverPeers(1).await.unwrap();
+    assert_eq!(app.iter().map(|candidate| candidate.nodeId.as_str()).collect::<Vec<_>>(), vec!["incoming", "new"]);
+    peer.removePairedPeer("outgoing").await.unwrap();
+    assert_eq!(service.discoverPeers(1).await.unwrap().len(), 3);
     peer.stop().await.unwrap();
 }

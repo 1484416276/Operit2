@@ -236,7 +236,7 @@ impl OperitFlutterBridge {
     }
 
     /// Creates a bridge using the platform's explicit runtime and workspace roots.
-    #[cfg(not(target_env = "ohos"))]
+    #[cfg(not(any(target_env = "ohos", target_os = "android")))]
     fn new() -> Result<Self, String> {
         let (runtime_root, workspace_root) = default_native_storage_roots()?;
         Self::new_with_storage_roots(runtime_root, workspace_root)
@@ -247,6 +247,7 @@ impl OperitFlutterBridge {
         runtime_root: PathBuf,
         workspace_root: PathBuf,
         #[cfg(target_env = "ohos")] systemLanguageCode: String,
+        #[cfg(target_os = "android")] device_model: String,
     ) -> Result<Self, String> {
         #[cfg(not(target_arch = "wasm32"))]
         let runtime = {
@@ -308,7 +309,11 @@ impl OperitFlutterBridge {
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
-        let deviceInfo = PlatformRuntimeFactory::local_device_info(localCore.as_ref())?;
+        let deviceInfo = PlatformRuntimeFactory::local_device_info(
+            localCore.as_ref(),
+            #[cfg(target_os = "android")]
+            device_model,
+        )?;
         let coreApplication = CoreApplication::startWithSharedLocalClient(
             localCore.clone(),
             deviceInfo,

@@ -34,7 +34,7 @@ use operit_plugin_sdk::execution_result::{
 use operit_plugin_sdk::javascript::{
     JsExecutionEngine, JsExecutionFuture, JsExecutionHost, JsToolNameResolutionRequest,
     JsToolPkgIpcRequest, JsToolPkgResourceRequest, JsToolPkgWasmArg, JsToolPkgWasmRequest,
-    ToolPkgExecutionContext, ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
+    ToolPkgConfigScope, ToolPkgExecutionContext, ToolPkgMainRegistrationCapture, ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgApiRuntimeScript::buildToolPkgApiRuntimeScript;
 use operit_plugin_sdk::toolpkg::ToolPkgComposeDslRuntimeScript::buildComposeDslRuntimeWrappedScript;
@@ -56,6 +56,7 @@ type JsExecutionListenerRef = Arc<dyn JsExecutionListener + Send + Sync>;
 
 thread_local! {
     static CURRENT_EXECUTION_HOST: RefCell<Option<Arc<dyn JsExecutionHost>>> = RefCell::new(None);
+    static CURRENT_REGISTRATION_CONFIG_PARAMS: RefCell<Option<BTreeMap<String, Value>>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
     static CURRENT_DETACHED_INTERMEDIATE_CALLBACKS: RefCell<BTreeMap<String, Arc<dyn Fn(String) + Send + Sync>>> =
@@ -1417,6 +1418,10 @@ impl JsEngineState {
         CURRENT_EXECUTION_HOST.with(|host| {
             *host.borrow_mut() = self.executionHost.clone();
         });
+        // Bind trusted scope/owner parameters before any top-level module code can query paths.
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| {
+            *current.borrow_mut() = Some(params.clone());
+        });
         let registrationResult = (|| {
             let mut registrationParams = params.clone();
             registrationParams.insert("__operit_registration_mode".to_string(), Value::Bool(true));
@@ -1485,6 +1490,9 @@ impl JsEngineState {
         });
         CURRENT_EXECUTION_HOST.with(|host| {
             *host.borrow_mut() = None;
+        });
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| {
+            *current.borrow_mut() = None;
         });
         // Registration temporarily installs a restricted bridge. Restore the runtime bridge
         // before any hook can evaluate a package main module again.
@@ -2977,8 +2985,32 @@ fn nativeSetEnvsStrings(valuesJson: String) -> String {
 /// Resolves package-owned configuration without altering the public one-argument API.
 #[allow(non_snake_case)]
 fn nativeGetScopedPluginConfigDirString(ownerId: String, pluginId: String) -> String {
-    match currentExecutionHost().and_then(|host| host.scoped_plugin_config_dir(&ownerId, &pluginId))
-    {
+    let result = currentExecutionHost().and_then(|host| {
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| match current.borrow().as_ref() {
+            Some(params) => {
+                let owner = params
+                    .get("toolPkgId")
+                    .and_then(Value::as_str)
+                    .ok_or("ToolPkg registration configuration owner is missing")?;
+                if owner != ownerId {
+                    return Err(
+                        "ToolPkg registration configuration owner does not match its context"
+                            .to_string(),
+                    );
+                }
+                let scope = params
+                    .get("__operit_registration_config_scope")
+                    .ok_or("ToolPkg registration configuration scope is missing")?;
+                let scope: ToolPkgConfigScope =
+                    serde_json::from_value(scope.clone()).map_err(|error| {
+                        format!("Invalid ToolPkg registration configuration scope: {error}")
+                    })?;
+                host.registration_plugin_config_dir(owner, &pluginId, scope)
+            }
+            None => host.scoped_plugin_config_dir(&ownerId, &pluginId),
+        })
+    });
+    match result {
         Ok(path) => serde_json::json!({"success": true, "path": path}).to_string(),
         Err(error) => buildJsExecutionErrorPayload(&error),
     }

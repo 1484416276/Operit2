@@ -2919,8 +2919,8 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
         outputFileName: Option<String>,
         internal: Option<bool>,
     ) -> JsFuture<String>;
-    /// Returns the selected plugin configuration directory during runtime execution.
-    /// Throws during registration or when the package has no installed scope owner.
+    /// Returns the selected plugin configuration directory during registration and runtime execution.
+    /// Registration uses the explicitly selected scope before an installation record exists.
     fn getConfigDir(&self, pluginId: Option<String>) -> String;
 }
 /// Requires the host to implement every global host operation.

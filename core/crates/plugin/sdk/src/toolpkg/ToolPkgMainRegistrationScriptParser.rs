@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::javascript::{JsExecutionEngine, ToolPkgMainRegistrationCapture};
+use crate::javascript::{JsExecutionEngine, ToolPkgConfigScope, ToolPkgMainRegistrationCapture};
 use crate::package::LocalizedText;
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgParser::{
@@ -21,7 +21,7 @@ use crate::toolpkg::ToolPkgParser::{
 pub struct ToolPkgMainRegistrationScriptParser;
 
 impl ToolPkgMainRegistrationScriptParser {
-    /// Parses ToolPkg main-script registrations without preloaded text resources.
+    /// Parses a device-scope ToolPkg main script without preloaded text resources.
     pub fn parse(
         script: &str,
         toolPkgId: &str,
@@ -33,6 +33,7 @@ impl ToolPkgMainRegistrationScriptParser {
             toolPkgId,
             mainScriptPath,
             crate::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION,
+            ToolPkgConfigScope::Device,
             jsEngine,
             None,
         )
@@ -45,6 +46,7 @@ impl ToolPkgMainRegistrationScriptParser {
         toolPkgId: &str,
         mainScriptPath: &str,
         apiVersion: &str,
+        configScope: ToolPkgConfigScope,
         jsEngine: &dyn JsExecutionEngine,
         textResources: Option<Arc<BTreeMap<String, String>>>,
     ) -> ToolPkgMainRegistrationParseResult {
@@ -62,6 +64,11 @@ impl ToolPkgMainRegistrationScriptParser {
             Value::String(format!("registerToolPkg:{toolPkgId}")),
         );
         params.insert("__operit_registration_mode".to_string(), Value::Bool(true));
+        // The scope is fixed before module evaluation, not looked up through the loading manager.
+        params.insert(
+            "__operit_registration_config_scope".to_string(),
+            Value::String(configScope.as_str().to_string()),
+        );
         params.insert(
             "__operit_script_screen".to_string(),
             Value::String(mainScriptPath.to_string()),

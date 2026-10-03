@@ -455,6 +455,13 @@ impl ExtensionStore {
         Ok(())
     }
 
+    /// Resolves a known package scope before registration without requiring an installation record.
+    pub fn configPathForScope(id: &str, scope: &str) -> Result<String, String> {
+        Self::root("package", scope)?;
+        let name = operit_util::OperitPaths::pluginConfigDirName(id)?;
+        Ok(format!("runtime/extensions/{scope}/plugins/configs/{name}"))
+    }
+
     /// Resolves the current scope-owned plugin config path using the existing stable directory naming rule.
     pub fn configPath(&self, id: &str) -> Result<String, String> {
         self.configRoot(&self.record("package", id)?)
@@ -686,11 +693,7 @@ impl ExtensionStore {
 
     /// Resolves one package configuration root without changing its stable plugin directory name.
     fn configRoot(&self, record: &ExtensionRecord) -> Result<String, String> {
-        let name = operit_util::OperitPaths::pluginConfigDirName(&record.id)?;
-        Ok(format!(
-            "runtime/extensions/{}/plugins/configs/{name}",
-            record.scope
-        ))
+        Self::configPathForScope(&record.id, &record.scope)
     }
 
     /// Captures the full portable content tree and existing configuration during a scope move.

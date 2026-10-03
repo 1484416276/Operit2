@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import zipfile
 from pathlib import Path
 
 from common import (
@@ -68,6 +69,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Rejects release APKs whose terminal assets do not match the requested ABI.
+def verify_android_runtime_assets(apk_path: Path, abi: str) -> None:
+    prefix = "assets/android-runtime/"
+    with zipfile.ZipFile(apk_path) as archive:
+        asset_names = {
+            entry.filename for entry in archive.infolist()
+            if not entry.is_dir() and entry.filename.startswith(prefix)
+        }
+    packaged_abis = {name[len(prefix):].split("/", 1)[0] for name in asset_names}
+    if packaged_abis != {abi}:
+        raise RuntimeError(
+            f"Android APK runtime asset ABIs must be exactly {abi}: "
+            f"{sorted(packaged_abis)} ({apk_path})"
+        )
+    required_assets = {
+        f"{prefix}{abi}/rootfs.tar.gz.bin",
+        f"{prefix}{abi}/rootfs.tar.gz.bin.sha256",
+    }
+    missing_assets = required_assets - asset_names
+    if missing_assets:
+        raise RuntimeError(
+            f"Android APK is missing required runtime assets: {sorted(missing_assets)} ({apk_path})"
+        )
+
+
+# Builds and verifies the ABI-specific Android release before publishing it.
 def main() -> int:
     args = parse_args()
     if not args.skip_signing:
@@ -92,8 +119,10 @@ def main() -> int:
     run(command, cwd=FLUTTER_APP_DIR)
 
     apk_dir = FLUTTER_APP_DIR / "build" / "app" / "outputs" / "flutter-apk"
+    apk_path = apk_dir / "app-arm64-v8a-release.apk"
+    verify_android_runtime_assets(apk_path, "arm64-v8a")
     copy_required_file(
-        apk_dir / "app-arm64-v8a-release.apk",
+        apk_path,
         args.dist_dir / "operit2-app-android-arm64-v8a.apk",
     )
     return 0

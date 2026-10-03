@@ -259,6 +259,9 @@ class OwnerSystemCapabilityChannel(
                 val response =
                     when (operation) {
                         "send_notification" -> systemSendNotification(JSONObject(paramsJson))
+                        "get_device_info" -> mapOf(
+                            "resultJson" to AndroidHostDeviceInfo.read(activity.applicationContext),
+                        )
                         "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
                         else -> throw IllegalArgumentException("unsupported system operation: $operation")
                     }

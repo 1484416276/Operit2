@@ -438,11 +438,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return Promise.resolve(raw);
         }
 
-        // Rejects runtime configuration access before invoking any host callback.
+        // Resolves configuration through the host in both registration and runtime execution.
         function getToolPkgConfigDir(pluginId) {
-            if (registrationOnly) {
-                throw new Error('ToolPkg.getConfigDir is unavailable during ToolPkg registration');
-            }
             var explicitId = String(pluginId || '').trim();
             var owner = resolveCurrentToolPkgTarget();
             var target = explicitId || owner;

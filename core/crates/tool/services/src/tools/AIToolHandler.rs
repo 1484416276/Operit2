@@ -6,7 +6,7 @@ use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
     JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
-    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
+    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope,
 };
 use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
 use operit_plugin_sdk::package::ToolPackage;
@@ -72,6 +72,32 @@ pub struct AIToolHandlerState {
 }
 
 impl AIToolHandler {
+    /// Creates one scope-owned directory through the filesystem Host without package manager locks.
+    fn createPackageConfigDirectory(
+        &self,
+        owner_id: &str,
+        plugin_id: &str,
+        scope: &str,
+    ) -> Result<String, String> {
+        let root = operit_store::ExtensionStore::ExtensionStore::configPathForScope(owner_id, scope)?;
+        let path = if plugin_id == owner_id {
+            root
+        } else {
+            let name = operit_util::OperitPaths::pluginConfigDirName(plugin_id)?;
+            format!("{root}/namespaces/{name}")
+        };
+        let configDir = RuntimeStorePaths::default().runtime_storage_path(&path);
+        self.getContext()
+            .fileSystemHost
+            .as_ref()
+            .ok_or("FileSystemHost is required for plugin configuration")?
+            .makeDirectory(&configDir.to_string_lossy(), true)
+            .map_err(|error| error.to_string())?;
+        let relative = path.strip_prefix("runtime/")
+            .ok_or("Configuration is outside runtime storage")?;
+        PathMapper::joinVfsPath("/app/data", relative)
+    }
+
     fn truncateLogValue(value: &str, maxChars: usize) -> String {
         let mut truncated = String::new();
         for character in value.chars().take(maxChars) {
@@ -1365,29 +1391,18 @@ impl JsExecutionHost for AIToolHandler {
     fn scoped_plugin_config_dir(&self, owner_id: &str, plugin_id: &str) -> Result<String, String> {
         // Host callbacks must not acquire the package manager lock held by script callers.
         let store = operit_store::ExtensionStore::ExtensionStore::default();
-        let owner = store.packageOwner(owner_id)?.id;
-        let root = store.configPath(&owner)?;
-        let path = if plugin_id == owner {
-            root
-        } else {
-            let alias = operit_util::OperitPaths::pluginConfigDir(plugin_id)?;
-            let name = alias
-                .file_name()
-                .ok_or("Configuration alias is invalid")?
-                .to_string_lossy();
-            format!("{root}/namespaces/{name}")
-        };
-        let configDir = RuntimeStorePaths::default().runtime_storage_path(&path);
-        self.getContext()
-            .fileSystemHost
-            .as_ref()
-            .ok_or("FileSystemHost is required for plugin configuration")?
-            .makeDirectory(&configDir.to_string_lossy(), true)
-            .map_err(|e| e.to_string())?;
-        let relative = path
-            .strip_prefix("runtime/")
-            .ok_or("Configuration is outside runtime storage")?;
-        PathMapper::joinVfsPath("/app/data", relative)
+        let owner = store.packageOwner(owner_id)?;
+        self.createPackageConfigDirectory(&owner.id, plugin_id, &owner.scope)
+    }
+
+    /// Creates registration configuration from its selected scope without querying runtime state.
+    fn registration_plugin_config_dir(
+        &self,
+        owner_id: &str,
+        plugin_id: &str,
+        scope: ToolPkgConfigScope,
+    ) -> Result<String, String> {
+        self.createPackageConfigDirectory(owner_id, plugin_id, scope.as_str())
     }
 
     /// Reads one ToolPkg text resource.

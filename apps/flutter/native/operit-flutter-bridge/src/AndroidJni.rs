@@ -39,6 +39,7 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
     _class: JClass,
     runtime_root: JString,
     workspace_root: JString,
+    device_model: JString,
     host: JObject,
 ) -> jlong {
     let runtime_root = match env.get_string(&runtime_root) {
@@ -55,6 +56,17 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
             return 0;
         }
     };
+    let device_model: String = match env.get_string(&device_model) {
+        Ok(value) => value.into(),
+        Err(error) => {
+            set_last_create_error(format!("Android startup device model is invalid: {error}"));
+            return 0;
+        }
+    };
+    if device_model.trim().is_empty() {
+        set_last_create_error("Android startup device model must not be empty".to_string());
+        return 0;
+    }
     let java_vm = match env.get_java_vm() {
         Ok(value) => value,
         Err(error) => {
@@ -74,7 +86,7 @@ pub unsafe extern "system" fn Java_app_operit_OperitRuntimeNative_create(
         return 0;
     }
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root)
+        OperitFlutterBridge::new_with_storage_roots(runtime_root, workspace_root, device_model)
     })) {
         Ok(Ok(bridge)) => Arc::into_raw(Arc::new(bridge)) as jlong,
         Ok(Err(error)) => {

@@ -13,7 +13,7 @@ use operit_plugin_sdk::execution_result::JsExecutionErrorKind;
 use operit_plugin_sdk::javascript::{
     JsExecutionHost, JsToolCallRequest, JsToolCallResult, JsToolCallResultData,
     JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
-    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgExecutionContext,
+    JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope, ToolPkgExecutionContext,
     ToolPkgTextResourceHost,
 };
 use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
@@ -25,7 +25,6 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
 use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,6 +73,8 @@ pub(super) fn newTestJsEngineState(
 #[derive(Default)]
 struct TestPluginConfigExecutionHost {
     toolPkgTextResourceReads: AtomicUsize,
+    registrationConfigReads: AtomicUsize,
+    packageManagerLock: Mutex<()>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
 }
@@ -165,7 +166,26 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
 
     /// Resolves scoped configuration through the explicit test contract.
     fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
+        let _manager = self.packageManagerLock.lock().expect("test package manager lock");
         self.plugin_config_dir(plugin_id)
+    }
+
+    /// Creates paths from registration scope without accessing the installed package manager.
+    fn registration_plugin_config_dir(
+        &self,
+        owner_id: &str,
+        plugin_id: &str,
+        scope: ToolPkgConfigScope,
+    ) -> Result<String, String> {
+        self.registrationConfigReads.fetch_add(1, Ordering::Relaxed);
+        let root = operit_store::ExtensionStore::ExtensionStore::configPathForScope(owner_id, scope.as_str())?;
+        let path = if plugin_id == owner_id {
+            root
+        } else {
+            let name = operit_util::OperitPaths::pluginConfigDirName(plugin_id)?;
+            format!("{root}/namespaces/{name}")
+        };
+        Ok(format!("/app/data/{}", path.strip_prefix("runtime/").ok_or("invalid test config path")?))
     }
 
     /// Records direct ToolPkg text resource reads rejected by this test host.
@@ -2264,21 +2284,94 @@ fn registration_mode_blocks_resource_and_wasm_calls() {
     );
 }
 
-/// Verifies module-level configuration access fails before registration can call the host.
+/// Allows both module-top-level and registerToolPkg configuration calls while a manager lock is held.
 #[test]
-fn registration_mode_rejects_top_level_config_directory_access() {
-    ensure_test_runtime_root();
-    let engine = newTestToolPkgRegistrationEngine();
-    let script = r#"
-        const directory = ToolPkg.getConfigDir();
-        exports.registerToolPkg = function() { return true; };
-    "#;
-    let error = engine
-        .execute_toolpkg_main_registration_function(script, "registerToolPkg", &testParams())
-        .expect_err("registration must reject configuration access without a host callback");
-    assert!(error.message.find(
-        "ToolPkg.getConfigDir is unavailable during ToolPkg registration"
-    ).is_some(), "unexpected error: {}", error.message);
+fn registration_config_directory_works_before_installation_without_reentering_manager() {
+    for scope in [ToolPkgConfigScope::Device, ToolPkgConfigScope::Space] {
+        let host = Arc::new(TestPluginConfigExecutionHost::default());
+        let engine = newTestJsEngine(host.clone());
+        let _manager = host
+            .packageManagerLock
+            .lock()
+            .expect("loading holds package manager");
+        let mut params = testParams();
+        params.insert(
+            "toolPkgId".to_string(),
+            Value::String("first_import".to_string()),
+        );
+        params.insert(
+            "__operit_registration_config_scope".to_string(),
+            Value::String(scope.as_str().to_string()),
+        );
+        let script = r#"
+            const directory = ToolPkg.getConfigDir();
+            exports.registerToolPkg = function() {
+                ToolPkg.registerNavigationEntry({
+                    id: 'config-check',
+                    directory: directory,
+                    aliasDirectory: ToolPkg.getConfigDir('named_alias')
+                });
+                return true;
+            };
+        "#;
+        let capture = engine
+            .executeToolPkgMainRegistrationWithTimeout(script, "registerToolPkg", &params, None, 1)
+            .expect("registration must resolve paths while its caller holds the manager lock");
+        let entry: Value = serde_json::from_str(&capture.navigationEntries[0]).unwrap();
+        let root = format!(
+            "/app/data/extensions/{}/plugins/configs/first_import",
+            scope.as_str()
+        );
+        assert_eq!(entry["directory"], root);
+        assert_eq!(
+            entry["aliasDirectory"],
+            format!("{root}/namespaces/named_alias")
+        );
+        assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 2);
+    }
+}
+
+/// Clears registration-only configuration routing before the engine executes a runtime function.
+#[test]
+fn registration_config_context_does_not_leak_into_runtime_execution() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let mut params = testParams();
+    params.insert("toolPkgId".to_string(), Value::String("first_import".to_string()));
+    params.insert("__operit_registration_config_scope".to_string(), Value::String("space".to_string()));
+    engine.execute_toolpkg_main_registration_function(
+        "const path = ToolPkg.getConfigDir(); exports.registerToolPkg = function() { return true; };",
+        "registerToolPkg", &params,
+    ).expect("space registration configuration");
+    let output = engine.execute_script_function(
+        "exports.read_config = function() { return ToolPkg.getConfigDir(); };",
+        "read_config", &params, &BTreeMap::new(), None, true, 2,
+    ).expect("runtime configuration must use the installed-owner callback")
+        .expect("runtime configuration result");
+    assert_eq!(serde_json::from_str::<String>(&output).unwrap(),
+        "/app/data/extensions/plugins/configs/first_import");
+    assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 1);
+}
+
+/// Rejects an unspecified registration scope instead of choosing an arbitrary storage location.
+#[test]
+fn registration_config_requires_the_selected_scope() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    let engine = newTestJsEngine(host.clone());
+    let mut params = testParams();
+    params.insert(
+        "toolPkgId".to_string(),
+        Value::String("first_import".to_string()),
+    );
+    let error = engine.execute_toolpkg_main_registration_function(
+        "const directory = ToolPkg.getConfigDir(); exports.registerToolPkg = function() { return true; };",
+        "registerToolPkg", &params,
+    ).expect_err("configuration requires an explicit registration scope");
+    assert!(error
+        .message
+        .find("ToolPkg registration configuration scope is missing")
+        .is_some());
+    assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 0);
 }
 
 /// Verifies scoped configuration failures are thrown rather than returned as path text.

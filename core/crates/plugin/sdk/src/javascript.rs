@@ -115,6 +115,24 @@ pub type JsToolPkgIpcCompletion = Box<dyn FnOnce(Result<Value, String>) + Send +
 /// Represents one locally polled JavaScript execution future.
 pub type JsExecutionFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
+/// Identifies the storage scope selected before a ToolPkg registration is evaluated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolPkgConfigScope {
+    Device,
+    Space,
+}
+
+impl ToolPkgConfigScope {
+    /// Returns the stable scope key understood by the runtime storage compatibility layer.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::Space => "space",
+        }
+    }
+}
+
 /// Defines the fixed Rust execution contract required by package JavaScript.
 pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
     /// Returns the current executable tool catalog with parameter schemas.
@@ -137,6 +155,14 @@ pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
 
     /// Returns a named configuration directory owned by the executing package.
     fn scoped_plugin_config_dir(&self, owner_id: &str, plugin_id: &str) -> Result<String, String>;
+
+    /// Creates package configuration in the explicit scope selected for registration.
+    fn registration_plugin_config_dir(
+        &self,
+        owner_id: &str,
+        plugin_id: &str,
+        scope: ToolPkgConfigScope,
+    ) -> Result<String, String>;
 
     /// Reads one UTF-8 ToolPkg resource.
     fn read_toolpkg_text_resource(

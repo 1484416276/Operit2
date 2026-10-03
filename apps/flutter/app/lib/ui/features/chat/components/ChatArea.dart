@@ -149,12 +149,17 @@ class _ChatAreaState extends State<ChatArea>
   int? _layoutAnchorTimestamp;
   Key _scrollLayoutKey = UniqueKey();
   static const _centerSliverKey = ValueKey<String>('chat-message-center');
-  bool _bottomJumpScheduled = false;
+  late final _ChatLayoutScrollController _layoutScrollController;
 
   /// Initializes the frame-driven live-output follower.
   @override
   void initState() {
     super.initState();
+    _layoutScrollController = _ChatLayoutScrollController(
+      delegate: widget.scrollController,
+      shouldAlignBottom: _shouldAlignBottomDuringLayout,
+      shouldInitiallyAlignBottom: _ownsBottomScroll,
+    );
     _bottomFollowClock.start();
     _bottomFollowTicker = createTicker(_tickBottomFollow);
   }
@@ -203,7 +208,7 @@ class _ChatAreaState extends State<ChatArea>
                 onPointerPanZoomEnd: _handleUserPointerEnd,
                 child: CustomScrollView(
                   key: _scrollLayoutKey,
-                  controller: widget.scrollController,
+                  controller: _layoutScrollController,
                   center: _centerSliverKey,
                   slivers: [
                     if (centerIndex > 0)
@@ -361,21 +366,13 @@ class _ChatAreaState extends State<ChatArea>
       notification.metrics.maxScrollExtent,
     );
     final viewportDimension = notification.metrics.viewportDimension;
-    final completedStreamExtentHandled = _handleCompletedStreamExtentChange(
-      maxScrollExtentDelta,
-    );
+    _handleCompletedStreamExtentChange(maxScrollExtentDelta);
     if (_scrollViewportDimension != viewportDimension) {
       _scrollViewportDimension = viewportDimension;
       _scheduleViewportResizeUpdate();
-      if (!completedStreamExtentHandled) {
-        _scheduleBottomJump();
-      }
       return false;
     }
     _scheduleMessageAnchorCollection();
-    if (!completedStreamExtentHandled) {
-      _scheduleBottomJump();
-    }
     return false;
   }
 
@@ -500,7 +497,6 @@ class _ChatAreaState extends State<ChatArea>
       return;
     }
     _scheduleBottomFollow(0);
-    _scheduleBottomJump();
   }
 
   /// Schedules one post-layout collection of message navigation anchors.
@@ -543,38 +539,20 @@ class _ChatAreaState extends State<ChatArea>
         metrics.pixels >= metrics.maxScrollExtent - 2;
   }
 
-  /// Schedules one immediate automatic alignment with the current bottom extent.
-  void _scheduleBottomJump() {
-    if (_bottomJumpScheduled ||
-        _hasLiveBottomStream() ||
-        _isCompletingBottomFollow() ||
-        _activeUserScrollPointers.isNotEmpty ||
-        !widget.autoScrollToBottomListenable.value ||
-        widget.hasNewerDisplayHistory ||
-        widget.isLoadingDisplayWindow ||
-        !widget.scrollController.hasClients) {
-      return;
-    }
-    _bottomJumpScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bottomJumpScheduled = false;
-      if (!mounted ||
-          _hasLiveBottomStream() ||
-          _isCompletingBottomFollow() ||
-          _activeUserScrollPointers.isNotEmpty ||
-          !widget.autoScrollToBottomListenable.value ||
-          widget.hasNewerDisplayHistory ||
-          widget.isLoadingDisplayWindow ||
-          !widget.scrollController.hasClients) {
-        return;
-      }
-      final position = widget.scrollController.position;
-      final target = position.maxScrollExtent;
-      if ((target - position.pixels).abs() <= _bottomFollowPositionTolerance) {
-        return;
-      }
-      widget.scrollController.jumpTo(target);
-    });
+  /// Reports whether the viewport currently belongs to automatic bottom following.
+  bool _ownsBottomScroll() {
+    return mounted &&
+        _activeUserScrollPointers.isEmpty &&
+        widget.autoScrollToBottomListenable.value &&
+        !widget.hasNewerDisplayHistory &&
+        !widget.isLoadingDisplayWindow;
+  }
+
+  /// Aligns static history before paint without taking over live output following.
+  bool _shouldAlignBottomDuringLayout() {
+    return _ownsBottomScroll() &&
+        !_hasLiveBottomStream() &&
+        !_isCompletingBottomFollow();
   }
 
   /// Records measured live growth and starts the frame-driven bottom follower.
@@ -784,7 +762,6 @@ class _ChatAreaState extends State<ChatArea>
         index == widget.messages.length - 1 && !widget.hasNewerDisplayHistory;
     widget.onAutoScrollToBottomChanged(isLatest);
     _scheduleMessageAnchorCollection();
-    _scheduleBottomJump();
   }
 
   /// Cancels pending reveals without changing the established layout origin.
@@ -851,6 +828,7 @@ class _ChatAreaState extends State<ChatArea>
   @override
   void didUpdateWidget(ChatArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _layoutScrollController.delegate = widget.scrollController;
     final chatChanged = oldWidget.currentChatId != widget.currentChatId;
     if (chatChanged) {
       _stopBottomFollow();
@@ -886,7 +864,6 @@ class _ChatAreaState extends State<ChatArea>
     final bottomInsetChanged =
         oldWidget.bottomContentInset != widget.bottomContentInset;
     if (messagesChanged || bottomInsetChanged) {
-      _scheduleBottomJump();
       _scheduleMessageAnchorCollection();
     } else if (oldWidget.isLoading != widget.isLoading ||
         oldWidget.errorMessage != widget.errorMessage ||
@@ -910,6 +887,7 @@ class _ChatAreaState extends State<ChatArea>
   void dispose() {
     _navigatorHideTimer?.cancel();
     _viewportResizeTimer?.cancel();
+    _layoutScrollController.dispose();
     _bottomFollowTicker.dispose();
     _bottomFollowClock.stop();
     _bottomGrowthSamples.clear();
@@ -1093,6 +1071,93 @@ class _ChatAreaState extends State<ChatArea>
         message.sender == 'ai' &&
         oldMessage.contentStream != null &&
         message.contentStream == null;
+  }
+}
+
+/// Creates layout-aware positions while keeping the public controller attached.
+class _ChatLayoutScrollController extends ScrollController {
+  /// Retains the external navigation controller and the current ownership policy.
+  _ChatLayoutScrollController({
+    required ScrollController delegate,
+    required this.shouldAlignBottom,
+    required this.shouldInitiallyAlignBottom,
+  }) : _delegate = delegate,
+       super(keepScrollOffset: false);
+
+  ScrollController _delegate;
+  final ValueGetter<bool> shouldAlignBottom;
+  final ValueGetter<bool> shouldInitiallyAlignBottom;
+
+  /// Transfers attached positions when the owner replaces its controller.
+  set delegate(ScrollController value) {
+    if (identical(value, _delegate)) {
+      return;
+    }
+    for (final position in positions) {
+      _delegate.detach(position);
+      value.attach(position);
+    }
+    _delegate = value;
+  }
+
+  /// Exposes the same position to the owner's navigation and scroll listeners.
+  @override
+  void attach(ScrollPosition position) {
+    super.attach(position);
+    _delegate.attach(position);
+  }
+
+  /// Releases the position from both controllers when a viewport is replaced.
+  @override
+  void detach(ScrollPosition position) {
+    _delegate.detach(position);
+    super.detach(position);
+  }
+
+  /// Starts a new layout origin without restoring offsets from another origin.
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) {
+    return _ChatLayoutScrollPosition(
+      physics: physics,
+      context: context,
+      initialPixels: _delegate.initialScrollOffset,
+      oldPosition: oldPosition,
+      shouldAlignBottom: shouldAlignBottom,
+      shouldInitiallyAlignBottom: shouldInitiallyAlignBottom,
+    );
+  }
+}
+
+/// Resolves static bottom ownership in layout instead of moving a painted frame.
+class _ChatLayoutScrollPosition extends ScrollPositionWithSingleContext {
+  /// Creates a position scoped to the current chat and locator layout origin.
+  _ChatLayoutScrollPosition({
+    required super.physics,
+    required super.context,
+    required super.initialPixels,
+    required super.oldPosition,
+    required this.shouldAlignBottom,
+    required this.shouldInitiallyAlignBottom,
+  }) : super(keepScrollOffset: false);
+
+  final ValueGetter<bool> shouldAlignBottom;
+  final ValueGetter<bool> shouldInitiallyAlignBottom;
+
+  /// Requests a new layout pass with the measured bottom before any painting.
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final alignsBottom =
+        shouldAlignBottom() ||
+        (!haveDimensions && shouldInitiallyAlignBottom());
+    if (alignsBottom && pixels != maxScrollExtent) {
+      correctPixels(maxScrollExtent);
+      return false;
+    }
+    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
   }
 }
 

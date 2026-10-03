@@ -8,6 +8,7 @@ use operit_host_api::{
 pub struct AndroidSystemOperationHost;
 
 impl AndroidSystemOperationHost {
+    /// Creates the Android system operation host.
     pub fn new() -> Self {
         Self
     }
@@ -109,6 +110,7 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         )))
     }
 
+    /// Requires the application owner to provide Android device information.
     fn getDeviceInfo(&self) -> HostResult<DeviceInfoData> {
         Err(HostError::new(
             "Android get_device_info requires the Android device info host bridge",

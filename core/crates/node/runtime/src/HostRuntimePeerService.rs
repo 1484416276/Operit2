@@ -99,6 +99,13 @@ impl HostRuntimePeerService {
             .into_values().find(|c| c.peerNodeId == node && c.pairingServiceVersion == PAIRING_SERVICE_VERSION)
             .ok_or_else(|| CoreLinkError::new("PEER_OUTBOUND_NOT_AUTHORIZED", "No current outbound authorization for node"))
     }
+    /// Rejects an existing device authorization in either pairing direction.
+    fn ensureDeviceUnpaired(&self, peerNodeId: &str) -> Result<(), CoreLinkError> {
+        if self.state.store.pairedPeers(&self.state.nodeId).map_err(error)?.iter().any(|peer| peer.nodeId == peerNodeId) {
+            return Err(CoreLinkError::new("PEER_ALREADY_PAIRED", "Device is already paired"));
+        }
+        Ok(())
+    }
     async fn raw(&self, target: PeerEndpoint, transport: PeerTransport) -> Result<Arc<dyn PeerConnection>, CoreLinkError> {
         self.state.link.connect(self.state.host.clone(), PeerEndpoint { nodeId: self.state.nodeId.clone(), address: String::new() }, target, transport).await.map_err(error)
     }
@@ -209,21 +216,23 @@ impl HostRuntimePeerService {
                 if config.token.is_empty() { return Err(error("Non-LAN pairing token is not configured")); }
                 crypto::verify(config.token.as_bytes(), &context, b"token", &authorization.tokenProof)?;
             }
-            crypto::verify(&key, &context, b"client", &authorization.keyProof)
+            crypto::verify(&key, &context, b"client", &authorization.keyProof)?;
+            if hello.purpose == "start" {
+                let _guard = self.state.mutation.lock().unwrap();
+                self.ensureDeviceUnpaired(&hello.nodeId)?;
+                let pending = self.pendingRecords(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH)?;
+                if pending.values().filter(|p| p.expires > currentTimeMillis()).count() >= 32 { return Err(error("Pending pairing capacity reached")); }
+                self.state.store.putRecord(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, &id, &Pending {
+                    version: PAIRING_SERVICE_VERSION, id: id.clone(), clientDeviceId: hello.nodeId.clone(), peerNodeId: self.state.nodeId.clone(),
+                    endpoint: String::new(), transport: raw.transport(), info: hello.info.clone(),
+                    root: root.to_vec(), expires: currentTimeMillis() + PAIRING_LIFETIME_MS, attempts: 0,
+                    confirmationCode: Some(crypto::pairingCode()?),
+                }).map_err(error)?;
+                self.changed();
+            }
+            Ok(())
         })();
         if let Err(e) = admission { return sendError(&raw, request.requestId, e).await; }
-        if hello.purpose == "start" {
-            let _guard = self.state.mutation.lock().unwrap();
-            let pending = self.pendingRecords(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH)?;
-            if pending.values().filter(|p| p.expires > currentTimeMillis()).count() >= 32 { return Err(error("Pending pairing capacity reached")); }
-            self.state.store.putRecord(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, &id, &Pending {
-                version: PAIRING_SERVICE_VERSION, id: id.clone(), clientDeviceId: hello.nodeId.clone(), peerNodeId: self.state.nodeId.clone(),
-                endpoint: String::new(), transport: raw.transport(), info: hello.info.clone(),
-                root: root.to_vec(), expires: currentTimeMillis() + PAIRING_LIFETIME_MS, attempts: 0,
-                confirmationCode: Some(crypto::pairingCode()?),
-            }).map_err(error)?;
-            self.changed();
-        }
         sendValue(&raw, request.requestId, Authorized { proof: crypto::proof(&key, &context, b"server"), pairingId: id.clone() }).await?;
         if hello.purpose == "start" { return Ok(()); }
         let channel = Channel::new(raw.clone(), &key, &context, false)?;
@@ -244,6 +253,7 @@ impl HostRuntimePeerService {
             let result = (|| {
                 let _guard = self.state.mutation.lock().unwrap();
                 let mut pending = self.pending(true, &id)?;
+                self.ensureDeviceUnpaired(&hello.nodeId)?;
                 if pending.attempts >= 5 { return Err(error("Confirmation attempt limit reached")); }
                 pending.attempts += 1;
                 self.state.store.putRecord(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, &id, &pending).map_err(error)?;
@@ -307,6 +317,7 @@ fn isLocalAddress(address: std::net::IpAddr) -> bool { match address {
 
 #[async_trait(?Send)]
 impl RuntimePeerService for HostRuntimePeerService {
+    /// Returns only unpaired candidates using the current state after discovery completes.
     async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<DiscoveredPeer>, CoreLinkError> {
         let host = self.state.host.serviceDiscoveryHost.clone().ok_or_else(|| error("Discovery Host is not installed"))?;
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_ref().ok_or_else(|| error("Host scheduler is not installed"))?;
@@ -315,15 +326,23 @@ impl RuntimePeerService for HostRuntimePeerService {
             let result = host.discover("_operit-link._tcp.local.", timeoutMs); let _ = tx.send(result);
         })).map_err(|e| error(e.to_string()))?;
         let records = rx.await.map_err(|_| error("Discovery cancelled"))?.map_err(|e| error(e.to_string()))?;
-        Ok(discoveredPeers(records, &self.state.nodeId))
+        let pairedNodeIds = self.state.store.pairedPeers(&self.state.nodeId).map_err(error)?
+            .into_iter().map(|peer| peer.nodeId).collect::<BTreeSet<_>>();
+        Ok(discoveredPeers(records, &self.state.nodeId, &pairedNodeIds))
     }
+    /// Checks the known identity and the handshake result before creating a pairing transaction.
     async fn startPairing(&self, target: PeerEndpoint, transport: PeerTransport, token: Option<&str>) -> Result<PendingPairing, CoreLinkError> {
+        if !target.nodeId.is_empty() {
+            let _guard = self.state.mutation.lock().unwrap();
+            self.ensureDeviceUnpaired(&target.nodeId)?;
+        }
         let raw = self.raw(target.clone(), transport).await?;
         let result = self.handshake(raw.clone(), "start", "", None, token).await;
         raw.close().await;
         let (_, id, info, root, node) = result?;
         {
             let _guard = self.state.mutation.lock().unwrap();
+            self.ensureDeviceUnpaired(&node)?;
             self.state.store.putRecord(RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, &id, &Pending {
                 version: PAIRING_SERVICE_VERSION, id: id.clone(), clientDeviceId: self.state.nodeId.clone(), peerNodeId: node.clone(), endpoint: target.address,
                 transport, info: info.clone(), root, expires: currentTimeMillis() + PAIRING_LIFETIME_MS, attempts: 0, confirmationCode: None,
@@ -331,10 +350,12 @@ impl RuntimePeerService for HostRuntimePeerService {
         }
         self.changed(); Ok(PendingPairing { pairingId: id, peerNodeId: node, displayName: info.displayName() })
     }
+    /// Rechecks device uniqueness at each serialized confirmation boundary.
     async fn finishPairing(&self, id: &str, code: &str) -> Result<PairedPeer, CoreLinkError> {
         let pending = {
             let _guard = self.state.mutation.lock().unwrap();
             let mut p = self.pending(false, id)?;
+            self.ensureDeviceUnpaired(&p.peerNodeId)?;
             if p.attempts >= 5 { return Err(error("Confirmation attempt limit reached")); }
             p.attempts += 1;
             self.state.store.putRecord(RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, id, &p).map_err(error)?;
@@ -361,6 +382,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         {
             let _guard = self.state.mutation.lock().unwrap();
             self.pending(false, id)?; // 撤销/取消不能被正在完成的网络事务重新授予权限。
+            self.ensureDeviceUnpaired(&pending.peerNodeId)?;
             self.state.store.putRecord(RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH, id, &StoredOutbound {
                 endpoint: pending.endpoint, sessionId: id.into(), deviceId: self.state.nodeId.clone(), peerNodeId: pending.peerNodeId.clone(),
                 peerDeviceInfo: pending.info.clone(), pairingServiceVersion: PAIRING_SERVICE_VERSION,
@@ -517,10 +539,14 @@ impl RuntimePeerService for HostRuntimePeerService {
     }
 }
 
-fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredService>, localNodeId: &str) -> Vec<DiscoveredPeer> {
+/// Produces one addable candidate per unpaired node across all interfaces and transports.
+fn discoveredPeers(records: Vec<operit_host_api::ServiceDiscovery::DiscoveredService>, localNodeId: &str,
+    pairedNodeIds: &BTreeSet<String>,
+) -> Vec<DiscoveredPeer> {
     let mut peers = BTreeMap::new();
     for record in records {
         let Some(node) = record.properties.get("nodeId").filter(|n| n.as_str() != localNodeId) else { continue; };
+        if pairedNodeIds.contains(node) { continue; }
         let modes = record.properties.get("transports").map(String::as_str).unwrap_or("tcp");
         for mode in modes.split(',') {
             for ip in &record.addresses {
@@ -552,7 +578,8 @@ fn discoveryEndpointRank(ip: std::net::IpAddr, mode: &str) -> (u8, u8, String) {
 
 #[cfg(test)]
 mod discovery_ranking_tests {
-    use super::discoveryEndpointRank;
+    use super::{discoveryEndpointRank, BTreeSet};
+    /// Keeps different unpaired nodes distinct even when their display names match.
     #[test]
     fn groups_addresses_and_transports_by_node_not_display_name() {
         use operit_host_api::ServiceDiscovery::DiscoveredService;
@@ -568,13 +595,31 @@ mod discovery_ranking_tests {
             record("two", &["fd00::4"]),
             record("self", &["192.168.1.9"]),
             record("invalid", &["::", "ff02::1", "fe80::2"]),
-        ], "self");
+        ], "self", &BTreeSet::new());
         assert_eq!(peers.len(), 2);
         assert_eq!(peers[0].nodeId, "one");
         assert_eq!(peers[0].address, "http://192.168.1.2:37195/link");
         assert_eq!(peers[1].nodeId, "two");
         assert_eq!(peers[1].address, "http://[fd00::4]:37195/link");
     }
+    /// Excludes all advertisements of paired nodes without excluding equal display names.
+    #[test]
+    fn excludes_paired_nodes_from_all_discovery_records() {
+        use operit_host_api::ServiceDiscovery::DiscoveredService;
+        let record = |node: &str, ip: &str| DiscoveredService {
+            fullName: "test".into(), hostname: "test.local.".into(), port: 37195,
+            addresses: vec![ip.parse().unwrap()],
+            properties: [("nodeId".into(), node.into()), ("displayName".into(), "Same name".into()),
+                ("transports".into(), "tcp,http,ws".into())].into_iter().collect(),
+        };
+        let paired = ["paired".to_string()].into_iter().collect();
+        let records = vec![record("paired", "192.168.1.2"), record("paired", "fd00::2"), record("new", "192.168.1.3")];
+        let peers = super::discoveredPeers(records.clone(), "self", &paired);
+        assert_eq!(peers.iter().map(|peer| peer.nodeId.as_str()).collect::<Vec<_>>(), vec!["new"]);
+        assert_eq!(super::discoveredPeers(records, "self", &BTreeSet::new()).len(), 2);
+    }
+
+    /// Preserves endpoint ordering for unpaired nodes.
     #[test]
     fn prefers_lan_ipv4_over_ipv6_and_loopback() {
         let rank = |ip: &str| discoveryEndpointRank(ip.parse().unwrap(), "http");

@@ -1,6 +1,7 @@
 package app.operit
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -78,6 +79,7 @@ class AndroidRuntimeHost(context: Context) {
                 runtimeHandle = OperitRuntimeNative.create(
                     paths.runtimeRoot.absolutePath,
                     paths.workspaceRoot.absolutePath,
+                    Build.MODEL,
                     this,
                 )
                 if (runtimeHandle == 0L) {

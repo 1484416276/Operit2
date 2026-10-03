@@ -41,13 +41,43 @@ async function configDecoder(result) {
   return runInContext(`({${decoder}})`, context).getScopedPluginConfigDir;
 }
 
-/** Verifies registration rejects configuration queries before entering the host. */
-test("registration rejects module-level config access without a host callback", async () => {
-  let calls = 0;
-  const context = await runtime(true, { getScopedPluginConfigDir() { calls++; throw new Error("host must not be called"); } });
-  assert.throws(() => runInContext("const path = ToolPkg.getConfigDir();", context),
-    /ToolPkg.getConfigDir is unavailable during ToolPkg registration/);
-  assert.equal(calls, 0);
+/** Verifies configuration remains usable at module scope and inside both supported API versions. */
+test("registration preserves top-level config access and named directories", async () => {
+  for (const apiVersion of ["1.0.0", "2.0.0"]) {
+    const calls = [];
+    const context = await runtime(true, { getScopedPluginConfigDir(owner, target) {
+      calls.push([owner, target]);
+      const root = "/app/data/extensions/device/plugins/configs/com.operit.debug_msg_dump";
+      return target === owner ? root : `${root}/namespaces/${target}`;
+    } });
+    context.apiVersion = apiVersion;
+    runInContext(`
+      const registrationState = __operitGetCallState();
+      registrationState.params.__operit_toolpkg_api_version = apiVersion;
+      __operitGetCallState = function() { return registrationState; };
+      const directory = ToolPkg.getConfigDir();
+      exports.registerToolPkg = function() {
+        ToolPkg.registerNavigationEntry({id: 'config-test', directory, alias: ToolPkg.getConfigDir('alias')});
+        return true;
+      };
+    `, context);
+    assert.equal(runInContext("exports.registerToolPkg()", context), true);
+    const entry = JSON.parse(context.__operitToolPkgRegistrationCapture.navigationEntries[0]);
+    assert.equal(entry.directory, "/app/data/extensions/device/plugins/configs/com.operit.debug_msg_dump");
+    assert.equal(entry.alias, `${entry.directory}/namespaces/alias`);
+    assert.deepEqual(calls, [
+      ["com.operit.debug_msg_dump", "com.operit.debug_msg_dump"],
+      ["com.operit.debug_msg_dump", "alias"],
+    ]);
+  }
+});
+
+/** Verifies a real directory creation failure still reaches the plugin during registration. */
+test("registration propagates configuration host errors without disabling the API", async () => {
+  const context = await runtime(true, { getScopedPluginConfigDir() {
+    throw new Error("directory creation denied");
+  } });
+  assert.throws(() => runInContext("ToolPkg.getConfigDir()", context), /directory creation denied/);
 });
 
 /** Verifies the debug plugin declares hooks without reading paths or writing files. */

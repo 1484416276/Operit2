@@ -413,7 +413,7 @@ mod tests {
         JsExecutionEngine, JsExecutionHost, JsPackageRuntime, JsToolCallRequest, JsToolCallResult,
         JsToolNameResolutionRequest, JsToolPkgIpcCompletion, JsToolPkgIpcRequest,
         JsToolPkgResourceRequest, JsToolPkgWasmRequest, JsToolPkgWasmResult,
-        ToolPkgExecutionContext,
+        ToolPkgConfigScope, ToolPkgExecutionContext,
     };
     use operit_plugin_sdk::package::{PackageTool, ToolPackage};
     use operit_plugin_sdk::toolpkg::ToolPkgLoader::ToolPkgLoader;
@@ -478,6 +478,16 @@ mod tests {
         /// Resolves scoped configuration through the explicit test contract.
         fn scoped_plugin_config_dir(&self, _owner_id: &str, plugin_id: &str) -> Result<String, String> {
             self.plugin_config_dir(plugin_id)
+        }
+
+        /// Rejects configuration creation in manager fixtures that do not provide storage.
+        fn registration_plugin_config_dir(
+            &self,
+            _owner_id: &str,
+            _plugin_id: &str,
+            _scope: ToolPkgConfigScope,
+        ) -> Result<String, String> {
+            Err("Plugin configuration is not part of this test".to_string())
         }
 
         /// Rejects ToolPkg text resource access in manager tests.
@@ -1121,6 +1131,7 @@ mod tests {
         let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
             &host,
             source_path,
+            ToolPkgConfigScope::Device,
             &registration_engine,
             |package_name, error| {
                 load_errors

@@ -25,7 +25,7 @@ use operit_host_api::{
     TimeUtils::currentTimeMillis,
 };
 use operit_plugin_sdk::javascript::{
-    JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgExecutionContext,
+    JsToolPkgWasmRequest, JsToolPkgWasmResult, ToolPkgConfigScope, ToolPkgExecutionContext,
 };
 use operit_plugin_sdk::package::{LocalizedText, PublishablePackageSource, ToolPackage};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgHookDispatcher, ToolPkgHookInvocation};
@@ -2848,7 +2848,9 @@ impl RuntimePackageManager {
                 )),
             }
         } else if lowerPath.ends_with(".toolpkg") {
-            match self.loadToolPkgFromExternalFileWithIssues(path) {
+            match self.installedPackageConfigScope(path).and_then(|scope| {
+                self.loadToolPkgFromExternalFileWithIssues(path, scope)
+            }) {
                 Ok((loadResult, issues)) => {
                     result.toolPkgLoadResult = Some(loadResult);
                     result.issues.extend(issues);
@@ -2878,7 +2880,9 @@ impl RuntimePackageManager {
         if !sourcePath.to_ascii_lowercase().ends_with(".toolpkg") {
             return result;
         }
-        match self.loadToolPkgFromMarketFileWithIssues(path) {
+        match self.installedPackageConfigScope(path).and_then(|scope| {
+            self.loadToolPkgFromMarketFileWithIssues(path, scope)
+        }) {
             Ok((loadResult, issues)) => {
                 result.toolPkgLoadResult = Some(loadResult);
                 result.issues.extend(issues);
@@ -3601,7 +3605,7 @@ impl RuntimePackageManager {
 
         if isToolPkg {
             let (loadResult, loadIssues) = self
-                .loadToolPkgFromExternalFileWithIssues(&file)
+                .loadToolPkgFromExternalFileWithIssues(&file, ToolPkgConfigScope::Device)
                 .map_err(|error| format!("Error importing package: {error}"))?;
             appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &loadIssues);
             let packageName = loadResult.containerPackage.name.clone();
@@ -3628,7 +3632,7 @@ impl RuntimePackageManager {
                     .map_err(|error| format!("Error importing package: {error}"))?;
             }
             let (importedLoadResult, importedLoadIssues) = self
-                .loadToolPkgFromExternalFileWithIssues(&destinationFile)
+                .loadToolPkgFromExternalFileWithIssues(&destinationFile, ToolPkgConfigScope::Device)
                 .map_err(|error| format!("Error importing package: {error}"))?;
             appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &importedLoadIssues);
             if !self.registerToolPkg(importedLoadResult) {
@@ -4027,7 +4031,7 @@ impl RuntimePackageManager {
                 return Err("ToolPkg market installation authentication failed".to_string());
             }
             let (preview, previewIssues) =
-                self.loadToolPkgFromMarketFileWithIssues(&stagingFile)?;
+                self.loadToolPkgFromMarketFileWithIssues(&stagingFile, ToolPkgConfigScope::Device)?;
             appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &previewIssues);
             let packageName = preview.containerPackage.name.clone();
             if !self
@@ -4053,7 +4057,7 @@ impl RuntimePackageManager {
                 .map_err(|error| error.to_string())?;
             destinationStored = true;
             let (loaded, loadedIssues) =
-                self.loadToolPkgFromMarketFileWithIssues(&destinationFile)?;
+                self.loadToolPkgFromMarketFileWithIssues(&destinationFile, ToolPkgConfigScope::Device)?;
             appendUniqueToolPkgLoadIssues(&mut self.manualToolPkgLoadIssues, &loadedIssues);
             if !self.registerToolPkg(loaded) {
                 return Err(format!(
@@ -4826,11 +4830,25 @@ impl RuntimePackageManager {
             .map_err(|error| error.to_string())
     }
 
+    /// Resolves installed archive scope from its exact host-backed package directory.
+    #[allow(non_snake_case)]
+    fn installedPackageConfigScope(&self, path: &Path) -> Result<ToolPkgConfigScope, String> {
+        for scope in [ToolPkgConfigScope::Device, ToolPkgConfigScope::Space] {
+            let root = ExtensionStore::root("package", scope.as_str())?;
+            let directory = self.storePaths.runtime_storage_path(&root);
+            if path.parent() == Some(directory.as_path()) {
+                return Ok(scope);
+            }
+        }
+        Err(format!("Package source is outside installed scope directories: {}", hostPath(path)))
+    }
+
     /// Loads one external ToolPkg and collects partial registration diagnostics.
     #[allow(non_snake_case)]
     fn loadToolPkgFromExternalFileWithIssues(
         &self,
         file: &Path,
+        configScope: ToolPkgConfigScope,
     ) -> Result<(ToolPkgLoadResult, Vec<ToolPkgLoadIssue>), String> {
         let fileSystemHost =
             self.context.fileSystemHost.as_ref().ok_or_else(|| {
@@ -4842,6 +4860,7 @@ impl RuntimePackageManager {
             ToolPkgLoader::loadToolPkgFromExternalFile(
                 fileSystemHost.as_ref(),
                 &sourcePath,
+                configScope,
                 registrationEngine,
                 |packageName, error| {
                     issues.borrow_mut().push(newToolPkgLoadIssue(
@@ -4863,6 +4882,7 @@ impl RuntimePackageManager {
     fn loadToolPkgFromMarketFileWithIssues(
         &self,
         file: &Path,
+        configScope: ToolPkgConfigScope,
     ) -> Result<(ToolPkgLoadResult, Vec<ToolPkgLoadIssue>), String> {
         if !self.isInstalledMarketToolPkg(file)? {
             return Err("ToolPkg market installation authentication failed".to_string());
@@ -4877,6 +4897,7 @@ impl RuntimePackageManager {
             ToolPkgLoader::loadToolPkgFromMarketFile(
                 fileSystemHost.as_ref(),
                 &sourcePath,
+                configScope,
                 registrationEngine,
                 |packageName, error| {
                     issues.borrow_mut().push(newToolPkgLoadIssue(

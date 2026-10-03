@@ -12,16 +12,33 @@ pub(crate) fn release_runtime_host() {
 
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 
-/// Reads startup device metadata from the installed host instead of the Rust compilation target.
-pub(crate) fn local_device_info(core: &LocalCoreProxy) -> Result<LinkDeviceInfo, String> {
+/// Builds startup identity from host-supplied metadata without querying Android owner tools.
+pub(crate) fn local_device_info(
+    core: &LocalCoreProxy,
+    #[cfg(target_os = "android")] device_model: String,
+) -> Result<LinkDeviceInfo, String> {
     let host = core.hostManager();
-    let system = host.systemOperationHost.as_ref().ok_or_else(|| {
-        "Runtime device information requires a system-operation host".to_string()
-    })?;
-    let device = system.getDeviceInfo().map_err(|error| error.to_string())?;
+    // Android supplies startup metadata before the Flutter owner subscription exists.
+    #[cfg(target_os = "android")]
+    let model = {
+        if device_model.trim().is_empty() {
+            return Err("Android startup device model must not be empty".to_string());
+        }
+        device_model
+    };
+    #[cfg(not(target_os = "android"))]
+    let model = {
+        let system = host.systemOperationHost.as_ref().ok_or_else(|| {
+            "Runtime device information requires a system-operation host".to_string()
+        })?;
+        system
+            .getDeviceInfo()
+            .map_err(|error| error.to_string())?
+            .model
+    };
     Ok(LinkDeviceInfo {
         platform: host.hostEnvironment.id.clone(),
-        model: device.model,
+        model,
     })
 }
 
@@ -160,8 +177,31 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
             .getDeviceLocation(timeout, highAccuracy, includeAddress)
     }
 
+    /// Reads Android device information through the existing Flutter owner interaction.
     fn getDeviceInfo(&self) -> operit_host_api::HostResult<operit_host_api::DeviceInfoData> {
-        self.native.getDeviceInfo()
+        #[cfg(target_os = "android")]
+        {
+            let response = requestOwnerSystemOperation(
+                RuntimeHostInteractionSystemOperationPayload {
+                    operation: "get_device_info".to_string(),
+                    paramsJson: serialize_owner_params_json(
+                        &serde_json::json!({}),
+                        "device information",
+                    )?,
+                },
+                Duration::from_secs(60),
+            )
+            .map_err(operit_host_api::HostError::new)?;
+            serde_json::from_str(&response.resultJson).map_err(|error| {
+                operit_host_api::HostError::new(format!(
+                    "device information response JSON decode failed: {error}"
+                ))
+            })
+        }
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        {
+            self.native.getDeviceInfo()
+        }
     }
 
     fn captureScreenshot(&self) -> operit_host_api::HostResult<String> {

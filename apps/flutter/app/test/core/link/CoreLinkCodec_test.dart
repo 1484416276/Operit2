@@ -10,6 +10,37 @@ import 'package:operit2/core/link/CoreLinkProtocol.dart';
 
 /// Verifies Dart preserves MessagePack bin values as Uint8List.
 void main() {
+  /// Verifies arrays are growable at decode time without copying the decoded tree.
+  test('raw decoding creates independently growable nested arrays', () {
+    final bytes = encodeCoreLink([
+      {
+        'tokens': ['old'],
+      },
+      [],
+    ]);
+    final first = decodeCoreLink<List<Object?>>(bytes);
+    final second = decodeCoreLink<List<Object?>>(bytes);
+    final tokens = (first[0] as Map<String, Object?>)['tokens'] as List;
+    tokens.add('new');
+    tokens.removeAt(0);
+    (first[1] as List).add(1);
+    first.add('tail');
+    expect(first, [
+      {
+        'tokens': ['new'],
+      },
+      [1],
+      'tail',
+    ]);
+    expect(second, [
+      {
+        'tokens': ['old'],
+      },
+      [],
+    ]);
+    expect(encodeCoreLink(second), bytes);
+  });
+
   test('snapshot and delta byte values cannot mutate the retained base', () {
     final decoder = CoreLinkEventValueDecoder();
     Map<String, Object?> read(CoreLinkValueReader reader) =>
@@ -634,6 +665,208 @@ void main() {
       expect(updated.last['content'], 'streaming');
     },
   );
+
+  /// Verifies nested append and removal preserve the optimized list's retained base.
+  test('list deltas mutate nested arrays across consecutive events', () {
+    for (final kind in ['Snapshot', 'Changed']) {
+      final decoder = CoreLinkListEventDecoder<Map<String, Object?>>();
+      var decodedItems = 0;
+
+      /// Counts typed decodes to ensure untouched history remains shared.
+      Map<String, Object?> readItem(CoreLinkValueReader reader) {
+        decodedItems += 1;
+        return reader.readValue() as Map<String, Object?>;
+      }
+
+      final original = decoder.decode(
+        _rawCoreEvent(
+          kind: kind,
+          value: [
+            {
+              'segments': [
+                {
+                  'tokens': ['old'],
+                },
+              ],
+              'bytes': Uint8List.fromList([1, 2]),
+            },
+            {'text': 'unchanged'},
+          ],
+        ),
+        decodeItem: readItem,
+      );
+      final appended = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': [0, 'segments', 0, 'tokens', 1],
+                'value': 'new',
+              },
+              {
+                'op': 'set',
+                'path': [0, 'segments', 1],
+                'value': {'tokens': []},
+              },
+            ],
+          },
+        ),
+        decodeItem: readItem,
+      );
+      expect(appended[0]['segments'], [
+        {
+          'tokens': ['old', 'new'],
+        },
+        {'tokens': []},
+      ]);
+      expect(original[0]['segments'], [
+        {
+          'tokens': ['old'],
+        },
+      ]);
+      expect(appended[0]['bytes'], isA<Uint8List>());
+      expect(appended[0]['bytes'], [1, 2]);
+      expect(identical(original[1], appended[1]), isTrue);
+      expect(decodedItems, 3);
+
+      final removed = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'remove',
+                'path': [0, 'segments', 0, 'tokens', 0],
+              },
+              {
+                'op': 'remove',
+                'path': [0, 'segments', 1],
+              },
+            ],
+          },
+        ),
+        decodeItem: readItem,
+      );
+      expect(removed[0]['segments'], [
+        {
+          'tokens': ['new'],
+        },
+      ]);
+      expect(appended[0]['segments'], [
+        {
+          'tokens': ['old', 'new'],
+        },
+        {'tokens': []},
+      ]);
+      expect(identical(original[1], removed[1]), isTrue);
+      expect(decodedItems, 4);
+    }
+  });
+
+  /// Verifies a root replacement can be patched further in the same delta batch.
+  test('list delta root replacements own mutable nested arrays', () {
+    final decoder = CoreLinkListEventDecoder<Map<String, Object?>>();
+
+    /// Reads one item without changing the wire tree's collection semantics.
+    Map<String, Object?> readItem(CoreLinkValueReader reader) =>
+        reader.readValue() as Map<String, Object?>;
+
+    decoder.decode(
+      _rawCoreEvent(
+        kind: 'Snapshot',
+        value: [
+          {'text': 'old'},
+        ],
+      ),
+      decodeItem: readItem,
+    );
+    final result = decoder.decode(
+      _rawCoreEvent(
+        kind: 'Delta',
+        value: {
+          r'$coreDelta': [
+            {
+              'op': 'set',
+              'path': [],
+              'value': [
+                {'tokens': []},
+              ],
+            },
+            {
+              'op': 'set',
+              'path': [0, 'tokens', 0],
+              'value': 'new',
+            },
+          ],
+        },
+      ),
+      decodeItem: readItem,
+    );
+    expect(result, [
+      {
+        'tokens': ['new'],
+      },
+    ]);
+  });
+
+  /// Verifies replaced and appended elements are mutable before their first typed decode.
+  test('list delta pending elements support nested growth and shrinkage', () {
+    for (final index in [0, 1]) {
+      final decoder = CoreLinkListEventDecoder<Map<String, Object?>>();
+
+      /// Reads one item so the regression exercises raw MessagePack array decoding.
+      Map<String, Object?> readItem(CoreLinkValueReader reader) =>
+          reader.readValue() as Map<String, Object?>;
+
+      final original = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Snapshot',
+          value: [
+            {'text': 'original'},
+          ],
+        ),
+        decodeItem: readItem,
+      );
+      final result = decoder.decode(
+        _rawCoreEvent(
+          kind: 'Delta',
+          value: {
+            r'$coreDelta': [
+              {
+                'op': 'set',
+                'path': [index],
+                'value': {
+                  'tokens': ['old'],
+                },
+              },
+              {
+                'op': 'set',
+                'path': [index, 'tokens', 1],
+                'value': 'new',
+              },
+              {
+                'op': 'remove',
+                'path': [index, 'tokens', 0],
+              },
+            ],
+          },
+        ),
+        decodeItem: readItem,
+      );
+      expect(result[index], {
+        'tokens': ['new'],
+      });
+      expect(result.length, index + 1);
+      expect(original, [
+        {'text': 'original'},
+      ]);
+      if (index == 1) {
+        expect(identical(original[0], result[0]), isTrue);
+      }
+    }
+  });
 
   test('list decoder rejects a delta before the first snapshot', () {
     expect(

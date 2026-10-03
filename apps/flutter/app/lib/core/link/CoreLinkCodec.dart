@@ -108,7 +108,7 @@ class _CoreLinkListEntry<T> {
   /// Retains a decoded item and its original MessagePack bytes.
   _CoreLinkListEntry.decoded(this.bytes, this.value);
 
-  /// Holds an untyped item until the current delta has been fully applied.
+  /// Holds a freshly decoded item until the current delta has been fully applied.
   _CoreLinkListEntry.pending(this.pendingValue);
 
   Uint8List? bytes;
@@ -1521,9 +1521,9 @@ class _CoreLinkMessagePackReader implements CoreLinkValueReader {
     return value;
   }
 
-  /// Reads a Link array.
+  /// Decodes an owned, growable array so deltas can resize it without cloning.
   List<Object?> _readArray(int length) {
-    return List<Object?>.generate(length, (_) => readValue(), growable: false);
+    return List<Object?>.generate(length, (_) => readValue(), growable: true);
   }
 
   /// Reads a Link map with string keys.

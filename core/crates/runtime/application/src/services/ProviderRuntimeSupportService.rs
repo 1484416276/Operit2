@@ -84,6 +84,11 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             .map_err(|error| error.to_string())
     }
 
+    fn disableUserPreferenceDescription(&self) -> Result<bool, String> {
+        Ok(crate::data::preferences::ApiPreferences::ApiPreferences::getInstance()
+            .disableUserPreferenceDescriptionFlow().first().map_err(|e|e.to_string())?)
+    }
+
     /// Resolves the owner key selected by one character card.
     fn memoryOwnerKeyForCharacterCard(&self, roleCardId: &str) -> Result<String, String> {
         let card = CharacterCardManager::getInstance()

@@ -202,20 +202,17 @@ fn executeQueryMemory(tool: &AITool, runtimeSupport: &dyn ToolRuntimeSupport) ->
         .filter(|value| !value.is_empty());
     let snapshotScope = ownerKeys.join("|");
     let (snapshotId, snapshotCreated) = resolveSnapshot(&snapshotScope, snapshotIdParam);
-    if let Err(error) = runtimeSupport.loadMemorySearchSettings(&snapshotScope) {
-        return errorResult(
-            tool,
-            &format!("Failed to load memory search settings: {error}"),
-        );
-    }
     let mut results = Vec::new();
     for ownerKey in &ownerKeys {
-        match MemoryRepository::new(ownerKey.clone()).searchMemories(
+        match MemoryRepository::new(ownerKey.clone()).searchMemoriesWithConfig(
             &query,
             folderPath.as_deref(),
             threshold,
             startTime,
             endTime,
+            match operit_store::repository::MemorySettingsRepository::MemorySettingsRepository::new(ownerKey).loadSearchConfig() {
+                Ok(config)=>config, Err(error)=>return errorResult(tool,&error),
+            },
         ) {
             Ok(ownerResults) => {
                 results.extend(ownerResults.into_iter().map(|memory| OwnedMemoryResult {
@@ -230,14 +227,24 @@ fn executeQueryMemory(tool: &AITool, runtimeSupport: &dyn ToolRuntimeSupport) ->
     }
 
     let (excluded, returned) = selectSnapshotResults(&snapshotScope, &snapshotId, results, limit);
+    let mut data=memoryQueryResultData(&returned,Some(snapshotId),snapshotCreated,excluded);
+    for (entry,info) in returned.iter().zip(&mut data.memories) {
+        if entry.memory.isDocumentNode {
+            let repo=MemoryRepository::new(entry.ownerKey.clone());
+            let chunks=match repo.searchChunksInDocument(entry.memory.id,query.clone(),limit.min(20) as i32) {
+                Ok(chunks)=>chunks,Err(error)=>return errorResult(tool,&error),
+            };
+            let total=match repo.getTotalChunkCount(entry.memory.id) {Ok(n)=>n,Err(error)=>return errorResult(tool,&error)};
+            info.content=if query.trim()=="*" || limit>20 {format!("Document: {} ({total} chunks)",entry.memory.title)} else {formatDocumentChunks(&entry.memory.title,total,&chunks)};
+            if !chunks.is_empty() {
+                info.chunkInfo=JsOptional::Value(format!("Chunks {}/{total}",chunks.iter().take(5).map(|c|(c.chunkIndex+1).to_string()).collect::<Vec<_>>().join(", ")));
+                info.chunkIndices=JsOptional::Value(chunks.iter().map(|c|c.chunkIndex).collect());
+            }
+        }
+    }
     successData(
         tool,
-        ToolResultData::MemoryQueryResultData(memoryQueryResultData(
-            &returned,
-            Some(snapshotId),
-            snapshotCreated,
-            excluded,
-        )),
+        ToolResultData::MemoryQueryResultData(data),
     )
 }
 
@@ -252,6 +259,29 @@ fn executeGetMemoryByTitle(tool: &AITool, runtimeSupport: &dyn ToolRuntimeSuppor
     };
     let repository = MemoryRepository::new(ownerKey.clone());
     match repository.findMemoryByTitle(&title) {
+        Ok(Some(memory)) if memory.isDocumentNode => {
+            let query=optionalParameterValue(tool,"query").unwrap_or_default();
+            let index=optionalParameterValue(tool,"chunk_index").unwrap_or_default();
+            let range=optionalParameterValue(tool,"chunk_range").unwrap_or_default();
+            let limit=match parseLimit(optionalParameterValue(tool,"limit").as_deref(),20) {Ok(v)=>v.min(i32::MAX as usize) as i32,Err(error)=>return errorResult(tool,&error)};
+            let chunks=match repository.getChunksForMemory(memory.id) {Ok(c)=>c,Err(error)=>return errorResult(tool,&error)};
+            let total=chunks.len() as i32;
+            if query.trim().is_empty() && index.trim().is_empty() && range.trim().is_empty() {
+                return success(tool,format!("Document: {} ({total} chunks). Specify query, chunk_range (1-based start-end) or chunk_index (1-based).",memory.title));
+            }
+            let selected=if !query.trim().is_empty() {
+                match repository.searchChunksInDocument(memory.id,query,limit) {Ok(c)=>c,Err(error)=>return errorResult(tool,&error)}
+            } else {
+                let (start,end)=if !range.trim().is_empty() {
+                    let Some((a,b))=range.split_once('-') else {return errorResult(tool,"Invalid chunk_range. Expected start-end");};
+                    match (a.trim().parse::<i32>(),b.trim().parse::<i32>()) {(Ok(a),Ok(b))=>(a,b),_=>return errorResult(tool,"Invalid chunk range")}
+                } else {match index.trim().parse::<i32>() {Ok(i)=>(i,i),Err(_)=>return errorResult(tool,"Invalid chunk index")}};
+                if start<1 || end>total || start>end {return errorResult(tool,&format!("Chunk range out of bounds. Valid range: 1-{total}"));}
+                chunks.into_iter().filter(|c|c.chunkIndex>=start-1 && c.chunkIndex<=end-1).collect()
+            };
+            if selected.is_empty() {return errorResult(tool,"No matching chunks found");}
+            success(tool,formatDocumentChunks(&memory.title,total,&selected))
+        },
         Ok(Some(memory)) => successData(
             tool,
             ToolResultData::MemoryQueryResultData(memoryQueryResultData(
@@ -1053,4 +1083,8 @@ fn optionalParameterValue(tool: &AITool, name: &str) -> Option<String> {
         .iter()
         .find(|parameter| parameter.name == name)
         .map(|parameter| parameter.value.clone())
+}
+
+fn formatDocumentChunks(title:&str,total:i32,chunks:&[operit_model::DocumentChunk::DocumentChunk])->String {
+    format!("Document: {title}\n{}",chunks.iter().take(5).map(|c|format!("Chunk {}/{total}:\n{}",c.chunkIndex+1,c.content)).collect::<Vec<_>>().join("\n---\n"))
 }

@@ -18,4 +18,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
+operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler" }
+operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }

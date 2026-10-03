@@ -977,6 +977,22 @@ impl ChatServiceCore {
             .await
     }
 
+    /// Resolves the effective memory owner for one persisted chat.
+    ///
+    /// The binding, shared-memory mapping, and group-chat active-card fallback stay in Core;
+    /// clients must not duplicate these rules.
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
+    pub fn memoryOwnerKeyForChat(&self, chatId: String) -> Result<String, String> {
+        let chat = self.chatHistoryDelegate.chatHistoryManager
+            .loadChatHistory(chatId.clone()).map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("memory owner chat not found: {chatId}"))?;
+        let runtime = self.enhancedAiService.as_ref()
+            .ok_or_else(|| "memory owner requires an enhanced AI service".to_string())?;
+        crate::services::core::ChatMemoryOwnerResolver::resolveMemoryOwner(
+            &runtime.provider_runtime_context, &chat, &self.chatHistoryDelegate.characterCardManager,
+        )
+    }
+
     /// Queues explicitly selected user messages for owner-scoped memory extraction.
     #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn enqueueSelectedMessagesForMemory(
@@ -984,34 +1000,15 @@ impl ChatServiceCore {
         chatId: String,
         messageTimestamps: Vec<i64>,
     ) -> Result<(), String> {
-        let chat = self
-            .chatHistoryDelegate
-            .chatHistoriesFlow
-            .value()
-            .into_iter()
-            .find(|chat| chat.id == chatId)
-            .ok_or_else(|| format!("memory queue chat not found: {chatId}"))?;
-        let roleCardName = chat
-            .characterCardName
-            .as_deref()
-            .ok_or_else(|| format!("memory queue chat has no role card: {chatId}"))?;
-        let roleCard = self
-            .chatHistoryDelegate
-            .characterCardManager
-            .findCharacterCardByName(roleCardName)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("memory queue role card not found: {roleCardName}"))?;
-        let providerRuntimeContext = self
-            .enhancedAiService
-            .as_ref()
-            .ok_or_else(|| "memory queue requires an enhanced AI service".to_string())?
-            .provider_runtime_context
-            .clone();
-        let ownerKey = providerRuntimeContext
-            .support()
-            .memoryOwnerKeyForCharacterCard(&roleCard.id)?;
+        let ownerKey = self.memoryOwnerKeyForChat(chatId.clone())?;
+        let selected = messageTimestamps.into_iter().collect::<std::collections::BTreeSet<_>>();
+        let timestamps = self.chatHistoryDelegate.chatHistoryManager.loadChatMessages(&chatId)
+            .map_err(|e|e.to_string())?.into_iter()
+            .filter(|m|m.sender=="user" && !m.displayText().trim().is_empty() && selected.contains(&m.timestamp))
+            .map(|m|m.timestamp).collect::<Vec<_>>();
+        if timestamps.is_empty() { return Err("请选择有效的用户消息加入记忆队列".into()); }
         MemoryAutoSaveCandidateRepository::new(&ownerKey)
-            .enqueueSelectedUserMessages(chatId, messageTimestamps)
+            .enqueueSelectedUserMessages(chatId, timestamps)
     }
 
     /// Deletes one message from an explicit chat by message timestamp.

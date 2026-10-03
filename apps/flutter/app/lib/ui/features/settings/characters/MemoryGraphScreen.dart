@@ -15,6 +15,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitFormStyles.dart';
+import '../memory/MemoryOwnerControlsDialog.dart';
 
 const XTypeGroup _memoryJsonFileTypeGroup = XTypeGroup(
   label: 'Operit memory JSON',
@@ -603,6 +604,24 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
         maxWidth: 420,
         showCloseButton: true,
         actions: <Widget>[
+          IconButton(tooltip: '导入文本／Markdown 文档', onPressed: _busy ? null : _importDocument,
+            icon: const Icon(Icons.article_outlined)),
+          IconButton(tooltip: 'AI 分类未归类记忆', onPressed: _busy ? null : _autoCategorize,
+            icon: const Icon(Icons.auto_awesome)),
+          IconButton(
+            tooltip: '沉淀、检索与历史重建',
+            icon: const Icon(Icons.tune),
+            onPressed: _busy
+                ? null
+                : () async {
+                    await MemoryOwnerControlsDialog.open(
+                      context,
+                      _clients,
+                      widget.ownerKey,
+                    );
+                    if (mounted) _refresh();
+                  },
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('取消'),
@@ -653,6 +672,30 @@ class _MemoryGraphScreenState extends State<MemoryGraphScreen> {
     if (selected != null) {
       _selectFolder(selected);
     }
+  }
+
+  Future<void> _importDocument() async {
+    final file = await openFile(acceptedTypeGroups: [const XTypeGroup(label: 'Text document', extensions: ['txt', 'md', 'markdown', 'csv', 'log'])]);
+    if (file == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final text = utf8.decode(await file.readAsBytes());
+      await _repository.createMemoryFromDocument(documentName: file.name, originalPath: file.path,
+        text: text, folderPath: _folderPath);
+      if (mounted) { _refresh(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('文档已分块入库'))); }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('文档导入失败：$error')));
+    } finally { if (mounted) setState(() => _busy = false); }
+  }
+
+  Future<void> _autoCategorize() async {
+    setState(() => _busy = true);
+    try {
+      final count = await _clients.application.memoryManagementService(ownerKey: widget.ownerKey).autoCategorize();
+      if (mounted) { _refresh(); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已分类 $count 条记忆'))); }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('自动分类：$error')));
+    } finally { if (mounted) setState(() => _busy = false); }
   }
 
   /// Builds the page scaffold and graph canvas.
@@ -1202,7 +1245,10 @@ class _MemoryToolbar extends StatelessWidget {
               onPressed: busy ? null : onOpenFolders,
               style: OutlinedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 0,
+                ),
                 minimumSize: const Size(0, 32),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -1253,7 +1299,9 @@ class _MemoryToolbar extends StatelessWidget {
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: BorderSide(
-                        color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.3,
+                        ),
                       ),
                     ),
                   ),
@@ -1265,7 +1313,10 @@ class _MemoryToolbar extends StatelessWidget {
               onPressed: busy ? null : onToggleLinkMode,
               style: OutlinedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 0,
+                ),
                 minimumSize: const Size(0, 32),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -1290,7 +1341,10 @@ class _MemoryToolbar extends StatelessWidget {
               onPressed: busy ? null : onCreateMemory,
               style: FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 0,
+                ),
                 minimumSize: const Size(0, 32),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -2082,9 +2136,9 @@ class _MemoryLinkEditorDialogState extends State<_MemoryLinkEditorDialog> {
         children: <Widget>[
           Text(
             '${widget.sourceTitle}  →  ${widget.targetTitle}',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           TextField(

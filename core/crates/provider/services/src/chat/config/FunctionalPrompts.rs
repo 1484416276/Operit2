@@ -582,76 +582,47 @@ Output must be a JSON object with keys "queries" (array of regex strings) and "r
         existing_folders_prompt: &str,
         current_preferences: &str,
         use_english: bool,
+        profile_update_enabled: bool,
+        custom_rules: &str,
     ) -> String {
-        if use_english {
-            format!(
-                r#"You are building a long-term memory graph from this conversation.
+        // Policy and object protocol are ported verbatim from Operit Kotlin main dbf71916.
+        let template = if use_english { include_str!("memory-extraction-en.txt") }
+            else { include_str!("memory-extraction-zh.txt") };
+        let profile_instruction = if profile_update_enabled {
+            (if use_english { r#"[Active memory-space profile]
+The active memory space owns the following Markdown user profile:
+<user_profile_document>
+$profileDocument
+</user_profile_document>
 
-{duplicates_prompt_part}
-{existing_memories_prompt}
-{existing_folders_prompt}
+When this conversation confirms a stable user-specific preference, constraint, identity fact, or
+communication preference, preserve all useful existing Markdown and return a complete replacement
+document in `profile_markdown`. Return JSON null when no profile change is justified. Never remove
+useful existing content, store temporary requests, or add generic knowledge."# } else { r#"【当前记忆空间资料】
+当前记忆空间拥有以下 Markdown 用户资料：
+<user_profile_document>
+$profileDocument
+</user_profile_document>
 
-[Selection gate - apply first]
-- Store only user-specific reusable knowledge: stable preferences, constraints, confirmed decisions, recurring mistakes, project facts, or recurring worldbuilding facts.
-- Do NOT store common/public definitions.
-- Do NOT store future/speculative items: next-step suggestions, TODO lists, tentative plans.
-- If no valuable long-term signal exists, return `{{}}`.
-
-[Extraction policy]
-- Prefer `update` / `merge` over creating `new`.
-- Use `new` only when concept is truly novel (max 5 items).
-- Existing memories provided in context are actionable: you may directly `update` / `merge` / `link` them.
-- Keep user profile facts in `USER.md`. Use graph memory nodes for entities, project facts, decisions, mistakes, and relations.
-
-[Output schema - strict JSON only]
-- Keys: `main`, `new`, `update`, `merge`, `links`, `user`.
-- `main`: `["Title", "Content", ["tags"], "folder_path"]` or `null`.
-- `new`: `[["Title", "Content", ["tags"], "folder_path", "alias_for_or_null"], ...]`.
-- `update`: `[["Title", "New full content", "Reason", credibility_or_null, importance_or_null], ...]`.
-- `merge`: `[{{"source_titles":["A","B"],"new_title":"...","new_content":"...","new_tags":["..."],"folder_path":"...","reason":"..."}}, ...]`.
-- `links`: `[["Source", "Target", "RELATION_TYPE", "Description", weight], ...]`.
-- `user`: full updated `USER.md` markdown string, or `""` when the user profile should not change.
-
-Current USER.md:
-{current_preferences}
-
-Return only a valid JSON object. No extra text."#
-            )
-        } else {
-            format!(
-                r#"你要从对话中构建长期记忆图谱。
-
-{duplicates_prompt_part}
-{existing_memories_prompt}
-{existing_folders_prompt}
-
-【写入前先过筛】
-- 只记录"用户特异且可复用"的信息：稳定偏好、约束、已确认决策、反复错误、项目事实、长期世界观中的稳定设定。
-- 不记录常识/公开定义。
-- 不记录未来推测项：下一步建议、TODO、暂定计划。
-- 若没有长期价值信号，直接返回 `{{}}`。
-
-【抽取策略】
-- 优先 `update` / `merge`，其次才是 `new`。
-- `new` 仅在确实新增概念时使用（最多 5 条）。
-- 提供给你的已有记忆样本是可操作对象：即使本轮没有 `new`，也可以直接对这些已有记忆做 `update`、`merge`、`links`。
-- 用户画像信息写入 `USER.md`。实体、项目事实、决策、反复错误和关系写入图记忆节点。
-
-【输出格式（严格JSON）】
-- 顶层键：`main`、`new`、`update`、`merge`、`links`、`user`。
-- `main`: `["标题","内容",["标签"],"folder_path"]` 或 `null`。
-- `new`: `[["标题","内容",["标签"],"folder_path","alias_for_or_null"], ...]`。
-- `update`: `[["标题","新完整内容","原因",可信度或null,重要性或null], ...]`。
-- `merge`: `[{{"source_titles":["A","B"],"new_title":"...","new_content":"...","new_tags":["..."],"folder_path":"...","reason":"..."}}, ...]`。
-- `links`: `[["源","目标","RELATION_TYPE","描述",权重], ...]`。
-- `user`: 更新后的完整 `USER.md` markdown 字符串；用户画像不需要变化时填空字符串。
-
-当前 USER.md：
-{current_preferences}
-
-只返回合法 JSON 对象，不要输出其他内容。"#
-            )
-        }
+当本轮明确确认了稳定的用户偏好、约束、身份事实或交流方式时，保留已有 Markdown 中仍有价值的全部内容，
+并在 `profile_markdown` 中返回完整替换文档。没有充分依据时返回 JSON null。不得删除已有有效内容、记录临时要求或写入常识。"# }).replace("$profileDocument", current_preferences)
+        } else { String::new() };
+        let custom_instruction = (if use_english { r#"[User-specified memory extraction rules]
+<memory_extraction_custom_rules>
+$memoryExtractionCustomRules
+</memory_extraction_custom_rules>
+Use these rules to refine the memory domain, retention focus, folder selection, tags, or writing style. The selection gate, evidence requirements, and strict JSON output contract remain mandatory."# } else { r#"【用户指定的记忆提取附加规则】
+<memory_extraction_custom_rules>
+$memoryExtractionCustomRules
+</memory_extraction_custom_rules>
+使用这些规则细化记忆领域、入库重点、文件夹、标签或写法。写入前筛选、证据要求和严格 JSON 输出协议仍然必须遵守。"# }).replace("$memoryExtractionCustomRules", custom_rules);
+        template.replace("$duplicatesPromptPart", duplicates_prompt_part)
+            .replace("$existingMemoriesPrompt", existing_memories_prompt)
+            .replace("$existingFoldersPrompt", existing_folders_prompt)
+            .replace("$profileOptionalKey", if profile_update_enabled { if use_english { ", `profile_markdown`" } else { "、`profile_markdown`" } } else { "" })
+            .replace("$profileMarkdownSchemaLine", if profile_update_enabled { if use_english { "- `profile_markdown`: complete replacement Markdown for the active memory-space profile, or JSON null." } else { "- `profile_markdown`：当前记忆空间资料的完整替换 Markdown，没有更新时使用 JSON null。" } } else { "" })
+            .replace("$profileUpdateInstruction", &profile_instruction)
+            .replace("$memoryExtractionCustomRulesInstruction", &custom_instruction)
     }
 
     #[allow(non_snake_case)]

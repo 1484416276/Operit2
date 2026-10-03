@@ -55,13 +55,15 @@ class _MemorySettingsPanelState extends State<MemorySettingsPanel> {
     final activePromptManager = widget.clients.preferencesActivePromptManager;
 
     final cards = await cardManager.getAllCharacterCards();
-    final sharedMemoryStores =
-        await sharedMemoryManager.getAllSharedMemoryStores();
+    final sharedMemoryStores = await sharedMemoryManager
+        .getAllSharedMemoryStores();
     final activePrompt = await activePromptManager.getActivePrompt();
-    final enableMemoryAutoUpdate =
-        await apiPreferences.enableMemoryAutoUpdateFlow().first;
-    final disableUserPreferenceDescription =
-        await apiPreferences.disableUserPreferenceDescriptionFlow().first;
+    final enableMemoryAutoUpdate = await apiPreferences
+        .enableMemoryAutoUpdateFlow()
+        .first;
+    final disableUserPreferenceDescription = await apiPreferences
+        .disableUserPreferenceDescriptionFlow()
+        .first;
 
     String? activeCardId;
     if (activePrompt != null &&
@@ -207,8 +209,7 @@ class _MemorySettingsPanelState extends State<MemorySettingsPanel> {
                 const SizedBox(height: 6),
                 _MemorySwitchRow(
                   title: l10n.settingsCharactersMemoryAutoUpdate,
-                  subtitle:
-                      l10n.settingsCharactersMemoryAutoUpdateDescription,
+                  subtitle: l10n.settingsCharactersMemoryAutoUpdateDescription,
                   value: data.enableMemoryAutoUpdate,
                   onChanged: _saveMemoryAutoUpdate,
                 ),
@@ -240,9 +241,7 @@ class _MemorySettingsPanelState extends State<MemorySettingsPanel> {
                       mountedCardCount: data.cards
                           .where(
                             (card) =>
-                                card.memoryBindingMode
-                                        .trim()
-                                        .toUpperCase() ==
+                                card.memoryBindingMode.trim().toUpperCase() ==
                                     _memoryBindingShared &&
                                 card.sharedMemoryId == store.id,
                           )
@@ -268,16 +267,25 @@ class _MemorySettingsPanelState extends State<MemorySettingsPanel> {
                   _CharacterMemoryTile(
                     card: card,
                     active: card.id == data.activeCardId,
-                    sharedStoreName:
-                        card.sharedMemoryId == null
-                            ? null
-                            : storesById[card.sharedMemoryId!]?.name,
+                    sharedStoreName: card.sharedMemoryId == null
+                        ? null
+                        : storesById[card.sharedMemoryId!]?.name,
                     onEditUserMarkdown: () => _editOwnerUserMarkdown(
-                      ownerKey: _characterOwnerKey(card.id),
+                      ownerKey:
+                          card.memoryBindingMode.trim().toUpperCase() ==
+                                  _memoryBindingShared &&
+                              card.sharedMemoryId != null
+                          ? _sharedOwnerKey(card.sharedMemoryId!)
+                          : _characterOwnerKey(card.id),
                       titleName: card.name,
                     ),
                     onOpenMemoryGraph: () => _openMemoryGraph(
-                      ownerKey: _characterOwnerKey(card.id),
+                      ownerKey:
+                          card.memoryBindingMode.trim().toUpperCase() ==
+                                  _memoryBindingShared &&
+                              card.sharedMemoryId != null
+                          ? _sharedOwnerKey(card.sharedMemoryId!)
+                          : _characterOwnerKey(card.id),
                       titleName: card.name,
                     ),
                   ),
@@ -689,11 +697,7 @@ class _MemoryEntityTile extends StatelessWidget {
                             ],
                             if (badges.isNotEmpty) ...<Widget>[
                               const SizedBox(height: 5),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 4,
-                                children: badges,
-                              ),
+                              Wrap(spacing: 6, runSpacing: 4, children: badges),
                             ],
                           ],
                         ),

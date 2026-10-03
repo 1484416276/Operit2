@@ -1,3 +1,5 @@
+#[path = "SyncAppliedChanges.rs"]
+pub mod SyncAppliedChanges;
 #[path = "ExtensionStore.rs"]
 pub mod ExtensionStore;
 #[path = "CoreNodeBindingStore.rs"]

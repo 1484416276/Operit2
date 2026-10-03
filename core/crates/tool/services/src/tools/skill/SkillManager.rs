@@ -114,6 +114,17 @@ impl SkillManager {
     ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
         let mut availableSkills = BTreeMap::new();
         let mut skillLoadErrors = BTreeMap::new();
+        // Files and the installation descriptor can arrive in different sync batches.
+        // Only published shared installations are visible; leftover empty directories are not skills.
+        let sharedSources = if skillsDir == self.paths.runtime_storage_path(
+            &ExtensionStore::root("skill", "space").expect("valid skill scope"),
+        ) {
+            match ExtensionStore::default().records("skill") {
+                Ok(records) => Some(records.into_iter().filter(|record| record.scope == "space")
+                    .map(|record| record.sourceName).collect::<BTreeSet<_>>()),
+                Err(error) => { skillLoadErrors.insert("skills".to_string(), error); return (availableSkills, skillLoadErrors); }
+            }
+        } else { None };
         let skillsPath = hostPath(&skillsDir);
 
         if let Err(error) = self.fileSystemHost.makeDirectory(&skillsPath, true) {
@@ -140,6 +151,7 @@ impl SkillManager {
                 continue;
             }
             let childName = child.name;
+            if sharedSources.as_ref().is_some_and(|sources| !sources.contains(&childName)) { continue; }
             let childPath = skillsDir.join(&childName);
             let primarySkillFile = childPath.join("SKILL.md");
             let lowerSkillFile = childPath.join("skill.md");

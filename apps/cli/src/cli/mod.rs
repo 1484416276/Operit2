@@ -186,6 +186,7 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
         "tool" => run_core_command_and_print(&mut core, &args).await,
         "market" => run_market_cli_command(&mut core, &args).await,
         "update" => run_update_cli_command(&mut core, &args[1..]).await,
+        "extension" => run_core_command_and_print(&mut core, &args).await,
         "skill" => run_core_command_and_print(&mut core, &args).await,
         "package" => run_core_command_and_print(&mut core, &args).await,
         "plugin" => run_core_command_and_print(&mut core, &args).await,
@@ -1868,6 +1869,8 @@ fn print_cli_usage() {
     println!("operit2 cli usage <summary|records|models|clear>");
     println!("operit2 cli install [--source <path>]");
     println!("operit2 cli uninstall");
+    println!("operit2 cli extension <list [kind] [--scope scope]|show <kind> <id>|move <kind> <id> <device|space> --yes>");
+    println!("operit2 cli <plugin|package|skill|mcp> scope <id> [device|space --yes]");
     println!("operit2 cli skill <dir|list|more|load|show|create|import-zip|delete|visible|errors>");
     println!("operit2 cli package <help|dir|list|more|load|show|import|enable|disable|use|exec>");
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");

@@ -1,4 +1,5 @@
 mod approval;
+mod extension;
 mod chat;
 mod host;
 mod local_models;
@@ -35,7 +36,13 @@ pub fn run_core_command(
         return Ok(());
     }
 
+    if matches!(args[0].as_str(), "plugin" | "package" | "skill" | "mcp")
+        && args.get(1).map(String::as_str) == Some("scope") {
+        return extension::run_scope_command(application, &args[0], &args[2..], output);
+    }
+
     match args[0].as_str() {
+        "extension" => extension::run_extension_command(application, &args[1..], output),
         "tool" => tool::run_tool_command(application, &args[1..], output),
         "package" => package::run_package_command(application, &args[1..], output),
         "plugin" => plugin::run_plugin_command(application, &args[1..], output),
@@ -72,7 +79,9 @@ pub fn run_core_command(
 fn print_core_usage(output: &mut CoreCommandOutput) {
     let lines = vec![
         "Global option: --json  Emit machine-readable JSON.",
-        "operit2 <tool|package|plugin|skill|mcp|market|host|log|local-models|stt|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update|usage>",
+        "operit2 <extension|tool|package|plugin|skill|mcp|market|host|log|local-models|stt|prefs|approval|tag|memory|character|group|active-prompt|model|chat|workspace|storage|update|usage>",
+        "operit2 extension <list [kind] [--scope scope]|show <kind> <id>|move <kind> <id> <device|space> --yes>",
+        "operit2 <plugin|package|skill|mcp> scope <id> [device|space --yes]",
         "operit2 tool <list|show|exec>",
         "operit2 package <help|dir|list|more|load|show|import|enable|disable|use|exec>",
         "operit2 plugin <help|list|commands|exec|more|load|show|import|enable|disable>",

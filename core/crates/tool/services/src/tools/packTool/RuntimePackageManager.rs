@@ -2498,6 +2498,13 @@ impl RuntimePackageManager {
                 self.fileSystemHost
                     .makeDirectory(&hostPath(&directory), true)
                     .map_err(|e| e.to_string())?;
+                // Upgrade old bundles before scanning; a file arriving before its descriptor
+                // is staged data, not an unregistered device-local installation.
+                let sharedSources = if scope == "space" {
+                    Some(ExtensionStore::default().records("package")?.into_iter()
+                        .filter(|record| record.scope == "space")
+                        .map(|record| record.sourceName).collect::<BTreeSet<_>>())
+                } else { None };
                 let entries = self
                     .fileSystemHost
                     .listFiles(&hostPath(&directory))
@@ -2505,7 +2512,8 @@ impl RuntimePackageManager {
                 files.extend(
                     entries
                         .into_iter()
-                        .filter(|entry| !entry.isDirectory)
+                        .filter(|entry| !entry.isDirectory && sharedSources.as_ref()
+                            .is_none_or(|sources| sources.contains(&entry.name)))
                         .map(|entry| directory.join(entry.name)),
                 );
                 Ok(())
@@ -2994,6 +3002,21 @@ impl RuntimePackageManager {
             toolPkgSubpackages: stagedToolPkgSubpackages,
             toolPkgLoadIssues: stagedToolPkgLoadIssues,
         }
+    }
+
+    /// Refreshes synchronized flags without destroying running JavaScript engines.
+    pub fn refreshExtensionSettings(&mut self) -> Result<(), String> {
+        let records = ExtensionStore::default().records("package")?;
+        let mut next = BTreeMap::new();
+        for record in records {
+            let id = record.id.clone();
+            if next.insert(id.clone(), record).is_some() {
+                return Err(format!("Extension ownership conflict: {id}"));
+            }
+        }
+        *self.scopeState.lock().map_err(|e| e.to_string())? = next;
+        self.notifyToolPkgRuntimeChangeListeners();
+        Ok(())
     }
 
     /// Returns validated in-memory ownership state for the currently loaded catalog.

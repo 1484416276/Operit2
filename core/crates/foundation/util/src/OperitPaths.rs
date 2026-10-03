@@ -111,6 +111,12 @@ pub fn pluginConfigsDir() -> Result<PathBuf, String> {
 
 #[allow(non_snake_case)]
 pub fn pluginConfigDir(pluginId: &str) -> Result<PathBuf, String> {
+    Ok(pluginConfigsDir()?.join(pluginConfigDirName(pluginId)?))
+}
+
+/// Resolves the stable config directory name without requiring a process-global runtime root.
+#[allow(non_snake_case)]
+pub fn pluginConfigDirName(pluginId: &str) -> Result<String, String> {
     let trimmed = pluginId.trim();
     if trimmed.is_empty() {
         return Err("plugin id must not be blank".to_string());
@@ -126,7 +132,7 @@ pub fn pluginConfigDir(pluginId: &str) -> Result<PathBuf, String> {
     } else {
         format!("{safeBaseName}-{:x}", javaStringHashCode(trimmed))
     };
-    Ok(pluginConfigsDir()?.join(safeName))
+    Ok(safeName)
 }
 
 #[allow(non_snake_case)]

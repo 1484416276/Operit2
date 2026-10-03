@@ -20,10 +20,19 @@ impl Default for MemorySearchConfig {
     fn default() -> Self {
         Self {
             scoreMode: MemoryScoreMode::BALANCED,
-            keywordWeight: 1.0,
-            tagWeight: 0.7,
-            vectorWeight: 1.0,
-            edgeWeight: 0.5,
+            keywordWeight: 10.0,
+            tagWeight: 0.0,
+            vectorWeight: 0.0,
+            edgeWeight: 0.4,
         }
+    }
+}
+
+impl MemorySearchConfig {
+    pub fn normalized(mut self) -> Self {
+        for weight in [&mut self.keywordWeight, &mut self.tagWeight, &mut self.vectorWeight, &mut self.edgeWeight] {
+            *weight = if weight.is_finite() { weight.max(0.0) } else { 0.0 };
+        }
+        self
     }
 }

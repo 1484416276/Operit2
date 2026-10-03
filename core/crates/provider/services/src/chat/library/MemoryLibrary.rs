@@ -15,6 +15,7 @@ use operit_model::Memory::{Memory, MemoryTag};
 use operit_model::PromptTurn::{toPromptTurns, PromptTurn, PromptTurnKind};
 use operit_store::repository::MemoryAutoSaveCandidateRepository::MemoryAutoSaveCandidateRepository;
 use operit_store::repository::MemoryRepository::MemoryRepository;
+use operit_store::repository::MemorySettingsRepository::MemorySettingsRepository;
 use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageStatisticsStore};
 use operit_store::repository::UserMarkdownRepository::UserMarkdownRepository;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
@@ -165,8 +166,54 @@ impl MemoryLibrary {
             aiService,
             ownerKey,
             runtimeContext,
+            10,
         )
         .await
+    }
+
+    /// Rebuild uses the complete planned window instead of the default ten-message tail.
+    pub async fn saveMemoryWindowNowForOwner(
+        conversationHistory: Vec<(String, String)>, content: String,
+        aiService: SharedAIServiceHandle, ownerKey: String,
+        runtimeContext: ProviderRuntimeContext, analysisHistoryLimit: usize,
+    ) -> Result<(), String> {
+        if analysisHistoryLimit == 0 { return Err("Analysis history limit must be positive".into()); }
+        let _guard = memoryMutex().lock().await;
+        Self::saveMemoryForOwner(conversationHistory, content, aiService, ownerKey, runtimeContext, analysisHistoryLimit).await
+    }
+
+    /// Original Kotlin batch-of-ten categorization, preserving owner bindings and serial writes.
+    pub async fn autoCategorizeForOwner(ownerKey:String,aiService:SharedAIServiceHandle,runtimeContext:ProviderRuntimeContext)->Result<i32,String> {
+        let _guard=memoryMutex().lock().await;
+        let repository=MemoryRepository::new(&ownerKey);
+        let memories=repository.searchMemories("",None,0.0,None,None)?.into_iter().filter(|m|m.folderPath.as_deref().unwrap_or("").is_empty()).collect::<Vec<_>>();
+        let folders=repository.getAllFolderPaths()?;let mut changed=0;let mut failures=Vec::new();
+        for batch in memories.chunks(10) {
+            let digest=batch.iter().map(|m|format!("- title: {}, content: {}...",m.title,m.content.chars().take(100).collect::<String>())).collect::<Vec<_>>().join("\n");
+            let prompt=FunctionalPrompts::buildMemoryAutoCategorizePrompt(&folders,&digest,false);
+            let result:Result<String,String>=async {
+                let mut service=aiService.lock().await;let mut output=String::new();
+                let mut stream=service.send_message(SendMessageRequest {
+                    chat_history:toPromptTurns(&[("system".into(),prompt),("user".into(),"请为这些记忆分类。".into())]),
+                    model_parameters:Vec::new(),enable_thinking:false,thinking_quality_level:1,thinking_configurations:"[]".into(),thinking_option_id:String::new(),
+                    stream:true,available_tools:Vec::new(),preserve_think_in_history:false,enable_retry:true,on_non_fatal_error:None,on_tool_invocation:None,
+                }).await.map_err(|e|e.to_string())?;
+                stream.collect(&mut |chunk|output.push_str(&chunk)).await;
+                runtimeContext.support().updateTokensForProviderModel(&service.provider_model(),service.input_token_count(),service.output_token_count(),service.cached_input_token_count())?;
+                Ok(output)
+            }.await;
+            match result.and_then(|output|serde_json::from_str::<Vec<Value>>(&ChatUtils::extract_json_array(&output)).map_err(|e|e.to_string())) {
+                Ok(rows)=>for row in rows {
+                    let (Some(title),Some(folder))=(row.get("title").and_then(Value::as_str),row.get("folder").and_then(Value::as_str)) else {continue;};
+                    if let Some(memory)=batch.iter().find(|m|m.title==title) {
+                        repository.moveMemoriesToFolder(&[memory.id],folder)?;changed+=1;
+                    }
+                },
+                Err(error)=> {AppLogger::e(TAG,&format!("memory categorization batch failed: {error}"));failures.push(error);},
+            }
+        }
+        if !failures.is_empty() {return Err(format!("Categorized {changed} memories; {} batches failed: {}",failures.len(),failures.join("; ")));}
+        Ok(changed)
     }
 
     /// Resolves the character card owner and persists its extracted memory.
@@ -193,6 +240,7 @@ impl MemoryLibrary {
             aiService,
             ownerKey,
             runtimeContext,
+            10,
         )
         .await
     }
@@ -205,10 +253,11 @@ impl MemoryLibrary {
         aiService: SharedAIServiceHandle,
         ownerKey: String,
         runtimeContext: ProviderRuntimeContext,
+        analysisHistoryLimit: usize,
     ) -> Result<(), String> {
         let memoryRepository = MemoryRepository::new(ownerKey.clone());
         let prunedContent =
-            ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(&content));
+            ChatUtils::remove_thinking_content(&ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(&content)));
 
         let processedHistory = conversationHistory
             .into_iter()
@@ -221,9 +270,9 @@ impl MemoryLibrary {
                 };
                 (
                     role,
-                    ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(
+                    ChatUtils::remove_thinking_content(&ChatUtils::strip_gemini_thought_signature_meta(&pruneToolResultContent(
                         &cleanedContent,
-                    )),
+                    ))),
                 )
             })
             .collect::<Vec<_>>();
@@ -250,6 +299,7 @@ impl MemoryLibrary {
             &memoryRepository,
             &ownerKey,
             &runtimeContext,
+            analysisHistoryLimit,
         )
         .await?;
 
@@ -305,14 +355,14 @@ impl MemoryLibrary {
         }
 
         if !analysis.userPreferences.is_empty() {
-            UserMarkdownRepository::new(&ownerKey, defaultRuntimeStorageHost())
-                .writeUserMarkdown(analysis.userPreferences.clone())?;
+            let settings = MemorySettingsRepository::new(&ownerKey).load()?;
+            if settings.profileAutoUpdateEnabled && !settings.profileAutoUpdateLocked {
+                UserMarkdownRepository::new(&ownerKey, defaultRuntimeStorageHost())
+                    .writeUserMarkdown(analysis.userPreferences.clone())?;
+            }
         }
 
-        let Some(mainProblem) = analysis.mainProblem.clone() else {
-            return Ok(());
-        };
-
+        if let Some(mainProblem) = analysis.mainProblem.clone() {
         let mainProblemMemory = if let Some(mut existingMemory) =
             memoryRepository.findMemoryByTitle(&mainProblem.title)?
         {
@@ -331,6 +381,7 @@ impl MemoryLibrary {
             memoryRepository.saveMemory(memory)?
         };
         createdMemories.insert(mainProblemMemory.title.clone(), mainProblemMemory);
+        }
 
         for entity in &analysis.extractedEntities {
             let mut memory = None;
@@ -351,8 +402,7 @@ impl MemoryLibrary {
                     "memory_analysis".to_string(),
                     entity
                         .folderPath
-                        .clone()
-                        .or_else(|| mainProblem.folderPath.clone()),
+                        .clone(),
                     0.5,
                     0.5,
                 );
@@ -396,14 +446,18 @@ impl MemoryLibrary {
         memoryRepository: &MemoryRepository,
         ownerKey: &str,
         runtimeContext: &ProviderRuntimeContext,
+        analysisHistoryLimit: usize,
     ) -> Result<ParsedAnalysis, String> {
         let useEnglish = false;
-        let currentPreferences = UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost())
-            .readUserMarkdown()?;
-        let contextQuery = buildCandidateSearchQuery(query, solution);
+        let settings = MemorySettingsRepository::new(ownerKey).load()?;
+        let profileUpdateEnabled = settings.profileAutoUpdateEnabled && !settings.profileAutoUpdateLocked;
+        let currentPreferences = if profileUpdateEnabled {
+            UserMarkdownRepository::new(ownerKey, defaultRuntimeStorageHost()).readUserMarkdown()?
+        } else { String::new() };
+        let contextQuery = buildCandidateSearchQuery(query, solution, conversationHistory);
         let searchConfig = runtimeContext.support().memorySearchConfig(ownerKey)?;
         let candidateMemories = memoryRepository
-            .searchMemories(&contextQuery, None, 0.0, None, None)?
+            .searchMemoriesWithConfig(&contextQuery, None, 0.0, None, None, searchConfig.clone())?
             .into_iter()
             .take(15)
             .collect::<Vec<_>>();
@@ -443,9 +497,11 @@ impl MemoryLibrary {
             &existingFoldersPrompt,
             &currentPreferences,
             useEnglish,
+            profileUpdateEnabled,
+            &settings.memoryExtractionCustomRules,
         );
         let analysisMessage =
-            buildAnalysisMessage(query, solution, conversationHistory, useEnglish);
+            buildAnalysisMessage(query, solution, conversationHistory, useEnglish, analysisHistoryLimit);
         let messages = toPromptTurns(&[
             ("system".to_string(), systemPrompt),
             ("user".to_string(), analysisMessage),
@@ -522,22 +578,12 @@ fn memoryMutex() -> &'static tokio::sync::Mutex<()> {
 }
 
 #[allow(non_snake_case)]
-fn buildCandidateSearchQuery(query: &str, solution: &str) -> String {
-    let coreQuestion = extractCoreQuestionText(query);
-    let selectedQuestion = if coreQuestion.trim().is_empty() {
-        normalizeCandidateSearchText(query, 800)
-    } else {
-        coreQuestion
-    };
-    if selectedQuestion.trim().is_empty() {
-        return normalizeCandidateSearchText(solution, 300);
-    }
-    let conciseSolution = normalizeCandidateSearchText(solution, 180);
-    if conciseSolution.trim().is_empty() {
-        selectedQuestion
-    } else {
-        format!("{selectedQuestion}\n{conciseSolution}")
-    }
+fn buildCandidateSearchQuery(query: &str, solution: &str, history:&[(String,String)]) -> String {
+    let coreQuestion=extractCoreQuestionText(query);
+    let selectedQuestion=if coreQuestion.trim().is_empty() {normalizeCandidateSearchText(query,800)} else {coreQuestion};
+    let conciseSolution=normalizeCandidateSearchText(solution,180);
+    let recent=history.iter().skip(history.len().saturating_sub(12)).map(|(_,c)|c.as_str()).collect::<Vec<_>>().join("\n");
+    [selectedQuestion,conciseSolution,normalizeCandidateSearchText(&recent,1200)].into_iter().filter(|c|!c.trim().is_empty()).collect::<Vec<_>>().join("\n")
 }
 
 #[allow(non_snake_case)]
@@ -637,6 +683,7 @@ fn buildAnalysisMessage(
     solution: &str,
     conversationHistory: &[(String, String)],
     useEnglish: bool,
+    historyLimit: usize,
 ) -> String {
     let mut message = String::new();
     if useEnglish {
@@ -655,7 +702,7 @@ fn buildAnalysisMessage(
     let recentHistory = conversationHistory
         .iter()
         .rev()
-        .take(10)
+        .take(historyLimit)
         .cloned()
         .collect::<Vec<_>>()
         .into_iter()
@@ -679,142 +726,68 @@ fn buildAnalysisMessage(
     message
 }
 
+/// Strict object-based protocol. Invalid model output is a failed extraction, not a successful empty one.
 #[allow(non_snake_case)]
 fn parseAnalysisResult(jsonString: &str, _useEnglish: bool) -> Result<ParsedAnalysis, String> {
-    let cleanJson = ChatUtils::extract_json(jsonString);
-    if cleanJson.trim().is_empty()
-        || !cleanJson.trim_start().starts_with('{')
-        || cleanJson.trim() == "{}"
-    {
-        return Ok(ParsedAnalysis::empty());
-    }
-    let json: Value = serde_json::from_str(&cleanJson).map_err(|error| error.to_string())?;
-    let mainProblem = json.get("main").and_then(parseEntityArray);
-    let extractedEntities = json
-        .get("new")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(parseEntityArray)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let links = json
-        .get("links")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parseLinkArray).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let updatedEntities = json
-        .get("update")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(parseUpdateArray)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let mergedEntities = json
-        .get("merge")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(parseMergeObject)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let userPreferences = json
-        .get("user")
-        .and_then(Value::as_str)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_default();
+    let clean = ChatUtils::extract_json(jsonString);
+    let json: Value = serde_json::from_str(&clean).map_err(|e|format!("Invalid memory analysis JSON: {e}"))?;
+    let object = json.as_object().ok_or("Memory analysis must return a JSON object")?;
+    if object.is_empty() { return Ok(ParsedAnalysis::empty()); }
+    let main = object.get("main").ok_or("main is required")?;
+    let mainProblem = if main.is_null() { None } else { Some(parseEntity(main, false)?) };
+    let array = |key: &str| -> Result<&Vec<Value>, String> {
+        object.get(key).and_then(Value::as_array).ok_or_else(||format!("{key} must be an object array"))
+    };
     Ok(ParsedAnalysis {
         mainProblem,
-        extractedEntities,
-        links,
-        updatedEntities,
-        mergedEntities,
-        userPreferences,
+        extractedEntities: array("new")?.iter().map(|v|parseEntity(v, true)).collect::<Result<_,_>>()?,
+        updatedEntities: array("update")?.iter().map(|v|Ok(ParsedUpdate {
+            titleToUpdate: requiredString(v,"title")?, newContent: requiredString(v,"content")?,
+            reason: requiredString(v,"reason")?, newCredibility: unitFloat(v,"credibility",false)?,
+            newImportance: unitFloat(v,"importance",false)?,
+        })).collect::<Result<_,String>>()?,
+        mergedEntities: array("merge")?.iter().map(|v|Ok(ParsedMerge {
+            sourceTitles: requiredStrings(v,"source_titles")?, newTitle: requiredString(v,"title")?,
+            newContent: requiredString(v,"content")?, newTags: requiredStrings(v,"tags")?,
+            folderPath: requiredString(v,"folder_path")?, reason: requiredString(v,"reason")?,
+        })).collect::<Result<_,String>>()?,
+        links: array("links")?.iter().map(|v|Ok(ParsedLink {
+            sourceTitle: requiredString(v,"source")?, targetTitle: requiredString(v,"target")?,
+            type_: requiredString(v,"type")?, description: requiredString(v,"description")?,
+            weight: unitFloat(v,"weight",true)?.ok_or("weight is required")?,
+        })).collect::<Result<_,String>>()?,
+        userPreferences: match object.get("profile_markdown") {
+            None | Some(Value::Null) => String::new(),
+            Some(Value::String(s)) => s.trim().to_string(),
+            _ => return Err("profile_markdown must be a string or null".into()),
+        },
     })
 }
-
-#[allow(non_snake_case)]
-fn parseEntityArray(value: &Value) -> Option<ParsedEntity> {
-    let array = value.as_array()?;
-    Some(ParsedEntity {
-        title: array.first()?.as_str()?.to_string(),
-        content: array.get(1)?.as_str()?.to_string(),
-        tags: stringArray(array.get(2)),
-        folderPath: array
-            .get(3)
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        aliasFor: array
-            .get(4)
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-    })
+fn requiredString(value: &Value, key: &str) -> Result<String,String> {
+    value.as_object().and_then(|v|v.get(key)).and_then(Value::as_str)
+        .map(ToString::to_string).ok_or_else(||format!("{key} must be a string in a named object"))
 }
-
-#[allow(non_snake_case)]
-fn parseLinkArray(value: &Value) -> Option<ParsedLink> {
-    let array = value.as_array()?;
-    Some(ParsedLink {
-        sourceTitle: array.first()?.as_str()?.to_string(),
-        targetTitle: array.get(1)?.as_str()?.to_string(),
-        type_: array.get(2)?.as_str()?.to_string(),
-        description: array
-            .get(3)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        weight: array.get(4).and_then(Value::as_f64).unwrap_or(1.0) as f32,
-    })
+fn requiredStrings(value: &Value, key: &str) -> Result<Vec<String>,String> {
+    value.get(key).and_then(Value::as_array).ok_or_else(||format!("{key} must be a string array"))?
+        .iter().map(|v|v.as_str().map(ToString::to_string).ok_or_else(||format!("{key} contains a non-string"))).collect()
 }
-
-#[allow(non_snake_case)]
-fn parseUpdateArray(value: &Value) -> Option<ParsedUpdate> {
-    let array = value.as_array()?;
-    Some(ParsedUpdate {
-        titleToUpdate: array.first()?.as_str()?.to_string(),
-        newContent: array.get(1)?.as_str()?.to_string(),
-        reason: array
-            .get(2)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        newCredibility: array
-            .get(3)
-            .and_then(Value::as_f64)
-            .map(|value| value as f32),
-        newImportance: array
-            .get(4)
-            .and_then(Value::as_f64)
-            .map(|value| value as f32),
-    })
+fn unitFloat(value: &Value, key: &str, required: bool) -> Result<Option<f32>,String> {
+    match value.get(key) {
+        None | Some(Value::Null) if !required => Ok(None),
+        Some(v) => { let n = v.as_f64().ok_or_else(||format!("{key} must be a number"))?;
+            if !n.is_finite() || !(0.0..=1.0).contains(&n) { return Err(format!("{key} must be between 0 and 1")); }
+            Ok(Some(n as f32)) },
+        None => Err(format!("{key} is required")),
+    }
 }
-
-#[allow(non_snake_case)]
-fn parseMergeObject(value: &Value) -> Option<ParsedMerge> {
-    let object = value.as_object()?;
-    Some(ParsedMerge {
-        sourceTitles: stringArray(object.get("source_titles")),
-        newTitle: object.get("new_title")?.as_str()?.to_string(),
-        newContent: object.get("new_content")?.as_str()?.to_string(),
-        newTags: stringArray(object.get("new_tags")),
-        folderPath: object
-            .get("folder_path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        reason: object
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+fn parseEntity(value: &Value, aliasAllowed: bool) -> Result<ParsedEntity,String> {
+    Ok(ParsedEntity { title: requiredString(value,"title")?, content: requiredString(value,"content")?,
+        tags: requiredStrings(value,"tags")?, folderPath: Some(requiredString(value,"folder_path")?),
+        aliasFor: if aliasAllowed { match value.get("alias_for") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => return Err("alias_for must be a string or null".into()),
+        } } else { None },
     })
 }
 
@@ -917,4 +890,46 @@ fn stringArray(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod protocolTests {
+    use super::*;
+    fn blank()->Value {serde_json::json!({"main":null,"new":[],"update":[],"merge":[],"links":[]})}
+    #[test]
+    fn object_protocol_accepts_operations_without_main() {
+        let json=serde_json::json!({"main":null,"new":[{"title":"TMUX state","content":"Verified close works","tags":["tmux"],"folder_path":"Tools","alias_for":null}],
+            "update":[{"title":"SSH","content":"Timeout resolved","reason":"Verified","credibility":1.0,"importance":0.6}],
+            "merge":[{"source_titles":["old A","old B"],"title":"state","content":"Merged","tags":[],"folder_path":"Tools","reason":"Same fact"}],
+            "links":[{"source":"TMUX state","target":"SSH","type":"INVOLVES","description":"Uses tool","weight":0.8}],"profile_markdown":"# User\nPrefers Chinese"});
+        let analysis=parseAnalysisResult(&json.to_string(),false).unwrap();
+        assert!(analysis.mainProblem.is_none());assert_eq!(analysis.extractedEntities.len(),1);
+        assert_eq!(analysis.updatedEntities[0].titleToUpdate,"SSH");assert_eq!(analysis.mergedEntities[0].sourceTitles.len(),2);
+        assert_eq!(analysis.links[0].weight,0.8);assert!(analysis.userPreferences.starts_with("# User"));
+    }
+    #[test]
+    fn rejects_positional_missing_wrong_type_and_out_of_range_fields() {
+        let mut positional=blank();positional["new"]=serde_json::json!([["title","content",[],"folder",null]]);
+        let mut missing=blank();missing.as_object_mut().unwrap().remove("links");
+        let mut wrong=blank();wrong["profile_markdown"]=serde_json::json!([]);
+        let mut range=blank();range["links"]=serde_json::json!([{"source":"a","target":"b","type":"REL","description":"x","weight":1.1}]);
+        for json in [positional,missing,wrong,range] {assert!(parseAnalysisResult(&json.to_string(),false).is_err());}
+        for raw in ["not json", "[]", "null", "{\"main\":null}"] {assert!(parseAnalysisResult(raw,false).is_err(),"{raw}");}
+    }
+    #[test] fn explicit_empty_response_and_markdown_fences_are_supported() {
+        assert!(parseAnalysisResult("{}",false).unwrap().mainProblem.is_none());
+        assert!(parseAnalysisResult(&format!("```json\n{}\n```",blank()),false).is_ok());
+    }
+    #[test] fn candidate_query_keeps_subject_of_short_final_question() {
+        let history=vec![("user".into(),"Verify SSH timeout was resolved".into()),("assistant".into(),"SSH is now healthy".into())];
+        let query=buildCandidateSearchQuery("try ls","works",&history);
+        assert!(query.contains("SSH timeout"));assert!(query.starts_with("try ls"));
+    }
+    #[test] fn extraction_prompt_has_no_kotlin_interpolation_or_unexpected_profile_updates() {
+        for english in [true,false] {for enabled in [true,false] {
+            let prompt=FunctionalPrompts::buildKnowledgeGraphExtractionPrompt("duplicates","existing","folders","# Profile",english,enabled,"remember SSH");
+            assert!(!prompt.contains('$'));assert!(prompt.contains("remember SSH"));
+            assert_eq!(prompt.contains("<user_profile_document>"),enabled);
+        }}
+    }
 }

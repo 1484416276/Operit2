@@ -76,6 +76,9 @@ pub trait ProviderRuntimeSupport: Send + Sync {
     /// Loads memory search settings for an owner key.
     fn memorySearchConfig(&self, ownerKey: &str) -> Result<MemorySearchConfig, String>;
 
+    /// Whether USER.md should be excluded from outgoing prompt context.
+    fn disableUserPreferenceDescription(&self) -> Result<bool, String> { Ok(false) }
+
     /// Resolves the memory owner selected by one character card.
     fn memoryOwnerKeyForCharacterCard(&self, roleCardId: &str) -> Result<String, String>;
 

@@ -7,12 +7,16 @@ use operit_host_api::{
     FileEntry, FileSystemHost, FindFilesRequest, GrepCodeRequest, GrepCodeResult, HttpHost,
     HttpRequestData, RuntimeStorageHost, SystemOperationHost,
 };
-use operit_store::ExtensionStore::ExtensionStore;
+use operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 
 use crate::runtime_support::{
-    RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
+    RuntimeChatCallRequest, RuntimeStructuredEditAction, RuntimeStructuredEditOperation,
+    ToolRuntimeSupport,
 };
 use operit_host_api::HostManager::HostManager;
+use operit_model::FunctionType::FunctionType;
+use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
 use operit_tools::tools::ToolExecutionLimits::ToolExecutionLimits;
@@ -28,6 +32,7 @@ use operit_tools::ToolExecutionManager::{
     AITool, ToolAccessSpec, ToolBoundary, ToolEffect, ToolExecutor, ToolParameter,
     ToolValidationResult,
 };
+use operit_util::ChatUtils::ChatUtils;
 use operit_util::DocumentConversionUtil::DocumentConversionUtil;
 use operit_util::FileUtils::FileUtils;
 use operit_util::ImagePoolManager::ImagePoolManager;
@@ -81,23 +86,21 @@ impl StandardFileSystemTools {
         )
     }
 
-    /// Publishes extension file changes through their complete ownership records.
+    /// File tools honor registered storage ownership; no extension-specific synchronization.
     #[allow(non_snake_case)]
-    fn publishMappedChanges(&self, paths: &[&str]) -> Result<(), String> {
+    fn synchronizeMappedChanges<T>(&self, paths: &[&str], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         let mut storagePaths = Vec::new();
         for path in paths {
             let canonical = PathMapper::canonicalizeVfsPath(path)?;
-            if let Some(relative) = PathMapper::relativePath("/app/data/extensions", &canonical)? {
-                storagePaths.push(format!("runtime/extensions/{relative}"));
+            if let Some(relative) = PathMapper::relativePath("/app/data", &canonical)? {
+                storagePaths.push(format!("runtime/{relative}"));
             }
         }
-        if storagePaths.is_empty() {
-            return Ok(());
-        }
-        ExtensionStore::new(self.runtimeStorageHost.clone()).publishFileChanges(&storagePaths)
+        RuntimeFileSyncStore::new(self.runtimeStorageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+            .trackChanges(&storagePaths, change)
     }
 
-    /// Writes text then publishes the owning extension snapshot, including appended bytes.
+    /// Writes text and publishes changed Space files, including appended bytes.
     #[allow(non_snake_case)]
     fn writeMappedText(
         &self,
@@ -106,11 +109,10 @@ impl StandardFileSystemTools {
         content: &str,
         append: bool,
     ) -> Result<(), String> {
-        vfs.writeFile(path, content, append)?;
-        self.publishMappedChanges(&[path])
+        self.synchronizeMappedChanges(&[path], || vfs.writeFile(path, content, append))
     }
 
-    /// Writes binary data then publishes the owning extension snapshot.
+    /// Writes binary data using the same generic file synchronization path.
     #[allow(non_snake_case)]
     fn writeMappedBytes(
         &self,
@@ -118,8 +120,7 @@ impl StandardFileSystemTools {
         path: &str,
         content: &[u8],
     ) -> Result<(), String> {
-        vfs.writeFileBytes(path, content)?;
-        self.publishMappedChanges(&[path])
+        self.synchronizeMappedChanges(&[path], || vfs.writeFileBytes(path, content))
     }
 
     #[allow(non_snake_case)]
@@ -460,15 +461,40 @@ impl StandardFileSystemTools {
     }
 
     #[allow(non_snake_case)]
-    /// Reads image files using the requested direct-image mode or the standard OCR mode.
+    /// Reads image files through the same three-stage chain as the Kotlin client:
+    /// direct media link, backend image recognition with intent, then local OCR.
     fn handleImageFileRead(&self, tool: &AITool, vfs: &VisualFileSystem, path: &str) -> ToolResult {
         if parameterBool(tool, "direct_image") {
-            return self.handleDirectImageFileRead(tool, vfs, path);
+            let directResult = self.handleDirectImageFileRead(tool, vfs, path);
+            // A failed direct registration must not abort the read. Kotlin falls back to
+            // intent recognition/OCR when ImagePoolManager cannot register the image.
+            if directResult.success {
+                return directResult;
+            }
         }
+
         let physicalPath = match vfs.resolvePath(path) {
             Ok(resolved) => resolved.physicalPath,
             Err(error) => return toolError(tool, String::new(), error),
         };
+        let intent = optionalParameterValue(tool, "intent")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        if !intent.is_empty() {
+            if let Some(recognitionResult) = self.recognizeImageWithIntent(vfs, path, &intent) {
+                return successData(
+                    tool,
+                    ToolResultData::FileContentData(FileContentData {
+                        path: path.to_string(),
+                        size: recognitionResult.len() as i64,
+                        content: recognitionResult,
+                    }),
+                );
+            }
+        }
+
         let content = match self.recognizeImageText(&physicalPath) {
             Ok(ocrText) if ocrText.trim().is_empty() => "No text detected in image.".to_string(),
             Ok(ocrText) => ocrText,
@@ -482,6 +508,63 @@ impl StandardFileSystemTools {
                 content,
             }),
         )
+    }
+
+    #[allow(non_snake_case)]
+    /// Sends an image plus the caller's intent to the configured image-recognition model.
+    /// Returns None on any registration/model failure so the caller can fall back to OCR.
+    fn recognizeImageWithIntent(
+        &self,
+        vfs: &VisualFileSystem,
+        path: &str,
+        intent: &str,
+    ) -> Option<String> {
+        let bytes = match vfs.readFileBytes(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("[StandardFileSystemTools] unable to read image for intent recognition: {error}");
+                return None;
+            }
+        };
+        let imageId = ImagePoolManager::add_image_bytes(
+            &bytes,
+            Some(imageMimeTypeFromPath(path)),
+            None,
+        );
+        if imageId == "error" {
+            eprintln!("[StandardFileSystemTools] unable to register image for intent recognition: {path}");
+            return None;
+        }
+
+        let prompt = format!("{}\n{}", buildImageMediaLink(&imageId), intent);
+        let request = RuntimeChatCallRequest {
+            functionType: FunctionType::IMAGE_RECOGNITION,
+            turns: vec![PromptTurn::new(PromptTurnKind::USER, prompt)],
+            recordTokenUsage: false,
+            enableThinking: false,
+        };
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+            .and_then(|runtime| runtime.block_on(self.runtimeSupport.callChatModel(request)));
+        ImagePoolManager::remove_image(&imageId);
+
+        match result {
+            Ok(output) => {
+                let output = ChatUtils::remove_thinking_content(&output);
+                if !output.trim().is_empty() {
+                    Some(output)
+                } else {
+                    eprintln!("[StandardFileSystemTools] image recognition returned an empty result: {path}");
+                    None
+                }
+            }
+            Err(error) => {
+                eprintln!("[StandardFileSystemTools] image recognition failed for {path}: {error}");
+                None
+            }
+        }
     }
 
     #[allow(non_snake_case)]
@@ -730,9 +813,7 @@ impl StandardFileSystemTools {
         let recursive = parameterBool(tool, "recursive");
         let vfs = self.vfs();
 
-        match vfs
-            .deleteFile(&path, recursive)
-            .and_then(|_| self.publishMappedChanges(&[&path]))
+        match self.synchronizeMappedChanges(&[&path], || vfs.deleteFile(&path, recursive))
         {
             Ok(()) => successData(
                 tool,
@@ -777,9 +858,7 @@ impl StandardFileSystemTools {
         let destPath = parameterValue(tool, "destination");
         let vfs = self.vfs();
 
-        match vfs
-            .moveFile(&sourcePath, &destPath)
-            .and_then(|_| self.publishMappedChanges(&[&sourcePath, &destPath]))
+        match self.synchronizeMappedChanges(&[&sourcePath, &destPath], || vfs.moveFile(&sourcePath, &destPath))
         {
             Ok(()) => successData(
                 tool,
@@ -805,9 +884,7 @@ impl StandardFileSystemTools {
         let recursive = parameterBoolDefaultTrue(tool, "recursive");
         let vfs = self.vfs();
 
-        match vfs
-            .copyFile(&sourcePath, &destPath, recursive)
-            .and_then(|_| self.publishMappedChanges(&[&destPath]))
+        match self.synchronizeMappedChanges(&[&destPath], || vfs.copyFile(&sourcePath, &destPath, recursive))
         {
             Ok(()) => successData(
                 tool,

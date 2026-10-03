@@ -53,6 +53,9 @@ impl MemoryAutoSaveCandidateRepository {
         triggerMessageTimestamps: Vec<i64>,
     ) -> Result<(), String> {
         let now = currentTimeMillis();
+        if chatId.trim().is_empty() { return Err("memory queue chatId is required".into()); }
+        let triggerMessageTimestamps = triggerMessageTimestamps.into_iter().filter(|t|*t>0)
+            .collect::<std::collections::BTreeSet<_>>();
         for timestamp in triggerMessageTimestamps {
             self.candidateBox
                 .put(MemoryAutoSaveCandidate::selectedUserMessage(
@@ -63,6 +66,20 @@ impl MemoryAutoSaveCandidateRepository {
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+
+    pub fn allCandidates(&self) -> Result<Vec<MemoryAutoSaveCandidate>, String> {
+        self.candidateBox.all().map_err(|e|e.to_string())
+    }
+    pub fn countPendingAndFailedCandidates(&self) -> Result<i32,String> {
+        Ok(self.getPendingAndFailedCandidates()?.len() as i32)
+    }
+    pub fn countPendingAndFailedChats(&self) -> Result<i32,String> {
+        Ok(self.getPendingAndFailedCandidates()?.into_iter().map(|c|c.chatId)
+            .collect::<std::collections::BTreeSet<_>>().len() as i32)
+    }
+    pub fn markPending(&self, ids: &[i64]) -> Result<(),String> {
+        self.updateCandidates(ids, |c| { c.status = MemoryAutoSaveCandidate::STATUS_PENDING.into(); c.lastError.clear(); })
     }
 
     /// Loads candidates that are ready to be processed or retried.

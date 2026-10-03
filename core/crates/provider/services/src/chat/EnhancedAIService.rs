@@ -1098,7 +1098,7 @@ impl EnhancedAIService {
             introPrompt,
             waifuRulesText: String::new(),
             avatarMoodRulesText: String::new(),
-            disableUserPreferenceDescription: false,
+            disableUserPreferenceDescription: self.provider_runtime_context.support().disableUserPreferenceDescription().map_err(AiServiceError::RequestFailed)?,
             aiName,
             hasImageRecognition: modelConfig.capabilities.directImage,
             hasAudioRecognition: modelConfig.capabilities.directAudio,
@@ -1761,6 +1761,7 @@ impl EnhancedAIService {
         if enableMemoryAutoUpdate && !isSubTask {
             let memoryContent = execContext.roundManager.getDisplayContent();
             if !memoryContent.trim().is_empty() {
+                let result = (|| -> Result<(), AiServiceError> {
                 let roleCardId = memoryAutoUpdateCharacterCardId.clone().ok_or_else(|| {
                     AiServiceError::RequestFailed(
                         "memory auto update requires a role card".to_string(),
@@ -1778,6 +1779,13 @@ impl EnhancedAIService {
                 })?;
                 MemoryLibrary::enqueueAutoSaveCandidate(ownerKey, chatId, currentTimeMillis())
                     .map_err(AiServiceError::RequestFailed)?;
+                Ok(())
+                })();
+                if let Err(error) = result {
+                    let message = format!("自动保存长期记忆候选入队失败: {error}");
+                    AppLogger::e(TAG, &message);
+                    if let Some(callback) = onNonFatalError { callback(message); }
+                }
             }
         }
         AppLogger::d(

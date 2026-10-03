@@ -10,6 +10,7 @@ import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../../../common/CharacterAvatar.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
+import '../../../../../settings/memory/MemoryOwnerControlsDialog.dart';
 
 class AgentInputMenuPopup extends StatefulWidget {
   const AgentInputMenuPopup({
@@ -39,6 +40,11 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   int? _observedPluginChangeVersion;
   bool _checkingPluginChangeVersion = false;
   bool _memoryExpanded = false;
+  bool _memoryBusy = false;
+  Timer? _memoryTimer;
+  core_proxy.MemoryAutoSaveStatus? _queue;
+  String? _ownerKey;
+  bool _pollingMemory = false;
   bool _toolsExpanded = false;
   bool _behaviorExpanded = false;
   bool _pluginsExpanded = false;
@@ -50,12 +56,60 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     super.initState();
     _settingsFuture = _loadSettings();
     _startPluginChangeObserver();
+    unawaited(_pollMemory());
+    _memoryTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _pollMemory(),
+    );
   }
 
   @override
   void dispose() {
     _pluginChangeTimer?.cancel();
+    _memoryTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _pollMemory() async {
+    if (_pollingMemory || widget.currentChatId == null) return;
+    _pollingMemory = true;
+    try {
+      final owner = await widget.viewModel.memoryOwnerForChat(
+        widget.currentChatId!,
+      );
+      final status = await _clients.application
+          .memoryManagementService(ownerKey: owner)
+          .autoSaveStatus();
+      if (mounted)
+        setState(() {
+          _ownerKey = owner;
+          _queue = status;
+        });
+    } catch (error) {
+      debugPrint('Memory queue status: $error');
+    } finally {
+      _pollingMemory = false;
+    }
+  }
+
+  Future<void> _manualMemory() async {
+    if (_memoryBusy || widget.currentChatId == null) return;
+    setState(() => _memoryBusy = true);
+    try {
+      await widget.viewModel.updateMemory(widget.currentChatId!);
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('记忆提取完成')));
+      await _pollMemory();
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('记忆提取失败：$error')));
+    } finally {
+      if (mounted) setState(() => _memoryBusy = false);
+    }
   }
 
   void _startPluginChangeObserver() {
@@ -234,6 +288,40 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
                           value: data.enableMemoryAutoUpdate ? '开' : '关',
                           checked: data.enableMemoryAutoUpdate,
                           onTap: () => _toggleMemoryAutoUpdate(data),
+                        ),
+                        if (_queue != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            child: Text(
+                              '待处理 ${_queue!.pendingCandidates} 条 · ${_queue!.pendingChats} 个聊天\n约 ${_queue!.minutesUntilNextRun} 分钟后检查 · 失败 ${_queue!.failedCandidates}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.psychology_outlined),
+                          title: Text(_memoryBusy ? '正在提取记忆…' : '立即提取当前聊天记忆'),
+                          enabled: !_memoryBusy && widget.currentChatId != null,
+                          onTap: _manualMemory,
+                        ),
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.tune),
+                          title: const Text('沉淀、检索与历史重建'),
+                          enabled: _ownerKey != null,
+                          onTap: () async {
+                            final owner = _ownerKey;
+                            if (owner == null) return;
+                            await MemoryOwnerControlsDialog.open(
+                              context,
+                              _clients,
+                              owner,
+                            );
+                            await _pollMemory();
+                          },
                         ),
                       ],
                     ),

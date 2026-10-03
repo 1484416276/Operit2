@@ -33,12 +33,18 @@ impl ObjectBoxEntity for MemoryLink {
     }
 }
 
+impl ObjectBoxEntity for operit_model::DocumentChunk::DocumentChunk {
+    fn objectBoxId(&self) -> i64 { self.id }
+    fn setObjectBoxId(&mut self, id: i64) { self.id = id; }
+}
+
 /// Repository for memories and typed links owned by one memory namespace.
 #[derive(Clone)]
 pub struct MemoryRepository {
     ownerKey: String,
     memoryBox: ObjectBox<Memory>,
     linkBox: ObjectBox<MemoryLink>,
+    chunkBox: ObjectBox<operit_model::DocumentChunk::DocumentChunk>,
 }
 
 /// Link record enriched with source and target memory titles.
@@ -66,6 +72,7 @@ impl MemoryRepository {
                 memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"),
                 "Memory",
             ),
+            chunkBox: ObjectBox::new(memorySqlitePath(&ownerKey).expect("memory sqlite path must be valid"), "DocumentChunk"),
             linkBox: ObjectBox::new(
                 memoryLinkSqlitePath(&ownerKey).expect("memory link sqlite path must be valid"),
                 "MemoryLink",
@@ -140,19 +147,136 @@ impl MemoryRepository {
         if query == "*" || query.is_empty() {
             return Ok(memories);
         }
-        let tokens = lexicalTokens(query);
-        let mut scored = memories
-            .into_iter()
-            .map(|memory| (lexicalScore(&memory, &tokens), memory))
-            .filter(|(score, _)| *score >= relevanceThreshold)
-            .collect::<Vec<_>>();
-        scored.sort_by(|left, right| {
-            right
-                .0
-                .total_cmp(&left.0)
-                .then_with(|| right.1.updatedAt.cmp(&left.1.updatedAt))
-        });
-        Ok(scored.into_iter().map(|(_, memory)| memory).collect())
+        self.searchMemoriesWithConfig(query, folderPath, relevanceThreshold, createdAtStartMs,
+            createdAtEndMs, super::MemorySettingsRepository::MemorySettingsRepository::new(&self.ownerKey).loadSearchConfig()?)
+    }
+
+    /// Kotlin-compatible hybrid search using the actual persisted owner weights.
+    pub fn searchMemoriesWithConfig(
+        &self, query: &str, folderPath: Option<&str>, relevanceThreshold: f64,
+        createdAtStartMs: Option<i64>, createdAtEndMs: Option<i64>,
+        config: operit_model::MemorySearchConfig::MemorySearchConfig,
+    ) -> Result<Vec<Memory>,String> {
+        let scoped=self.searchMemories("*",folderPath,0.0,createdAtStartMs,createdAtEndMs)?;
+        if query.trim().is_empty() || query.trim()=="*" {return Ok(scoped);}
+        let debug=self.searchMemoriesDebug(query,folderPath,relevanceThreshold,createdAtStartMs,createdAtEndMs,config)?;
+        let byId=scoped.into_iter().map(|m|(m.id,m)).collect::<HashMap<_,_>>();
+        Ok(debug.finalResultIds.into_iter().filter_map(|id|byId.get(&id).cloned()).collect())
+    }
+    pub fn searchMemoriesDebug(
+        &self, query: &str, folderPath: Option<&str>, relevanceThreshold: f64,
+        createdAtStartMs: Option<i64>, createdAtEndMs: Option<i64>,
+        config: operit_model::MemorySearchConfig::MemorySearchConfig,
+    ) -> Result<operit_model::MemorySearchDebugInfo::MemorySearchDebugInfo,String> {
+        let memories=self.searchMemories("*",folderPath,0.0,createdAtStartMs,createdAtEndMs)?;
+        let links=self.linkBox.all().map_err(|e|e.to_string())?;
+        let semantic=if config.vectorWeight>0.0 { self.semanticSimilarities(query,&memories)? } else {Vec::new()};
+        let mut debug=super::MemorySearch::compute(query,&memories,&links,config,relevanceThreshold,&semantic);
+        if query.trim().is_empty() || query.trim()=="*" {
+            debug.finalResultIds=memories.iter().map(|m|m.id).collect();
+            debug.passedThresholdCount=memories.len() as i32;
+        }
+        Ok(debug)
+    }
+
+    fn semanticSimilarities(&self,query:&str,memories:&[Memory])->Result<Vec<Vec<(i64,f32)>>,String> {
+        let settings=super::MemorySettingsRepository::MemorySettingsRepository::new(&self.ownerKey).load()?;
+        if !settings.cloudEmbeddingEnabled || settings.cloudEmbeddingEndpoint.is_empty() || settings.cloudEmbeddingModel.is_empty() {return Ok(Vec::new());}
+        let mut vectors=Vec::new();
+        for memory in memories {vectors.push((memory.id,self.cloudEmbedding(if memory.isDocumentNode { &memory.title } else { &memory.content },&settings)?));}
+        let mut result=Vec::new();
+        for keyword in super::MemorySearch::keywords(query) {
+            let query=self.cloudEmbedding(&keyword,&settings)?;
+            let mut matches=vectors.iter().filter_map(|(id,v)|cosineSimilarity(&query,v).map(|score|(*id,score))).collect::<Vec<_>>();
+            matches.sort_by(|a,b|b.1.total_cmp(&a.1));matches.truncate(200);result.push(matches);
+        }
+        Ok(result)
+    }
+
+    /// Provider-independent cloud embedding through the configured Host HTTP capability.
+    fn cloudEmbedding(&self,text:&str,settings:&operit_model::MemorySettings::MemorySettings)->Result<Vec<f32>,String> {
+        use sha2::{Digest,Sha256};
+        use crate::PreferencesDataStore::{PreferencesDataStore,stringPreferencesKey};
+        let dataStore=PreferencesDataStore::newWithStorage(crate::RuntimeStorageHost::defaultRuntimeStorageHost(),
+            operit_util::OperitPaths::memorySearchSettingsStoragePath(&self.ownerKey)?);
+        let digest=format!("{:x}",Sha256::digest(format!("{}\n{}\n{}",settings.cloudEmbeddingEndpoint,settings.cloudEmbeddingModel,text)));
+        let key=stringPreferencesKey(&format!("embedding_{digest}"));
+        if let Some(encoded)=dataStore.data().map_err(|e|e.to_string())?.get(&key) {return serde_json::from_str(encoded).map_err(|e|e.to_string());}
+        let endpoint=settings.cloudEmbeddingEndpoint.trim_end_matches('/');
+        let url=if endpoint.ends_with("/embeddings") {endpoint.to_string()} else {format!("{endpoint}/embeddings")};
+        let mut headers=vec![("Content-Type".into(),"application/json".into())];
+        if !settings.cloudEmbeddingApiKey.is_empty() {headers.push(("Authorization".into(),format!("Bearer {}",settings.cloudEmbeddingApiKey)));}
+        let response=operit_host_api::HostManager::defaultHttpHost().executeHttpRequest(operit_host_api::HttpRequestData {
+            url,method:"POST".into(),headers,body:serde_json::to_vec(&serde_json::json!({"input":text,"model":settings.cloudEmbeddingModel,"encoding_format":"float"})).map_err(|e|e.to_string())?,
+            formFields:Vec::new(),fileParts:Vec::new(),connectTimeoutSeconds:30,readTimeoutSeconds:60,followRedirects:true,
+            ignoreSsl:false,proxyHost:String::new(),proxyPort:0,
+        }).map_err(|e|e.to_string())?;
+        if !(200..300).contains(&response.statusCode) {return Err(format!("Embedding request failed: HTTP {}",response.statusCode));}
+        let json:serde_json::Value=serde_json::from_slice(&response.body).map_err(|e|e.to_string())?;
+        let vector=json.pointer("/data/0/embedding").and_then(serde_json::Value::as_array).ok_or("Embedding response has no vector")?
+            .iter().map(|v|v.as_f64().filter(|n|n.is_finite()).map(|n|n as f32).ok_or("Invalid embedding number".to_string())).collect::<Result<Vec<_>,_>>()?;
+        if vector.is_empty() {return Err("Embedding response has an empty vector".into());}
+        let encoded=serde_json::to_string(&vector).map_err(|e|e.to_string())?;
+        dataStore.edit(|p|p.set(&key,encoded.clone())).map_err(|e|e.to_string())?;
+        Ok(vector)
+    }
+    pub fn rebuildEmbeddings(&self)->Result<i32,String> {
+        let settings=super::MemorySettingsRepository::MemorySettingsRepository::new(&self.ownerKey).load()?;
+        if !settings.cloudEmbeddingEnabled {return Err("Cloud embedding is disabled".into());}
+        let memories=self.memoryBox.all().map_err(|e|e.to_string())?;
+        for memory in &memories {
+            self.cloudEmbedding(if memory.isDocumentNode { &memory.title } else { &memory.content },&settings)?;
+            for chunk in self.getChunksForMemory(memory.id)? {self.cloudEmbedding(&chunk.content,&settings)?;}
+        }
+        Ok(memories.len() as i32)
+    }
+
+    /// Kotlin paragraph splitting, stored inside the owner database and synchronized as entities.
+    pub fn createMemoryFromDocument(&self, documentName:String, originalPath:String, text:String, folderPath:String)->Result<Memory,String> {
+        if documentName.trim().is_empty() || text.trim().is_empty() {return Err("document name and text must not be empty".into());}
+        let split=regex::Regex::new(r"(\r?\n[\t ]*){2,}").map_err(|e|e.to_string())?;
+        let separators=regex::Regex::new(r"(?m)^[*\-=_]{3,}\s*$").map_err(|e|e.to_string())?;
+        let paragraphs=split.split(&text).map(|p|separators.replace_all(p, "").trim().to_string()).filter(|p|!p.is_empty()).collect::<Vec<_>>();
+        if paragraphs.is_empty() {return Err("document has no readable paragraphs".into());}
+        let mut memory=self.createMemory(documentName.clone(),format!("Document: {documentName}"),"text/plain".into(),"document_import".into(),folderPath,Some(Vec::new()))?;
+        memory.isDocumentNode=true;memory.documentPath=Some(originalPath);
+        let memory=self.saveMemory(memory)?;
+        for (index,content) in paragraphs.into_iter().enumerate() {
+            self.chunkBox.put(operit_model::DocumentChunk::DocumentChunk {id:0,memoryUuid:memory.uuid.clone(),chunkIndex:index as i32,content}).map_err(|e|e.to_string())?;
+        }
+        Ok(memory)
+    }
+    pub fn getChunksForMemory(&self,memoryId:i64)->Result<Vec<operit_model::DocumentChunk::DocumentChunk>,String> {
+        let Some(memory)=self.memoryBox.get(memoryId).map_err(|e|e.to_string())? else {return Ok(Vec::new());};
+        let mut chunks=self.chunkBox.all().map_err(|e|e.to_string())?.into_iter().filter(|c|c.memoryUuid==memory.uuid).collect::<Vec<_>>();
+        chunks.sort_by_key(|c|c.chunkIndex);Ok(chunks)
+    }
+    pub fn getChunkByIndex(&self,memoryId:i64,chunkIndex:i32)->Result<Option<operit_model::DocumentChunk::DocumentChunk>,String> {
+        Ok(self.getChunksForMemory(memoryId)?.into_iter().find(|c|c.chunkIndex==chunkIndex))
+    }
+    pub fn getChunksByRange(&self,memoryId:i64,startIndex:i32,endIndex:i32)->Result<Vec<operit_model::DocumentChunk::DocumentChunk>,String> {
+        Ok(self.getChunksForMemory(memoryId)?.into_iter().filter(|c|c.chunkIndex>=startIndex && c.chunkIndex<=endIndex).collect())
+    }
+    pub fn getTotalChunkCount(&self,memoryId:i64)->Result<i32,String> {Ok(self.getChunksForMemory(memoryId)?.len() as i32)}
+    pub fn searchChunksInDocument(&self,memoryId:i64,query:String,limit:i32)->Result<Vec<operit_model::DocumentChunk::DocumentChunk>,String> {
+        let Some(memory)=self.memoryBox.get(memoryId).map_err(|e|e.to_string())? else {return Ok(Vec::new());};
+        if !memory.isDocumentNode {return Ok(Vec::new());}
+        let chunks=self.getChunksForMemory(memoryId)?;
+        if query.trim().is_empty() || query.trim()=="*" {return Ok(chunks.into_iter().take(limit.max(1) as usize).collect());}
+        let config=super::MemorySettingsRepository::MemorySettingsRepository::new(&self.ownerKey).loadSearchConfig()?;
+        let settings=super::MemorySettingsRepository::MemorySettingsRepository::new(&self.ownerKey).load()?;
+        let mut semantic=Vec::new();
+        if config.vectorWeight>0.0 && settings.cloudEmbeddingEnabled {
+            let mut vectors=Vec::new();for chunk in &chunks {vectors.push((chunk.id,self.cloudEmbedding(&chunk.content,&settings)?));}
+            for keyword in super::MemorySearch::keywords(&query) {
+                let embedding=self.cloudEmbedding(&keyword,&settings)?;
+                let mut found=vectors.iter().filter_map(|(id,v)|cosineSimilarity(&embedding,v).map(|score|(*id,score))).collect::<Vec<_>>();
+                found.sort_by(|a,b|b.1.total_cmp(&a.1));found.truncate(200);semantic.push(found);
+            }
+        }
+        let ids=super::MemorySearch::computeChunks(&query,&chunks,config,&semantic);
+        let byId=chunks.into_iter().map(|c|(c.id,c)).collect::<HashMap<_,_>>();
+        Ok(ids.into_iter().take(limit.max(1) as usize).filter_map(|id|byId.get(&id).cloned()).collect())
     }
 
     /// Finds the first memory with the exact normalized title.
@@ -376,11 +500,13 @@ impl MemoryRepository {
 
     /// Deletes one memory and removes links that reference it.
     pub fn deleteMemory(&self, memoryId: i64) -> Result<bool, String> {
+        let chunks=self.getChunksForMemory(memoryId)?;
         let deleted = self
             .memoryBox
             .remove(memoryId)
             .map_err(|error| error.to_string())?;
         if deleted {
+            self.chunkBox.removeByIds(&chunks.iter().map(|c|c.id).collect::<Vec<_>>()).map_err(|e|e.to_string())?;
             self.linkBox
                 .editEntities(|links| {
                     links.retain(|link| {
@@ -909,4 +1035,11 @@ fn lexicalScore(memory: &Memory, tokens: &[String]) -> f64 {
         }
     }
     matched as f64 / tokens.len() as f64
+}
+
+fn cosineSimilarity(a:&[f32],b:&[f32])->Option<f32> {
+    if a.len()!=b.len() || a.is_empty() {return None;}
+    let dot=a.iter().zip(b).map(|(a,b)|a*b).sum::<f32>();
+    let norm=(a.iter().map(|n|n*n).sum::<f32>()*b.iter().map(|n|n*n).sum::<f32>()).sqrt();
+    if norm>0.0 {Some((dot/norm).clamp(-1.0,1.0))} else {None}
 }

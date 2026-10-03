@@ -1,3 +1,5 @@
+#[path = "ExtensionRuntimeService.rs"]
+pub mod ExtensionRuntimeService;
 #[path = "ChatServiceCore.rs"]
 pub mod ChatServiceCore;
 #[path = "CodexOAuthService.rs"]
@@ -62,3 +64,6 @@ pub mod SyncBlobTransferManager;
 pub use SyncBlobTransferManager::*;
 
 pub(crate) mod media;
+
+#[path = "MemoryManagementService.rs"]
+pub mod MemoryManagementService;

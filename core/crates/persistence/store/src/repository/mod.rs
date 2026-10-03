@@ -8,6 +8,10 @@ pub mod ChatHistoryManager;
 pub mod CustomEmojiRepository;
 #[path = "MemoryAutoSaveCandidateRepository.rs"]
 pub mod MemoryAutoSaveCandidateRepository;
+#[path = "MemorySettingsRepository.rs"]
+pub mod MemorySettingsRepository;
+#[path = "MemorySearch.rs"]
+pub(crate) mod MemorySearch;
 #[path = "MemoryRepository.rs"]
 pub mod MemoryRepository;
 #[path = "RuntimeStorageRepository.rs"]

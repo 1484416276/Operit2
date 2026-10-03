@@ -62,6 +62,8 @@ pub mod Memory;
 pub mod MemoryAutoSaveCandidate;
 #[path = "MemoryExportModel.rs"]
 pub mod MemoryExportModel;
+#[path = "MemorySettings.rs"]
+pub mod MemorySettings;
 #[path = "MemorySearchConfig.rs"]
 pub mod MemorySearchConfig;
 #[path = "MemorySearchDebugInfo.rs"]

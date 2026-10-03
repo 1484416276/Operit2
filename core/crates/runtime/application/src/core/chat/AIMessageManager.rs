@@ -785,7 +785,20 @@ impl AIMessageManager {
                 .to_ascii_lowercase()
                 .starts_with("image/")
         {
-            return Self::buildDirectImageAttachmentTag(attachment, fileSystemHost);
+            match Self::buildDirectImageAttachmentTag(attachment, fileSystemHost) {
+                Ok(tag) => return Ok(tag),
+                Err(error) => {
+                    // Match the Kotlin chain: a failed image-pool registration must fall
+                    // back to the ordinary attachment instead of aborting the whole send.
+                    AppLogger::e(
+                        "AIMessageManager",
+                        &format!(
+                            "direct image attachment failed, falling back to ordinary attachment: {}: {}",
+                            attachment.filePath, error
+                        ),
+                    );
+                }
+            }
         }
         if enableDirectAudioProcessing
             && attachment

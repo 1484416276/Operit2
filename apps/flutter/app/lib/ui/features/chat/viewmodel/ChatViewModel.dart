@@ -106,6 +106,21 @@ class ChatViewModel {
   /// The chat runtime scoped to this view model's window.
   GeneratedChatRuntimeHolderMainCoreProxy get chatCore => _chat;
 
+  /// Extraction and selected-message queue use the chat's persisted binding.
+  Future<void> updateMemory(String chatId) =>
+      _chat.updateMemory(chatId: chatId);
+  Future<void> enqueueSelectedMessagesForMemory(
+    String chatId,
+    List<int> timestamps,
+  ) => _chat.enqueueSelectedMessagesForMemory(
+    chatId: chatId,
+    messageTimestamps: timestamps,
+  );
+
+  /// Core resolves character/shared/group memory ownership for the persisted chat.
+  Future<String> memoryOwnerForChat(String chatId) =>
+      _chat.memoryOwnerKeyForChat(chatId: chatId);
+
   /// Watches the selected chat id used to bind per-chat Core flows.
   Stream<String?> watchCurrentChatId() {
     return _chat.currentChatIdFlow();

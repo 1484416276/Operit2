@@ -395,6 +395,11 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_CLIENT_LOG,
     RUNTIME_SHARE_IMAGE_EXPORTS,
+    // Retain ownership for queued operations and legacy data during the non-destructive upgrade.
+    RuntimeStoragePathDefinition::tree("runtime/extensions/skills", RuntimeStorageOwnership::Space),
+    RuntimeStoragePathDefinition::tree("runtime/extensions/packages", RuntimeStorageOwnership::Space),
+    RuntimeStoragePathDefinition::tree("runtime/extensions/plugins/configs", RuntimeStorageOwnership::Space),
+    RuntimeStoragePathDefinition::tree("runtime/extensions/plugins/data", RuntimeStorageOwnership::Space),
     EXTENSIONS_SPACE,
     EXTENSIONS_DEVICE,
     EXTENSIONS_SKILLS,
@@ -497,6 +502,14 @@ mod tests {
             runtimeStorageOwnership(RUNTIME_CLIENT_LOG_PATH).unwrap(),
             RuntimeStorageOwnership::CoreNode
         );
+    }
+
+    #[test]
+    fn extension_scopes_keep_device_data_local_and_space_data_shared() {
+        for relative in ["packages/demo.js", "skills/demo/SKILL.md", "records/skill-demo.json", "settings/skill-demo.preferences.json", "plugins/configs/demo/env.json"] {
+            assert_eq!(runtimeStorageOwnership(&format!("runtime/extensions/device/{relative}")).unwrap(), RuntimeStorageOwnership::CoreNode);
+            assert_eq!(runtimeStorageOwnership(&format!("runtime/extensions/space/{relative}")).unwrap(), RuntimeStorageOwnership::Space);
+        }
     }
 
     /// Verifies undeclared and structurally invalid paths are rejected.

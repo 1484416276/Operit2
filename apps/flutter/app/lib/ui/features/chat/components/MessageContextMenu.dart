@@ -224,6 +224,13 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       ),
     ];
     if (message.sender == 'user') {
+      items.add(
+        _menuItem(
+          value: _MessageMenuAction.queueMemory,
+          icon: Icons.psychology_outlined,
+          label: '加入记忆队列',
+        ),
+      );
       items.addAll(<PopupMenuEntry<_MessageMenuSelection>>[
         _menuItem(
           value: _MessageMenuAction.editAndResend,
@@ -367,6 +374,24 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
         break;
       case _MessageMenuAction.editAndResend:
         widget.onSelectMessageToEdit?.call(widget.message);
+        break;
+      case _MessageMenuAction.queueMemory:
+        try {
+          await widget.clients.chatRuntimeHolderMain
+              .enqueueSelectedMessagesForMemory(
+                chatId: widget.chatId,
+                messageTimestamps: [widget.message.timestamp],
+              );
+          if (mounted)
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('已加入所属记忆库队列')));
+        } catch (error) {
+          if (mounted)
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('入队失败：$error')));
+        }
         break;
       case _MessageMenuAction.modifyMemory:
         widget.onSelectMessageToEdit?.call(widget.message);
@@ -563,69 +588,75 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
                 ? const EdgeInsets.symmetric(horizontal: 40, vertical: 24)
                 : EdgeInsets.zero,
             title: Text(l10n?.chatMessageInfoDialogTitle ?? '消息信息'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                l10n?.chatMessageSender(message.sender) ??
-                    '发送者: ${message.sender}',
-              ),
-              Text(
-                l10n?.chatMessageTimestamp(message.timestamp.toString()) ??
-                    '时间戳: ${message.timestamp}',
-              ),
-              if (message.roleName.isNotEmpty)
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
                 Text(
-                  l10n?.chatMessageRole(message.roleName) ??
-                      '角色: ${message.roleName}',
+                  l10n?.chatMessageSender(message.sender) ??
+                      '发送者: ${message.sender}',
                 ),
-              if (message.modelName.isNotEmpty)
                 Text(
-                  l10n?.chatMessageModel(message.modelName) ??
-                      '模型: ${message.modelName}',
+                  l10n?.chatMessageTimestamp(message.timestamp.toString()) ??
+                      '时间戳: ${message.timestamp}',
                 ),
-              if (message.provider.isNotEmpty)
+                if (message.roleName.isNotEmpty)
+                  Text(
+                    l10n?.chatMessageRole(message.roleName) ??
+                        '角色: ${message.roleName}',
+                  ),
+                if (message.modelName.isNotEmpty)
+                  Text(
+                    l10n?.chatMessageModel(message.modelName) ??
+                        '模型: ${message.modelName}',
+                  ),
+                if (message.provider.isNotEmpty)
+                  Text(
+                    l10n?.chatMessageProvider(message.provider) ??
+                        '提供商: ${message.provider}',
+                  ),
                 Text(
-                  l10n?.chatMessageProvider(message.provider) ??
-                      '提供商: ${message.provider}',
+                  l10n?.chatMessageTokensInput(
+                        message.inputTokens.toString(),
+                      ) ??
+                      '输入 token: ${message.inputTokens}',
                 ),
-              Text(
-                l10n?.chatMessageTokensInput(message.inputTokens.toString()) ??
-                    '输入 token: ${message.inputTokens}',
-              ),
-              Text(
-                l10n?.chatMessageTokensCached(
-                      message.cachedInputTokens.toString(),
-                    ) ??
-                    '缓存输入 token: ${message.cachedInputTokens}',
-              ),
-              Text(
-                l10n?.chatMessageCacheHitRate(formatCacheHitRate(message)) ??
-                    '缓存命中率: ${formatCacheHitRate(message)}',
-              ),
-              Text(
-                l10n?.chatMessageTokensOutput(message.outputTokens.toString()) ??
-                    '输出 token: ${message.outputTokens}',
-              ),
-              if (formatTokenSpeed(message).isNotEmpty)
                 Text(
-                  l10n?.chatMessageTokenSpeed(formatTokenSpeed(message)) ??
-                      'Token 速率: ${formatTokenSpeed(message)}',
+                  l10n?.chatMessageTokensCached(
+                        message.cachedInputTokens.toString(),
+                      ) ??
+                      '缓存输入 token: ${message.cachedInputTokens}',
                 ),
-              Text(
-                l10n?.chatMessageWaitDuration('${message.waitDurationMs}ms') ??
-                    '等待耗时: ${message.waitDurationMs}ms',
-              ),
-              Text(
-                l10n?.chatMessageOutputDuration(
-                      '${message.outputDurationMs}ms',
-                    ) ??
-                    '输出耗时: ${message.outputDurationMs}ms',
-              ),
-            ],
-          ),
-          actions: <Widget>[
+                Text(
+                  l10n?.chatMessageCacheHitRate(formatCacheHitRate(message)) ??
+                      '缓存命中率: ${formatCacheHitRate(message)}',
+                ),
+                Text(
+                  l10n?.chatMessageTokensOutput(
+                        message.outputTokens.toString(),
+                      ) ??
+                      '输出 token: ${message.outputTokens}',
+                ),
+                if (formatTokenSpeed(message).isNotEmpty)
+                  Text(
+                    l10n?.chatMessageTokenSpeed(formatTokenSpeed(message)) ??
+                        'Token 速率: ${formatTokenSpeed(message)}',
+                  ),
+                Text(
+                  l10n?.chatMessageWaitDuration(
+                        '${message.waitDurationMs}ms',
+                      ) ??
+                      '等待耗时: ${message.waitDurationMs}ms',
+                ),
+                Text(
+                  l10n?.chatMessageOutputDuration(
+                        '${message.outputDurationMs}ms',
+                      ) ??
+                      '输出耗时: ${message.outputDurationMs}ms',
+                ),
+              ],
+            ),
+            actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: Text(l10n?.ok ?? '确定'),
@@ -642,6 +673,7 @@ enum _MessageMenuAction {
   copy,
   editAndResend,
   modifyMemory,
+  queueMemory,
   rollback,
   regenerate,
   deleteVariant,

@@ -289,6 +289,12 @@ impl MCPLocalServer {
         self.readMCPConfig().ok()?.mcpServers.get(serverId).cloned()
     }
 
+    /// Reads definitions without treating corrupted data as a request to remove every server.
+    #[allow(non_snake_case)]
+    pub fn getAllMCPServersChecked(&self) -> Result<BTreeMap<String, ServerConfig>, String> {
+        Ok(self.readMCPConfig()?.mcpServers)
+    }
+
     /// Returns every configured MCP server keyed by server id.
     #[allow(non_snake_case)]
     pub fn getAllMCPServers(&self) -> BTreeMap<String, ServerConfig> {

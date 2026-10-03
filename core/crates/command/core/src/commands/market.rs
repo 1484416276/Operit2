@@ -1160,116 +1160,48 @@ fn current_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
 
     use operit_host_api::HostManager::{setDefaultHttpHost, HostManager};
     use operit_host_api::{
-        HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData, RuntimeStorageEntry,
-        RuntimeStorageHost,
+        HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData,
+        HttpStreamChunkCallback, HttpStreamClosedCallback, HttpStreamHost,
+        HttpStreamOpenedCallback,
     };
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_scheduler::{
+        NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost,
+    };
+    use operit_host_native_storage::NativeRuntimeStorageHost;
 
-    #[derive(Clone)]
-    struct MemoryStorageHost {
-        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-        runtime_root: PathBuf,
-        workspace_root: PathBuf,
+    /// Returns one process-wide temporary root so global runtime defaults stay consistent while
+    /// the market tests run in parallel.
+    fn market_test_root() -> PathBuf {
+        static ROOT: OnceLock<PathBuf> = OnceLock::new();
+        ROOT.get_or_init(|| {
+            let root =
+                std::env::temp_dir().join(format!("operit_market_test_{}", current_millis()));
+            std::fs::create_dir_all(root.join("runtime")).expect("create test runtime root");
+            std::fs::create_dir_all(root.join("workspaces")).expect("create test workspace root");
+            root
+        })
+        .clone()
     }
 
-    impl MemoryStorageHost {
-        /// Creates isolated runtime and workspace roots for one market command test.
-        fn new(root: PathBuf) -> Self {
-            let runtime_root = root.join(RUNTIME_ROOT_DIR_PATH);
-            let workspace_root = root.join(WORKSPACE_DIR_PATH);
-            std::fs::create_dir_all(&runtime_root).expect("create test runtime root");
-            std::fs::create_dir_all(&workspace_root).expect("create test workspace root");
-            Self {
-                files: Arc::new(Mutex::new(BTreeMap::new())),
-                runtime_root,
-                workspace_root,
-            }
-        }
-    }
-
-    impl RuntimeStorageHost for MemoryStorageHost {
-        fn runtimeRootDir(&self) -> Option<PathBuf> {
-            Some(self.runtime_root.clone())
-        }
-
-        fn workspaceRootDir(&self) -> Option<PathBuf> {
-            Some(self.workspace_root.clone())
-        }
-
-        fn readBytes(&self, path: &str) -> HostResult<Vec<u8>> {
-            let files = self
-                .files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?;
-            files
-                .get(path)
-                .cloned()
-                .ok_or_else(|| HostError::new(format!("missing runtime storage file: {path}")))
-        }
-
-        fn writeBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-            let mut files = self
-                .files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?;
-            files.insert(path.to_string(), content.to_vec());
-            Ok(())
-        }
-
-        /// Appends bytes to one market-command test storage entry.
-        fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
-            self.files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?
-                .entry(path.to_string())
-                .or_default()
-                .extend_from_slice(content);
-            Ok(())
-        }
-
-        fn delete(&self, path: &str, _recursive: bool) -> HostResult<()> {
-            let mut files = self
-                .files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?;
-            files.remove(path);
-            Ok(())
-        }
-
-        fn exists(&self, path: &str) -> HostResult<bool> {
-            let files = self
-                .files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?;
-            Ok(files.contains_key(path))
-        }
-
-        fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
-            let files = self
-                .files
-                .lock()
-                .map_err(|error| HostError::new(error.to_string()))?;
-            Ok(files
-                .iter()
-                .filter(|(path, _)| path.starts_with(prefix))
-                .map(|(path, content)| RuntimeStorageEntry {
-                    path: path.clone(),
-                    isDirectory: false,
-                    size: content.len() as i64,
-                })
-                .collect())
-        }
-    }
-
-    /// Creates an application configured with isolated runtime storage for market commands.
+    /// Creates an application with native test hosts rooted in the shared temporary directory.
     fn market_test_application(root: PathBuf) -> OperitApplication {
-        let storage_host = Arc::new(MemoryStorageHost::new(root));
-        let mut host_manager = HostManager::new();
-        host_manager.runtimeStorageHost = Some(storage_host);
+        let runtime_root = root.join("runtime");
+        let workspace_root = root.join("workspaces");
+        let storage_host = Arc::new(NativeRuntimeStorageHost::new(runtime_root, workspace_root));
+        let mut host_manager =
+            HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+        host_manager.hostJavaScriptRuntimeHost =
+            Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+        host_manager.hostRuntimeTaskSchedulerHost =
+            Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+        host_manager.runtimeStorageHost = Some(storage_host.clone());
+        host_manager.runtimeSqliteHost = Some(storage_host);
         OperitApplication::newWithContext(host_manager)
     }
 
@@ -1298,6 +1230,29 @@ mod tests {
     }
 
     struct ReqwestTestHttpHost;
+
+    impl HttpStreamHost for ReqwestTestHttpHost {
+        /// Market command tests only exercise buffered requests, not streaming responses.
+        fn openHttpByteStream(
+            &self,
+            _streamId: String,
+            _request: HttpRequestData,
+            _onOpened: HttpStreamOpenedCallback,
+            _onChunk: HttpStreamChunkCallback,
+            _onClosed: HttpStreamClosedCallback,
+        ) -> HostResult<()> {
+            Err(HostError::new(
+                "market test HTTP byte streams are not configured",
+            ))
+        }
+
+        /// No streaming request is opened by these tests, so there is no stream to close.
+        fn closeHttpByteStream(&self, _streamId: &str) -> HostResult<()> {
+            Err(HostError::new(
+                "market test HTTP byte stream close is not configured",
+            ))
+        }
+    }
 
     impl HttpHost for ReqwestTestHttpHost {
         /// Declares the image delivery supported by this HTTP host.
@@ -1372,10 +1327,12 @@ mod tests {
     }
 
     fn run_market_cli(args: &[&str]) {
-        let mut root = std::env::temp_dir();
-        root.push(format!("operit_market_test_{}", current_millis()));
-        std::fs::create_dir_all(&root).expect("create test runtime root");
-        let application = market_test_application(root);
+        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("market test lock must not be poisoned");
+        let application = market_test_application(market_test_root());
         let mut out = CoreCommandOutput::new();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         // Tests that parsing does not panic; network/IO errors are OK at this level.

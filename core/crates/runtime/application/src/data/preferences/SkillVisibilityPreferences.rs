@@ -20,12 +20,9 @@ impl SkillVisibilityPreferences {
     /// Reads the installed skill's explicitly stored AI visibility.
     #[allow(non_snake_case)]
     pub fn isSkillVisibleToAi(&self, skillName: &str) -> bool {
-        let record = ExtensionStore::default()
-            .record("skill", skillName)
-            .expect("A scanned skill must have a readable ownership record");
-        record.settings["visible"]
-            .as_bool()
-            .expect("Registered skill visibility must be a boolean")
+        // A concurrent removal/conflict must not panic while AI enumerates tools.
+        ExtensionStore::default().record("skill", skillName)
+            .ok().and_then(|record| record.settings["visible"].as_bool()).unwrap_or(false)
     }
 
     /// Persists AI visibility through the skill's exact owning storage contract.

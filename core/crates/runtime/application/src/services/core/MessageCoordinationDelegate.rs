@@ -819,7 +819,10 @@ impl MessageCoordinationDelegate {
                 attachments,
                 replyToMessage,
                 enableThinking,
-                enableMemoryAutoUpdate: false,
+                enableMemoryAutoUpdate: turnOptions.persistTurn
+                    && proxySenderNameOverride.as_ref().map(|s|s.trim().is_empty()).unwrap_or(true)
+                    && ApiPreferences::getInstance().enableMemoryAutoUpdateFlow().first()
+                        .expect("memory auto-update preference must be readable"),
                 maxTokens: 0,
                 tokenUsageThreshold: 0.0,
                 chatProviderIdOverride,
@@ -895,29 +898,9 @@ impl MessageCoordinationDelegate {
         &self,
         currentChat: Option<&operit_model::ChatHistory::ChatHistory>,
     ) -> Result<String, operit_store::PreferencesDataStore::PreferencesDataStoreError> {
-        if let Some(chat) = currentChat {
-            let hasGroupBinding = chat
-                .characterGroupId
-                .as_ref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false);
-            if !hasGroupBinding {
-                if let Some(characterCardName) = chat
-                    .characterCardName
-                    .as_ref()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    if let Some(card) = self
-                        .characterCardManager
-                        .findCharacterCardByName(&characterCardName)?
-                    {
-                        return Ok(card.id);
-                    }
-                }
-            }
-        }
-        ActivePromptManager::getInstance().resolveActiveCardIdForSend()
+        crate::services::core::ChatMemoryOwnerResolver::resolveRoleCardId(
+            currentChat, &self.characterCardManager,
+        )
     }
 
     /// Triggers a manual memory update for a chat.

@@ -116,6 +116,73 @@ impl RuntimeFileSyncStore {
         Ok(())
     }
 
+    /// Tracks VFS mutations using declared storage ownership, without knowledge of file consumers.
+    /// Capturing before the operation preserves tombstones for recursive deletion and moves.
+    pub fn trackChanges<T>(
+        &self,
+        paths: &[String],
+        change: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let before = self.captureFiles(paths)?;
+        let result = change();
+        let after = self.captureFiles(paths)?;
+        // Publish partial changes too: a host may fail after modifying part of a directory.
+        for (path, bytes) in &after {
+            if before.get(path) != Some(bytes) {
+                self.writeBytes(path, bytes)?;
+            }
+        }
+        for path in before.keys().filter(|path| !after.contains_key(*path)) {
+            self.delete(path)?;
+        }
+        result
+    }
+
+    fn captureFiles(
+        &self,
+        paths: &[String],
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        let mut files = std::collections::BTreeMap::new();
+        for path in paths {
+            self.capturePath(path, &mut files)?;
+        }
+        Ok(files)
+    }
+
+    fn capturePath(
+        &self,
+        path: &str,
+        files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), String> {
+        if !self.storageHost.exists(path).map_err(|e| e.to_string())? {
+            return Ok(());
+        }
+        let parent = path.rsplit_once('/').ok_or("Invalid runtime file path")?.0;
+        let entry = self
+            .storageHost
+            .list(parent)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|entry| entry.path == path)
+            .ok_or("Missing runtime file entry")?;
+        if entry.isDirectory {
+            for child in self.storageHost.list(path).map_err(|e| e.to_string())? {
+                if !child.path.starts_with(&format!("{path}/")) {
+                    return Err("Storage entry escaped directory".into());
+                }
+                self.capturePath(&child.path, files)?;
+            }
+        } else if runtimeStorageOwnership(path) == Ok(RuntimeStorageOwnership::Space) {
+            files.insert(
+                path.to_string(),
+                self.storageHost
+                    .readBytes(path)
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        Ok(())
+    }
+
     /// Applies one validated runtime file operation without recording another local mutation.
     #[allow(non_snake_case)]
     pub fn applySyncedOperation(

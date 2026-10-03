@@ -1,9 +1,11 @@
+import type { LiveControl } from "./live-control";
 import { StudioService, type StudioStore } from "../src/service";
 import type { Request, Snapshot, Project } from "../src/shared/model";
 declare global {
   interface Window {
+    musicStudioControl?: LiveControl;
     MusicHost?: { request(request: Request): Promise<unknown>; saveFile(name: string, base64: string): Promise<string> };
-    __musicTest?: { project(): Project; snapshot(): Promise<Snapshot>; request(request: Request): Promise<unknown>; render(includeAudio?: boolean): Promise<{ peak: number; bytes: number; dropped: number; audio?: string }>; play(): Promise<void>; stop(): void; state(): unknown };
+    __musicTest?: { audition(): unknown; navigation(): unknown; editor(): unknown; project(): Project; snapshot(): Promise<Snapshot>; request(request: Request): Promise<unknown>; render(includeAudio?: boolean): Promise<{ peak: number; bytes: number; dropped: number; audio?: string }>; play(): Promise<void>; stop(): void; state(): unknown };
   }
 }
 const KEY = "operit.music.studio.preview.v1";

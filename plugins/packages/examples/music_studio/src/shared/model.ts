@@ -5,6 +5,12 @@ export interface Synth {
   engine: Engine; wave: Wave; waveB: Wave; blend: number; detune: number; unison: number;
   attack: number; decay: number; sustain: number; release: number; cutoff: number; resonance: number;
   fmRatio: number; fmDepth: number; brightness: number;
+  /** A uses unison/detune/width; B has independent voices, tuning and stereo spread. */
+  unisonB: number; detuneB: number; widthB: number;
+  oscBOctave: number; oscBSemitone: number; oscBFine: number;
+  subLevel: number; subOctave: number; noiseLevel: number; phase: number; phaseRandom: number;
+  /** Signed ms: positive delays R, negative delays L. Zero bypasses Haas. */
+  haasMs: number; haasMix: number; bassMono: number;
   width: number; filterEnv: number; lfoRate: number; lfoDepth: number; pitchSweep: number;
 }
 export type EffectType = "eq" | "filter" | "drive" | "chorus" | "delay" | "reverb" | "compressor";

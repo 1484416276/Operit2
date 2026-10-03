@@ -1,8 +1,16 @@
 import { type Synth, type Preset, type Track, type Effect, COLORS, uid, copy } from "./model";
-const base: Synth = { engine: "spectral", wave: "sawtooth", waveB: "triangle", blend: 0.25, detune: 12, unison: 2, attack: 0.008, decay: 0.22, sustain: 0.6, release: 0.3, cutoff: 6500, resonance: 0.7, fmRatio: 2, fmDepth: 2, brightness: 0.65, width: 0.65, filterEnv: 0, lfoRate: 0, lfoDepth: 0, pitchSweep: 0 };
-function preset(id: string, name: string, category: string, description: string, options: Partial<Synth>): Preset { return { id, name, category, description, synth: { ...base, ...options } }; }
+const base: Synth = { engine: "spectral", wave: "sawtooth", waveB: "triangle", blend: 0.25, detune: 12, unison: 2, attack: 0.008, decay: 0.22, sustain: 0.6, release: 0.3, cutoff: 6500, resonance: 0.7, fmRatio: 2, fmDepth: 2, brightness: 0.65, width: 0.65, filterEnv: 0, lfoRate: 0, lfoDepth: 0, pitchSweep: 0, unisonB: 2, detuneB: 10.44, widthB: 0.65, oscBOctave: 0, oscBSemitone: 0, oscBFine: 3, subLevel: 0, subOctave: -1, noiseLevel: 0, phase: 0, phaseRandom: 1, haasMs: 0, haasMix: 1, bassMono: 0 };
+function preset(id: string, name: string, category: string, description: string, options: Partial<Synth>): Preset {
+  const a = { ...base, ...options };
+  return { id, name, category, description, synth: { ...a,
+    unisonB: options.unisonB ?? a.unison, detuneB: options.detuneB ?? a.detune * .87,
+    widthB: options.widthB ?? a.width, oscBOctave: options.oscBOctave ?? (a.engine === "ensemble" ? 1 : 0),
+    oscBFine: options.oscBFine ?? (a.detune > 0 ? 3 : 0) } };
+}
 /** Original oscillator patches. No bundled recordings, SoundFonts, or third-party presets. */
 export const PRESETS: Preset[] = [
+  preset("thick-reese", "Reese / 厚低音叠层", "Bass", "独立双锯齿叠层 + 居中 Sub + 低频收窄", { wave: "sawtooth", waveB: "sawtooth", blend: .45, unison: 5, unisonB: 4, detune: 22, detuneB: 15, width: .8, widthB: .65, oscBFine: -7, subLevel: .45, phaseRandom: .6, bassMono: 150, cutoff: 1600, attack: .005, decay: .25, sustain: .75, release: .14 }),
+  preset("haas-bass", "Haas / 宽中频低音", "Bass", "右侧 12ms 延迟、单声道 Sub；折叠单声道时请检查相位", { wave: "sawtooth", waveB: "square", blend: .28, unison: 3, unisonB: 2, detune: 14, detuneB: 8, subLevel: .4, bassMono: 180, haasMs: 12, haasMix: 1, cutoff: 2400, attack: .004, sustain: .65, release: .12 }),
   preset("neon-lead", "Neon / 霓虹主奏", "Lead", "双振荡器失谐主奏", { wave: "sawtooth", waveB: "square", cutoff: 4200, sustain: 0.4 }),
   preset("glass-pluck", "Glass / 玻璃拨弦", "Keys", "加法谐波 + 短包络", { wave: "glass", waveB: "sine", attack: 0.002, decay: 0.38, sustain: 0.05, release: 0.22, unison: 1 }),
   preset("acid-bass", "Acid / 酸性贝斯", "Bass", "共振低通锯齿贝斯", { wave: "sawtooth", waveB: "square", cutoff: 750, resonance: 5, attack: 0.003, decay: 0.18, sustain: 0.2, release: 0.09, unison: 1 }),
@@ -25,8 +33,8 @@ export const PRESETS: Preset[] = [
   preset("titan-sub", "Titan / 单声道低频", "Bass", "无失谐居中正弦与弱三角谐波，保证低频相容", { wave: "sine", waveB: "triangle", blend: 0.13, unison: 1, detune: 0, width: 0, attack: 0.008, decay: 0.07, sustain: 0.94, release: 0.08, cutoff: 220 }),
   preset("fault-bass", "Fault / 断层咆哮", "Bass", "FM + 低通调制，点缀式 dubstep 重音", { engine: "fm", unison: 1, attack: 0.007, decay: 0.34, sustain: 0.45, release: 0.09, cutoff: 700, resonance: 2.2, fmRatio: 1, fmDepth: 4.5, filterEnv: 2, lfoRate: 6.25, lfoDepth: 1.4, width: 0 }),
   preset("horizon-reese", "Horizon / 宽频低音层", "Bass", "上层中低频失谐，需与居中 sub 分频搭配", { wave: "sawtooth", waveB: "square", blend: 0.24, unison: 2, detune: 14, width: 0.45, attack: 0.009, decay: 0.12, sustain: 0.6, release: 0.1, cutoff: 1200, filterEnv: 0.8 }),
-  preset("aether-air", "Aether / 空气与风", "Texture", "实时立体声噪声与谐波气流，无录音素材", { engine: "atmosphere", unison: 1, attack: 1.8, decay: 1.2, sustain: 0.5, release: 2.3, cutoff: 2800, resonance: 0.6, brightness: 0.5, width: 0.9, lfoRate: 0.17, lfoDepth: 0.45 }),
-  preset("ascension-riser", "Ascension / 升空", "Texture", "噪声渐开与上行音高，适用于 build-up", { engine: "atmosphere", unison: 1, attack: 3, decay: 0.2, sustain: 0.9, release: 0.2, cutoff: 11000, filterEnv: -6, pitchSweep: 24, brightness: 0.9, width: 1 }),
+  preset("aether-air", "Aether / 空气与风", "Texture", "三段共振气流、缓慢漂移与同调谐波，无录音素材", { engine: "atmosphere", noiseLevel: .7, blend: .12, unison: 1, attack: 1.8, decay: 1.2, sustain: 0.5, release: 2.3, cutoff: 2800, resonance: 0.6, brightness: 0.5, width: 0.9, lfoRate: 0.17, lfoDepth: 0.45 }),
+  preset("ascension-riser", "Ascension / 升空", "Texture", "分频气流渐开与上行谐波，适用于 build-up", { engine: "atmosphere", noiseLevel: .9, blend: .15, unison: 1, attack: 3, decay: 0.2, sustain: 0.9, release: 0.2, cutoff: 11000, filterEnv: -6, pitchSweep: 24, brightness: 0.9, width: 1 }),
   preset("afterglow-pad", "Afterglow / 余晖弦幕", "Texture", "慢包络暖锯齿弦乐与缓慢滤波漂移", { engine: "ensemble", wave: "sawtooth", waveB: "hollow", blend: 0.35, unison: 2, detune: 7, width: 0.9, attack: 0.9, decay: 0.9, sustain: 0.65, release: 1.8, cutoff: 1900, lfoRate: 0.12, lfoDepth: 0.18 }),
   preset("starlight-bell", "Starlight / 星尘", "Keys", "清脆 FM 星铃，适合呼应旋律", { engine: "fm", unison: 1, attack: 0.002, decay: 0.65, sustain: 0.035, release: 0.8, cutoff: 9000, fmRatio: 2, fmDepth: 1.8 }),
   preset("cinematic-kit", "Impact / 电影打击", "Drums", "鼓、通鼓、噪声冲击与金属镲", { engine: "drums", unison: 1, decay: 0.27, brightness: 0.68, release: 0.12 }),

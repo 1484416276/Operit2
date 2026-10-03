@@ -113,6 +113,9 @@ impl Default for LinuxBluetoothHost {
 }
 
 impl BluetoothHost for LinuxBluetoothHost {
+    /// Declares whether this Host implements inbound classic Bluetooth sessions.
+    fn supportsClassicListening(&self) -> bool { true }
+
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         Ok("linux_bluetooth_permission_not_required".to_string())
     }

@@ -284,6 +284,10 @@ impl RuntimePeerService for ApprovalMeshPeer {
     async fn startPairing(&self, _: PeerEndpoint, _: PeerTransport, _: Option<&str>) -> Result<PendingPairing, CoreLinkError> { unreachable!() }
     async fn finishPairing(&self, _: &str, _: &str) -> Result<PairedPeer, CoreLinkError> { unreachable!() }
     async fn cancelPairing(&self, _: &str) -> Result<(), CoreLinkError> { unreachable!() }
+    /// Declares that this routing fixture owns no listener or discovery Host.
+    fn listenerCapabilities(&self) -> operit_peer_link::PeerListenerCapabilities {
+        operit_peer_link::PeerListenerCapabilities { transports: Vec::new(), discoveryAdvertisement: false }
+    }
     async fn startListening(&self, _: &[PeerTransport]) -> Result<(), CoreLinkError> { unreachable!() }
     async fn stop(&self) -> Result<(), CoreLinkError> { self.active.lock().unwrap().clear(); Ok(()) }
     async fn call(&self, node: &str, request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {
@@ -481,4 +485,65 @@ async fn outbound_only_hosts_pair_over_http_and_websocket() {
         serverPeer.stop().await.unwrap();
         result.unwrap();
     }
+}
+
+/// Preflights mixed requests atomically and keeps unsupported advertisements independent of TCP.
+#[tokio::test]
+async fn listener_capabilities_validate_all_transports_before_binding() {
+    use operit_link::protocol::LinkDeviceInfo;
+    use crate::HostRuntimePeerService::HostRuntimePeerService;
+    use crate::PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore};
+    use operit_host_api::{HostManager::{HostManager, defaultHostRuntimeTaskSchedulerHost}, HostResult, TcpHost, TcpConnection, TcpListener};
+    use operit_host_native_common::Tcp::NativeTcpHost;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingTcpHost(Arc<AtomicUsize>);
+    #[async_trait::async_trait]
+    impl TcpHost for CountingTcpHost {
+        /// Delegates outgoing connections to the real Host socket provider.
+        async fn connect(&self, address: &str) -> HostResult<Arc<dyn TcpConnection>> {
+            NativeTcpHost.connect(address).await
+        }
+        /// Records every resource acquisition before delegating to real TCP sockets.
+        async fn bind(&self, address: &str) -> HostResult<Arc<dyn TcpListener>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            NativeTcpHost.bind(address).await
+        }
+    }
+
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (router, _) = approvalService("listener-capabilities");
+    let router = Arc::new(router);
+    let binds = Arc::new(AtomicUsize::new(0));
+    let host = Arc::new(HostManager {
+        runtimeStorageHost: Some(router.localCore.runtimeStorageHost()),
+        tcpHost: Some(Arc::new(CountingTcpHost(binds.clone()))),
+        hostRuntimeTaskSchedulerHost: Some(defaultHostRuntimeTaskSchedulerHost()),
+        ..HostManager::default()
+    });
+    let peer = HostRuntimePeerService::new(host, &router, LinkDeviceInfo { platform: "test".into(), model: "test".into() }).unwrap();
+    router.installNodeServices(NodeServices::new(peer.clone())).unwrap();
+    let facade = RuntimeRemoteLinkService::newWithRouter((*router.localCore).clone(), (*router).clone());
+    let capabilities = facade.listenerCapabilities().unwrap();
+    assert_eq!(capabilities.transports, vec![PeerTransport::Tcp]);
+    assert!(!capabilities.discoveryAdvertisement);
+    let store = PeerStateStore::new(router.localCore.runtimeStorageHost());
+    store.saveHostConfig(&PeerHostConfig {
+        bindAddress: "127.0.0.1:0".into(), token: "capability-test-token".into(),
+        transports: vec![PeerTransport::Tcp, PeerTransport::Http], discoveryEnabled: true,
+        portMode: PeerHostPortMode::Automatic, updatedAt: 1,
+    }).unwrap();
+    for unsupported in [PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Serial, PeerTransport::Bluetooth] {
+        let error = peer.startListening(&[PeerTransport::Tcp, unsupported]).await.unwrap_err();
+        assert_eq!(error.message, format!("Host does not support {unsupported:?} peer listeners"));
+        assert_eq!(binds.load(Ordering::SeqCst), 0);
+        assert_eq!(store.hostConfig().unwrap().unwrap().bindAddress, "127.0.0.1:0");
+    }
+    peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    assert_eq!(binds.load(Ordering::SeqCst), 1);
+    let config = store.hostConfig().unwrap().unwrap();
+    assert!(config.discoveryEnabled);
+    assert_eq!(config.transports, vec![PeerTransport::Tcp, PeerTransport::Http]);
+    peer.stop().await.unwrap();
 }

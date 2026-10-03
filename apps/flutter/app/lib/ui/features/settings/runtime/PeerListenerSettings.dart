@@ -31,6 +31,7 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
   final _address = TextEditingController();
   final _token = TextEditingController();
   Set<PeerTransport> _transports = {};
+  PeerListenerCapabilities? _capabilities;
   PeerHostPortMode? _portMode;
   bool _discoverable = false;
   bool _busy = true;
@@ -97,8 +98,11 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       if (config == null) {
         throw StateError('Runtime listener preferences were not initialized');
       }
+      final capabilities = await widget.clients.server.runtimeRemoteLinkService
+          .listenerCapabilities();
       if (!mounted) return;
       setState(() {
+        _capabilities = capabilities;
         _updateFields(config);
         _loaded = true;
       });
@@ -114,14 +118,17 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     final l10n = AppLocalizations.of(context)!;
     final discoverable = discovery ?? _discoverable;
     final appliedToken = _token.text.trim();
-    if (_transports.isEmpty && discoverable) {
+    final activeTransports = _transports.where(_supports).toList();
+    final activeDiscovery =
+        discoverable && _capabilities!.discoveryAdvertisement;
+    if (activeTransports.isEmpty && activeDiscovery) {
       setState(() => _error = l10n.settingsPeerDiscoveryNeedsTransport);
       return;
     }
     // TCP and the shared HTTP/WS server currently bind the same configured port.
-    if (_transports.contains(PeerTransport.tcp) &&
-        (_transports.contains(PeerTransport.http) ||
-            _transports.contains(PeerTransport.webSocket))) {
+    if (activeTransports.contains(PeerTransport.tcp) &&
+        (activeTransports.contains(PeerTransport.http) ||
+            activeTransports.contains(PeerTransport.webSocket))) {
       setState(() => _error = l10n.settingsPeerPortConflict);
       return;
     }
@@ -151,8 +158,8 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       await service.stopListening();
       await service.saveLocalHostConfig(config: config);
       if (mounted) setState(() => _updateFields(config));
-      if (config.transports.isNotEmpty) {
-        await service.startListening(transports: config.transports);
+      if (activeTransports.isNotEmpty) {
+        await service.startListening(transports: activeTransports);
       }
       final applied = await service.localHostConfig();
       if (applied == null) {
@@ -182,6 +189,12 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
     _discoverable = config.discoveryEnabled;
   }
 
+  /// Checks one inbound transport against the loaded Host capability declaration.
+  bool _supports(PeerTransport transport) {
+    final capabilities = _capabilities;
+    return capabilities != null && capabilities.transports.contains(transport);
+  }
+
   /// Builds authentication controls and the explicit listener settings form.
   @override
   Widget build(BuildContext context) {
@@ -195,9 +208,15 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
           dense: true,
           visualDensity: VisualDensity.compact,
           title: Text(l10n.settingsRuntimeEnableDiscovery),
-          subtitle: Text(l10n.settingsRuntimeEnableDiscoveryDescription),
-          value: _discoverable,
-          onChanged: enabled ? (value) => _apply(discovery: value) : null,
+          subtitle: Text(
+            _loaded && !_capabilities!.discoveryAdvertisement
+                ? l10n.settingsPeerDiscoveryUnavailable
+                : l10n.settingsRuntimeEnableDiscoveryDescription,
+          ),
+          value: _discoverable && _capabilities?.discoveryAdvertisement == true,
+          onChanged: enabled && _capabilities!.discoveryAdvertisement
+              ? (value) => _apply(discovery: value)
+              : null,
         ),
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 4),
@@ -256,14 +275,20 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
                       for (final entry in {
                         PeerTransport.tcp: 'TCP',
                         PeerTransport.bluetooth: 'Bluetooth',
+                        PeerTransport.serial: 'Serial',
                         PeerTransport.http: 'HTTP',
                         PeerTransport.webSocket: 'WebSocket',
                       }.entries)
                         FilterChip(
                           visualDensity: VisualDensity.compact,
                           label: Text(entry.value),
+                          tooltip: _supports(entry.key)
+                              ? null
+                              : l10n.settingsPeerTransportUnavailable(
+                                  entry.value,
+                                ),
                           selected: _transports.contains(entry.key),
-                          onSelected: enabled
+                          onSelected: enabled && _supports(entry.key)
                               ? (selected) => setState(() {
                                   if (selected) {
                                     _transports.add(entry.key);

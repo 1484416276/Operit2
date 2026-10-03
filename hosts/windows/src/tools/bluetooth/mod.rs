@@ -96,6 +96,9 @@ impl Default for WindowsBluetoothHost {
 }
 
 impl BluetoothHost for WindowsBluetoothHost {
+    /// Declares whether this Host implements inbound classic Bluetooth sessions.
+    fn supportsClassicListening(&self) -> bool { true }
+
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         Ok("windows_bluetooth_permission_not_required".to_string())
     }

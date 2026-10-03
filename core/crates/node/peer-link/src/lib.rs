@@ -21,6 +21,13 @@ pub enum PeerTransport {
     Bluetooth,
 }
 
+/// Enumerates independently available inbound peer transports and LAN discovery.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerListenerCapabilities {
+    pub transports: Vec<PeerTransport>,
+    pub discoveryAdvertisement: bool,
+}
+
 /// A runtime-supplied identity and transport address (URL, socket address or device address).
 /// The node ID is addressing metadata, never proof of identity or authorization.
 #[derive(Clone, Debug, PartialEq, Eq)]

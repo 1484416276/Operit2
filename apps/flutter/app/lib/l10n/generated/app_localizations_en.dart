@@ -4121,6 +4121,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPeerAdvanced => 'Advanced options';
 
   @override
+  String get settingsPeerDiscoveryUnavailable =>
+      'This Host cannot advertise listeners on the local network. Direct connections remain available for supported transports.';
+
+  @override
+  String settingsPeerTransportUnavailable(String transport) {
+    return '$transport listening is not supported by this Host.';
+  }
+
+  @override
   String get settingsPeerTransportHelp =>
       'Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.';
 

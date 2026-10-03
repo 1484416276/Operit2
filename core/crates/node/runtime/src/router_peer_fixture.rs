@@ -40,6 +40,10 @@ impl RuntimePeerService for TestPeerService {
     async fn startPairing(&self, _: PeerEndpoint, _: PeerTransport, _: Option<&str>) -> Result<PendingPairing, CoreLinkError> { Err(Self::unsupported()) }
     async fn finishPairing(&self, _: &str, _: &str) -> Result<PairedPeer, CoreLinkError> { Err(Self::unsupported()) }
     async fn cancelPairing(&self, _: &str) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
+    /// Declares that this routing fixture owns no listener or discovery Host.
+    fn listenerCapabilities(&self) -> operit_peer_link::PeerListenerCapabilities {
+        operit_peer_link::PeerListenerCapabilities { transports: Vec::new(), discoveryAdvertisement: false }
+    }
     async fn startListening(&self, _: &[PeerTransport]) -> Result<(), CoreLinkError> { Err(Self::unsupported()) }
     async fn stop(&self) -> Result<(), CoreLinkError> { self.close(); Ok(()) }
     async fn call(&self, nextNodeId: &str, request: RoutedCoreRequest<CoreCallRequest>) -> CoreCallResponse {

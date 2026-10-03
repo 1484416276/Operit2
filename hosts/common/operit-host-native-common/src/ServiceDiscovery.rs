@@ -128,6 +128,10 @@ impl Drop for Advertisement {
     fn drop(&mut self) { let _ = self.daemon.unregister(&self.name); }
 }
 impl ServiceDiscoveryHost for ServiceDiscoveryProvider {
+    /// Declares the multicast advertisements implemented by this provider.
+    fn supportsAdvertisement(&self) -> bool { true }
+
+    /// Publishes a Host-owned LAN service advertisement.
     fn advertise(&self, service: ServiceAdvertisement) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
         let daemon = self.daemon.get_or_init(|| ServiceDaemon::new().map_err(|e| e.to_string()))
             .as_ref().map_err(|e| HostError::new(e.clone()))?.clone();

@@ -772,12 +772,13 @@ fn impl_type_name(item_impl: &ItemImpl) -> Option<String> {
         .map(|segment| segment.ident.to_string())
 }
 
+/// Preserves declared availability without excluding portable node DTOs by their crate name.
 fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
     let name = function.sig.ident.to_string();
     let mut args = Vec::new();
     let mut method_error = None::<String>;
     let is_async = function.sig.asyncness.is_some();
-    let mut cfg_attrs = cfg_attrs(function);
+    let cfg_attrs = cfg_attrs(function);
     let doc_lines = doc_lines(function);
     let mut has_receiver = false;
 
@@ -808,13 +809,6 @@ fn scan_method(function: &ImplItemFn, resolver: &TypeResolver) -> SourceMethod {
         method_error = Some("associated function is not an instance method".to_string());
     }
     let (rust_return_type, mut protocol) = scan_return_protocol(&function.sig.output, resolver);
-    if rust_return_type.contains("operit_node_runtime::")
-        || args
-            .iter()
-            .any(|argument| argument.ty.contains("operit_node_runtime::"))
-    {
-        cfg_attrs.push("#[cfg(not(target_arch = \"wasm32\"))]".to_string());
-    }
     let reverse_arguments = args
         .iter()
         .filter_map(|argument| {
@@ -1017,4 +1011,56 @@ fn plain_stream_item_type(ty: &str, resolver: &TypeResolver) -> Option<String> {
 /// Returns the item type for the portable caller-owned reverse stream argument.
 fn reverse_stream_item_type(ty: &str) -> Option<String> {
     single_generic_arg(ty, "operit_util::stream::ReverseStream::ReverseStream").map(str::to_string)
+}
+
+#[cfg(test)]
+mod method_availability_tests {
+    use super::*;
+
+    /// Scans one method using the same portable node DTO imports as the production facade.
+    fn scan_node_method(source: &str) -> SourceMethod {
+        let file = syn::parse_file(
+            "use operit_node_runtime::RuntimeRemoteLinkService::{RuntimeDeviceSpaceDevice, SpaceJoinRequest};
+             use operit_node_runtime::PeerStateStore::PeerHostConfig;",
+        ).unwrap();
+        let types = HashSet::from([
+            "operit_node_runtime::RuntimeRemoteLinkService::RuntimeDeviceSpaceDevice".to_string(),
+            "operit_node_runtime::RuntimeRemoteLinkService::SpaceJoinRequest".to_string(),
+            "operit_node_runtime::PeerStateStore::PeerHostConfig".to_string(),
+        ]);
+        let resolver = TypeResolver::from_file(
+            &file,
+            "operit_node_runtime::RuntimeRemoteLinkService",
+            "operit_node_runtime",
+            types.clone(),
+            types,
+            TypeRegistry::default(),
+        );
+        scan_method(&syn::parse_str::<ImplItemFn>(source).unwrap(), &resolver)
+    }
+
+    /// Keeps synchronous and asynchronous node metadata calls available on every host.
+    #[test]
+    fn node_dto_arguments_and_results_do_not_add_platform_restrictions() {
+        for source in [
+            "pub fn updateCurrentDeviceUserName(&self, userName: String) -> Result<RuntimeDeviceSpaceDevice, String> { unimplemented!() }",
+            "pub fn outgoingDeviceSpaceJoins(&self) -> Result<Vec<SpaceJoinRequest>, String> { unimplemented!() }",
+            "pub async fn incomingDeviceSpaceJoins(&self) -> Result<Vec<SpaceJoinRequest>, String> { unimplemented!() }",
+            "pub fn saveLocalHostConfig(&self, config: PeerHostConfig) -> Result<(), String> { unimplemented!() }",
+        ] {
+            let method = scan_node_method(source);
+            assert!(method.call_protocol().is_some(), "{}", method.name);
+            assert!(method.cfg_attrs.is_empty(), "{}", method.name);
+        }
+    }
+
+    /// Retains only availability conditions explicitly declared on the source method.
+    #[test]
+    fn declared_feature_conditions_are_preserved() {
+        let source = "#[cfg(feature = \"listener\")] pub fn config(&self) -> Result<PeerHostConfig, String> { unimplemented!() }";
+        let method = scan_node_method(source);
+        let declaration = syn::parse_str::<ImplItemFn>(source).unwrap();
+        assert_eq!(method.cfg_attrs, cfg_attrs(&declaration));
+        assert_eq!(method.cfg_attrs.len(), 1);
+    }
 }

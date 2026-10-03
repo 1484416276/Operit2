@@ -34,6 +34,9 @@ impl AppleBluetoothHost {
 }
 
 impl BluetoothHost for AppleBluetoothHost {
+    /// Declares whether this Host implements inbound classic Bluetooth sessions.
+    fn supportsClassicListening(&self) -> bool { false }
+
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         self.execute("request_permission", json!({}))
     }

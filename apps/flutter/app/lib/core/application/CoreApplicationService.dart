@@ -208,8 +208,13 @@ class CoreApplicationService with WidgetsBindingObserver {
       if (config == null) {
         throw StateError('Runtime listener preferences were not initialized');
       }
-      if (config.transports.isNotEmpty) {
-        await peerService.startListening(transports: config.transports);
+      // Activate only configured transports whose inbound Host operation exists.
+      final capabilities = await peerService.listenerCapabilities();
+      final transports = config.transports
+          .where(capabilities.transports.contains)
+          .toList();
+      if (transports.isNotEmpty) {
+        await peerService.startListening(transports: transports);
       }
       await _coreClients.server.runtimeRemoteLinkService.startSpaceSync();
       ClientLogger.i(

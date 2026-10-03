@@ -48,6 +48,9 @@ impl OhosBluetoothHost {
 }
 
 impl BluetoothHost for OhosBluetoothHost {
+    /// Declares whether this Host implements inbound classic Bluetooth sessions.
+    fn supportsClassicListening(&self) -> bool { true }
+
     /// Requests Bluetooth permission through the OpenHarmony owner app.
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         self.execute("request_permission", json!({}))

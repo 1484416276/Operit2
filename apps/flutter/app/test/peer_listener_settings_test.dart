@@ -17,10 +17,16 @@ class TestBridge extends OperitRuntimeBridge {
     'portMode': 'fixed',
     'updatedAt': 1,
   };
+  Map<String, Object?> capabilities = {
+    'transports': ['http', 'webSocket', 'tcp', 'bluetooth'],
+    'discoveryAdvertisement': true,
+  };
+  final startedTransports = <List<Object?>>[];
   final calls = <String>[];
   bool failStart = false;
   String? selectedAddress;
   bool failLoad = false;
+  bool failCapabilities = false;
   bool failSave = false;
   final writes = <Map<String, Object?>>[];
 
@@ -34,6 +40,11 @@ class TestBridge extends OperitRuntimeBridge {
         config!['token'] = 'runtime-rotated-token-${calls.length}';
         writes.add(Map<String, Object?>.from(config!));
         return encodeCoreLink([0, config!['token']]);
+      case 'listenerCapabilities':
+        if (failCapabilities) {
+          throw StateError('Cannot read listener capabilities');
+        }
+        return encodeCoreLink([0, capabilities]);
       case 'localHostConfig':
         if (failLoad) throw StateError('Cannot read listener configuration');
         return encodeCoreLink([0, config]);
@@ -45,6 +56,9 @@ class TestBridge extends OperitRuntimeBridge {
         writes.add(Map<String, Object?>.from(config!));
         return encodeCoreLink([0, null]);
       case 'startListening':
+        startedTransports.add(
+          List<Object?>.from((request.args as Map)['transports'] as List),
+        );
         if (failStart) throw StateError('unsupported transport');
         if (config!['portMode'] == 'automatic' && selectedAddress != null) {
           config!['bindAddress'] = selectedAddress;
@@ -111,7 +125,7 @@ void main() {
     final bridge = TestBridge();
     await mount(tester, bridge);
     expect(find.byType(FilterChip), findsNothing);
-    expect(bridge.calls, ['localHostConfig']);
+    expect(bridge.calls, ['localHostConfig', 'listenerCapabilities']);
     expect(bridge.writes, isEmpty);
     expect(tester.widget<Switch>(find.byType(Switch)).value, true);
     expect(find.text('runtime-owned-token'), findsOneWidget);
@@ -310,12 +324,123 @@ void main() {
     await tester.tap(find.byTooltip('Refresh token'));
     await tester.pumpAndSettle();
     expect(bridge.config!['transports'], ['http', 'webSocket']);
-    expect(bridge.calls, ['localHostConfig', 'refreshLocalPairingToken']);
+    expect(bridge.calls, [
+      'localHostConfig',
+      'listenerCapabilities',
+      'refreshLocalPairingToken',
+    ]);
     expect(
       tester
           .widget<FilterChip>(find.widgetWithText(FilterChip, 'WebSocket'))
           .selected,
       false,
     );
+  });
+
+  /// Allows TCP independently while disabling every unsupported inbound protocol.
+  testWidgets(
+    'TCP-only Host activates only TCP and preserves stored preferences',
+    (tester) async {
+      final bridge = TestBridge()
+        ..capabilities = {
+          'transports': ['tcp'],
+          'discoveryAdvertisement': false,
+        };
+      bridge.config!['transports'] = ['http', 'webSocket', 'tcp'];
+      await mount(tester, bridge);
+      expect(bridge.writes, isEmpty);
+      final discovery = tester.widget<Switch>(find.byType(Switch));
+      expect(discovery.onChanged, isNull);
+      expect(discovery.value, false);
+      await tester.tap(find.text('Advanced options'));
+      await tester.pumpAndSettle();
+      for (final protocol in ['HTTP', 'WebSocket', 'Bluetooth', 'Serial']) {
+        expect(
+          tester
+              .widget<FilterChip>(find.widgetWithText(FilterChip, protocol))
+              .onSelected,
+          isNull,
+        );
+      }
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'TCP'))
+            .onSelected,
+        isNotNull,
+      );
+      await save(tester);
+      expect(bridge.startedTransports, [
+        ['tcp'],
+      ]);
+      expect(bridge.config!['transports'], ['http', 'webSocket', 'tcp']);
+      expect(bridge.config!['discoveryEnabled'], true);
+      expect(find.text('Listener settings applied.'), findsOneWidget);
+    },
+  );
+
+  /// Does not treat HTTP serving as authorization for WS upgrades or LAN discovery.
+  testWidgets('HTTP-only Host disables WS without disabling HTTP', (
+    tester,
+  ) async {
+    final bridge = TestBridge()
+      ..capabilities = {
+        'transports': ['http'],
+        'discoveryAdvertisement': false,
+      };
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'HTTP'))
+          .onSelected,
+      isNotNull,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'WebSocket'))
+          .onSelected,
+      isNull,
+    );
+    await save(tester);
+    expect(bridge.startedTransports, [
+      ['http'],
+    ]);
+    expect(find.text('Listener settings applied.'), findsOneWidget);
+  });
+
+  /// Keeps credentials usable when the Host exposes no inbound transports.
+  testWidgets('client-only Host keeps credentials but opens no listeners', (
+    tester,
+  ) async {
+    final bridge = TestBridge()
+      ..capabilities = {'transports': [], 'discoveryAdvertisement': false};
+    await mount(tester, bridge);
+    await tester.tap(find.byTooltip('Refresh token'));
+    await tester.pumpAndSettle();
+    expect(bridge.config!['token'], startsWith('runtime-rotated-token-'));
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    for (final chip in tester.widgetList<FilterChip>(find.byType(FilterChip))) {
+      expect(chip.onSelected, isNull);
+    }
+    await save(tester);
+    expect(bridge.startedTransports, isEmpty);
+    expect(bridge.config!['transports'], ['http', 'webSocket']);
+  });
+
+  /// Surfaces failed capability reads without inventing transport support.
+  testWidgets('capability query failure disables applying listener settings', (
+    tester,
+  ) async {
+    final bridge = TestBridge()..failCapabilities = true;
+    await mount(tester, bridge);
+    expect(
+      find.textContaining('Cannot read listener capabilities'),
+      findsOneWidget,
+    );
+    expect(tester.widget<Switch>(find.byType(Switch)).onChanged, isNull);
+    expect(bridge.writes, isEmpty);
+    expect(bridge.startedTransports, isEmpty);
   });
 }

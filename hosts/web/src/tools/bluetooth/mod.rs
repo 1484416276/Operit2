@@ -33,6 +33,9 @@ impl WebBluetoothHost {
 }
 
 impl BluetoothHost for WebBluetoothHost {
+    /// Declares whether this Host implements inbound classic Bluetooth sessions.
+    fn supportsClassicListening(&self) -> bool { false }
+
     fn requestBluetoothPermission(&self) -> HostResult<String> {
         js_string(
             call_bluetooth("requestBluetoothPermission", &[])?,

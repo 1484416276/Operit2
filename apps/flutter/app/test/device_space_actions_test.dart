@@ -51,6 +51,14 @@ class DeviceBridge extends JoinBridge {
       case 'cancelPairing':
         calls.add(request.methodName);
         return encodeCoreLink([0, null]);
+      case 'listenerCapabilities':
+        return encodeCoreLink([
+          0,
+          {
+            'transports': ['http', 'webSocket', 'tcp', 'bluetooth'],
+            'discoveryAdvertisement': true,
+          },
+        ]);
       case 'localHostConfig':
         return encodeCoreLink([0, config]);
       case 'saveLocalHostConfig':
@@ -338,7 +346,7 @@ void main() {
       expect(bridge.config!['discoveryEnabled'], true);
       await tester.tap(find.text('高级选项'));
       await tester.pumpAndSettle();
-      expect(find.byType(FilterChip), findsNWidgets(4));
+      expect(find.byType(FilterChip), findsNWidgets(5));
       await dispose(tester, bridge);
     },
   );

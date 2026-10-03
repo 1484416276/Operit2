@@ -4220,7 +4220,8 @@ self.onmessage = (event) => {
         return localInferenceRunner("synthesizeLocalSpeech")(requestJson);
       },
     }),
-    http: registerMainHostModule({
+    // HTTP callbacks and runtime-storage writes belong to the worker that owns the Rust runtime.
+    http: registerWorkerHostModule({
       executeHttpRequest(request: HttpRequest) {
         const xhr = new XMLHttpRequest();
         xhr.open(request.method, request.url, false);

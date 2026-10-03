@@ -29,6 +29,8 @@ pub struct ServiceAdvertisement {
 
 /// Owns service browsers and their operating-system resources.
 pub trait ServiceDiscoveryHost: Send + Sync {
+    /// Declares advertisement support independently of browsing discovered services.
+    fn supportsAdvertisement(&self) -> bool;
     fn advertise(&self, _service: ServiceAdvertisement) -> HostResult<Box<dyn DiscoveryAdvertisement>> {
         Err(crate::HostError::new("Service advertisement is not supported by this Host"))
     }

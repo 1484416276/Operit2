@@ -20,6 +20,10 @@ fn error(e: impl std::fmt::Display) -> HostError {
 }
 #[async_trait]
 impl HttpServerHost for NativeHttpServerHost {
+    /// Declares the WebSocket upgrades supplied by the native HTTP server.
+    fn supportsWebSocketUpgrade(&self) -> bool { true }
+
+    /// Binds the Host-owned HTTP and WebSocket server socket.
     async fn bind(&self, address: &str) -> HostResult<Arc<dyn HttpServerListener>> {
         let listener = TcpListener::bind(address).await.map_err(error)?;
         let address = listener.local_addr().map_err(error)?;

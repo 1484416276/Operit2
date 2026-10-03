@@ -3963,6 +3963,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsPeerAdvanced => '高级选项';
 
   @override
+  String get settingsPeerDiscoveryUnavailable =>
+      '当前 Host 不支持在局域网广播监听服务。支持的协议仍可通过地址直接连接。';
+
+  @override
+  String settingsPeerTransportUnavailable(String transport) {
+    return '当前 Host 不支持 $transport 监听。';
+  }
+
+  @override
   String get settingsPeerTransportHelp =>
       '暴露方式（可多选）。HTTP 和 WebSocket 可共用端口；TCP 暂不能与它们共用端口。蓝牙需要平台支持。关闭发现并取消全部选择可停止监听。修改设置会中断现有连接；仅关闭发现不会关闭直接连接。';
 

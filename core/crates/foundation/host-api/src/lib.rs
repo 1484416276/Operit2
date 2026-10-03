@@ -2386,6 +2386,8 @@ pub struct BluetoothBleNotificationData {
 }
 
 pub trait BluetoothHost: Send + Sync {
+    /// Declares inbound RFCOMM support independently of BLE operations and permissions.
+    fn supportsClassicListening(&self) -> bool;
     fn requestBluetoothPermission(&self) -> HostResult<String>;
     fn bluetoothState(&self) -> HostResult<BluetoothStateData>;
     fn requestEnableBluetooth(&self) -> HostResult<String>;

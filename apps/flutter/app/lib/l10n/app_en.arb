@@ -2161,6 +2161,9 @@
   "settingsPeerPortModeAutomatic": "Automatic port",
 
   "settingsPeerAdvanced": "Advanced options",
+  "settingsPeerDiscoveryUnavailable": "This Host cannot advertise listeners on the local network. Direct connections remain available for supported transports.",
+  "settingsPeerTransportUnavailable": "{transport} listening is not supported by this Host.",
+  "@settingsPeerTransportUnavailable": {"placeholders": {"transport": {"type": "String"}}},
   "settingsPeerTransportHelp": "Listener transports (multiple selections). HTTP and WebSocket can share a port; TCP cannot share that port with them. Bluetooth requires platform support. Clear all selections and disable discovery to stop listening. Changing settings interrupts existing connections. Disabling discovery alone does not stop direct connections.",
   "settingsPeerBindAddress": "Listen address",
   "settingsPeerBindAddressHelp": "Example: 0.0.0.0:37195 for LAN access",

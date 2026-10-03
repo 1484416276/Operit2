@@ -55,5 +55,7 @@ pub trait HttpServerListener: Send + Sync {
 }
 #[async_trait]
 pub trait HttpServerHost: Send + Sync {
+    /// Declares whether this server supplies WebSocket upgrade handles.
+    fn supportsWebSocketUpgrade(&self) -> bool;
     async fn bind(&self, address: &str) -> HostResult<Arc<dyn HttpServerListener>>;
 }

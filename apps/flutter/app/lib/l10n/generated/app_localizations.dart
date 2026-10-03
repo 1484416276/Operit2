@@ -7345,6 +7345,18 @@ abstract class AppLocalizations {
   /// **'Advanced options'**
   String get settingsPeerAdvanced;
 
+  /// No description provided for @settingsPeerDiscoveryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This Host cannot advertise listeners on the local network. Direct connections remain available for supported transports.'**
+  String get settingsPeerDiscoveryUnavailable;
+
+  /// No description provided for @settingsPeerTransportUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'{transport} listening is not supported by this Host.'**
+  String settingsPeerTransportUnavailable(String transport);
+
   /// No description provided for @settingsPeerTransportHelp.
   ///
   /// In en, this message translates to:

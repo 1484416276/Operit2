@@ -12,6 +12,19 @@ pub(crate) fn release_runtime_host() {
 
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 
+/// Reads startup device metadata from the installed host instead of the Rust compilation target.
+pub(crate) fn local_device_info(core: &LocalCoreProxy) -> Result<LinkDeviceInfo, String> {
+    let host = core.hostManager();
+    let system = host.systemOperationHost.as_ref().ok_or_else(|| {
+        "Runtime device information requires a system-operation host".to_string()
+    })?;
+    let device = system.getDeviceInfo().map_err(|error| error.to_string())?;
+    Ok(LinkDeviceInfo {
+        platform: host.hostEnvironment.id.clone(),
+        model: device.model,
+    })
+}
+
 #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 #[derive(Clone)]
 struct FlutterSystemOperationBridge {

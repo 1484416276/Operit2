@@ -308,9 +308,10 @@ impl OperitFlutterBridge {
         let chatRuntimeHolder = core.localApplicationMut().chatRuntimeHolder.clone();
         let runtimeStorageHost = core.runtimeStorageHost();
         let localCore = Arc::new(core);
+        let deviceInfo = PlatformRuntimeFactory::local_device_info(localCore.as_ref())?;
         let coreApplication = CoreApplication::startWithSharedLocalClient(
             localCore.clone(),
-            LinkDeviceInfo::native(),
+            deviceInfo,
         )?;
         operit_util::AppLogger::AppLogger::i(
             "OperitFlutterBridge",

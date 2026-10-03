@@ -54,6 +54,9 @@ pub trait RuntimePeerService: Send + Sync {
     /// 这是本地管理操作，不能仅凭远端传入的配对标识匿名执行。
     async fn cancelPairing(&self, pairingId: &str) -> Result<(), CoreLinkError>;
 
+    /// Reports independent listener and discovery capabilities without opening resources.
+    fn listenerCapabilities(&self) -> operit_peer_link::PeerListenerCapabilities;
+
     /// 启动指定传输的接收服务；内部调用 PeerLink::listen 并管理 accept/receive。
     /// bindAddress、token 和发现选项从 runtime 持有的原配置文件读取，不另建一套默认配置。
     /// 未鉴权连接只能进入 runtime 的匿名配对 Call 白名单；不向应用暴露监听器。

@@ -377,7 +377,19 @@ impl RuntimePeerService for HostRuntimePeerService {
         self.state.store.deleteRecord(RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, id).map_err(error)?;
         self.changed(); Ok(())
     }
+    /// Reports the operation capabilities supplied by this node's actual Host providers.
+    fn listenerCapabilities(&self) -> operit_peer_link::PeerListenerCapabilities {
+        HostPeerLink::listenerCapabilities(&self.state.host)
+    }
+
+    /// Validates every requested transport before opening the selected listeners.
     async fn startListening(&self, transports: &[PeerTransport]) -> Result<(), CoreLinkError> {
+        let capabilities = self.listenerCapabilities();
+        for transport in transports {
+            if !capabilities.transports.contains(transport) {
+                return Err(error(format!("Host does not support {transport:?} peer listeners")));
+            }
+        }
         let _lifecycle = self.state.lifecycle.lock().await;
         use crate::PeerStateStore::PeerHostPortMode;
         let mut config = self.state.store.hostConfig().map_err(error)?.ok_or_else(|| error("Configure bindAddress/token/transports before listening"))?;
@@ -403,7 +415,7 @@ impl RuntimePeerService for HostRuntimePeerService {
                 opened.insert(*transport, listener);
             }
             let mut advertisements = Vec::new();
-            if config.discoveryEnabled && requested.iter().any(|t| isNetworkTransport(*t)) {
+            if config.discoveryEnabled && capabilities.discoveryAdvertisement && requested.iter().any(|t| isNetworkTransport(*t)) {
                 let host = self.state.host.serviceDiscoveryHost.as_ref().ok_or_else(|| error("Discovery enabled but Host not installed"))?;
                 let socket: std::net::SocketAddr = config.bindAddress.parse().map_err(|_| error("Discovery requires a concrete network bindAddress"))?;
                 let properties = [("nodeId".into(), self.state.nodeId.clone()), ("displayName".into(), self.state.info.displayName()),

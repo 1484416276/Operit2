@@ -198,11 +198,13 @@ impl PeerStateStore {
             .map_err(|e| e.to_string())
     }
 
-    /// 在原 identity.preferences.json 上读取/更新展示资料；稳定节点 ID 和未知字段不变。
-    /// replace=false 保留原配置中的设备名；显式改名才使用 replace=true。
+    /// Refreshes the host-owned platform while preserving the configured name and unknown fields.
     pub fn deviceInfo(&self, supplied: LinkDeviceInfo, replace: bool) -> Result<LinkDeviceInfo, String> {
         use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
         use operit_store::PreferencesDataStore::PreferencesDataStoreError;
+        if supplied.platform.trim().is_empty() || supplied.model.trim().is_empty() {
+            return Err("Host device platform and model must not be empty".to_string());
+        }
         let identity = CoreNodeIdentityStore::new(self.storage.clone()).initialize()?;
         self.store(RUNTIME_LINK_ACCESS_IDENTITY_PATH).try_edit_result(|preferences| {
             let key = stringPreferencesKey("record");
@@ -214,18 +216,19 @@ impl PeerStateStore {
             }
             let persisted = record.get("deviceInfo").cloned()
                 .map(serde_json::from_value::<LinkDeviceInfo>).transpose()?;
+            let mut current = supplied.clone();
             if !replace {
-                if let Some(info) = persisted { return Ok(info); }
+                if let Some(info) = persisted { current.model = info.model; }
             }
             let info = record.as_object_mut().ok_or_else(||
                 PreferencesDataStoreError::Message("Node identity is not an object".into()))?
                 .entry("deviceInfo").or_insert_with(|| serde_json::json!({}));
             let object = info.as_object_mut().ok_or_else(||
                 PreferencesDataStoreError::Message("Device info is not an object".into()))?;
-            object.insert("platform".into(), supplied.platform.clone().into());
-            object.insert("model".into(), supplied.model.clone().into());
+            object.insert("platform".into(), current.platform.clone().into());
+            object.insert("model".into(), current.model.clone().into());
             preferences.set(&key, serde_json::to_string(&record)?);
-            Ok::<_, PreferencesDataStoreError>(supplied)
+            Ok::<_, PreferencesDataStoreError>(current)
         }).map_err(|error| error.to_string())
     }
 
@@ -598,6 +601,7 @@ mod tests {
         assert_eq!(before, *storage.0.lock().unwrap());
     }
 
+    /// Updates host-owned platform metadata without replacing the configured name or unknown fields.
     #[test]
     fn original_identity_and_unknown_fields_survive_device_info_updates() {
         let store = PeerStateStore::new(Arc::new(Storage::default()));
@@ -606,7 +610,9 @@ mod tests {
             "deviceInfo": { "platform": "old", "model": "old-name", "extra": 7 }
         }));
         let supplied = LinkDeviceInfo { platform: "new".into(), model: "new-name".into() };
-        assert_eq!(store.deviceInfo(supplied.clone(), false).unwrap().model, "old-name");
+        let initialized = store.deviceInfo(supplied.clone(), false).unwrap();
+        assert_eq!(initialized.model, "old-name");
+        assert_eq!(initialized.platform, "new");
         assert_eq!(store.deviceInfo(supplied, true).unwrap().model, "new-name");
         let records = store.records::<Value>(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap();
         assert_eq!(records["record"]["deviceId"], "stable-node");
@@ -618,6 +624,51 @@ mod tests {
         let before = store.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap().entries();
         assert!(store.deviceInfo(LinkDeviceInfo { platform: "new".into(), model: "name".into() }, true).is_err());
         assert_eq!(before, store.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap().entries());
+    }
+
+    /// Refreshes a previously empty runtime platform without changing identity or the device name.
+    #[test]
+    fn startup_refreshes_platform_without_replacing_persisted_device_name() {
+        let store = PeerStateStore::new(Arc::new(Storage::default()));
+        writeRecord(&store, RUNTIME_LINK_ACCESS_IDENTITY_PATH, "record", serde_json::json!({
+            "deviceId": "stable-node", "future": "preserved",
+            "deviceInfo": { "platform": "", "model": "wasm32", "extra": 7 }
+        }));
+        let supplied = LinkDeviceInfo { platform: "web".into(), model: "Chrome 154".into() };
+        let current = store.deviceInfo(supplied.clone(), false).unwrap();
+        assert_eq!(current.platform, "web");
+        assert_eq!(current.model, "wasm32");
+        let records = store.records::<Value>(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap();
+        assert_eq!(records["record"]["deviceId"], "stable-node");
+        assert_eq!(records["record"]["future"], "preserved");
+        assert_eq!(records["record"]["deviceInfo"]["platform"], "web");
+        assert_eq!(records["record"]["deviceInfo"]["extra"], 7);
+        let before = store.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap().entries();
+        assert_eq!(store.deviceInfo(supplied, false).unwrap(), current);
+        assert_eq!(before, store.preferences(RUNTIME_LINK_ACCESS_IDENTITY_PATH).unwrap().entries());
+    }
+
+    /// Rejects incomplete host metadata before creating or modifying identity preferences.
+    #[test]
+    fn empty_host_device_metadata_never_changes_identity_storage() {
+        let storage = Arc::new(Storage::default());
+        let store = PeerStateStore::new(storage.clone());
+        let invalid = [
+            LinkDeviceInfo { platform: "".into(), model: "wasm32".into() },
+            LinkDeviceInfo { platform: "web".into(), model: " ".into() },
+        ];
+        for supplied in &invalid {
+            assert!(store.deviceInfo(supplied.clone(), false).is_err());
+            assert!(storage.0.lock().unwrap().is_empty());
+        }
+        writeRecord(&store, RUNTIME_LINK_ACCESS_IDENTITY_PATH, "record", serde_json::json!({
+            "deviceId": "stable-node", "deviceInfo": { "platform": "web", "model": "My browser" }
+        }));
+        let before = storage.0.lock().unwrap().clone();
+        for supplied in invalid {
+            assert!(store.deviceInfo(supplied, true).is_err());
+            assert_eq!(before, *storage.0.lock().unwrap());
+        }
     }
 
     /// Verifies first reads initialize listener defaults exactly once through the schema.

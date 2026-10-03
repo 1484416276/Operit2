@@ -211,6 +211,12 @@ impl RuntimeRemoteLinkService {
     pub fn pairingPromptsFlow(&self) -> Result<StateFlow<Vec<crate::NodeServices::PairingPrompt>>, String> {
         self.observePeerState(Self::pairingPrompts)
     }
+    /// Exposes independent listener capabilities from the injected node peer service.
+    pub fn listenerCapabilities(&self) -> Result<operit_peer_link::PeerListenerCapabilities, String> {
+        Ok(self.nodeServices()?.peers().listenerCapabilities())
+    }
+
+    /// Opens only explicitly requested transports after runtime capability validation.
     pub async fn startListening(&self, transports: Vec<operit_peer_link::PeerTransport>) -> Result<(), String> {
         self.nodeServices()?.peers().startListening(&transports).await.map_err(|error| error.to_string())
     }

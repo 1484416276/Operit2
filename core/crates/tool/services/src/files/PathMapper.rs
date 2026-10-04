@@ -607,6 +607,29 @@ mod tests {
     }
 
     #[test]
+    fn clean_on_exit_vfs_path_follows_the_active_identity_root() {
+        for runtimeRoot in [
+            "/Users/test/Library/Containers/app.operit/Data/Library/Application Support/Operit2/runtime data/identities/identity-a",
+            "/Volumes/External Disk/custom runtime/identities/identity-b",
+        ] {
+            let mapper = PathMapper::new(
+                PathBuf::from(runtimeRoot),
+                PathBuf::from("/custom workspaces"),
+            );
+            for relative in ["temp/clean_on_exit", "temp/clean_on_exit/terminal_output.log"] {
+                let vfsPath = format!("/app/data/{relative}");
+                let resolved = mapper.resolve(&vfsPath).unwrap();
+                assert_eq!(resolved.vfsPath, vfsPath);
+                assert_eq!(resolved.physicalPath, format!("{runtimeRoot}/{relative}"));
+            }
+            // Do not make arbitrary host paths valid VFS roots to mask a bad
+            // caller: all operations must retain the existing mapping contract.
+            let hostPath = format!("{runtimeRoot}/temp/clean_on_exit");
+            assert!(mapper.resolve(&hostPath).unwrap_err().contains("Unknown VFS root"));
+        }
+    }
+
+    #[test]
     fn rootListShowsVisibleRootsOnly() {
         let mut expected = vec!["app".to_string()];
         if !mntMountEntries().is_empty() {
@@ -714,7 +737,7 @@ mod tests {
                     .resolve("/sdcard/Download/Operit")
                     .unwrap()
                     .physicalPath,
-                "D:/operit/extensions/plugins/data"
+                "D:/operit/extensions/device/plugins/data"
             );
             assert_eq!(
                 mapper().resolve("/data/local/tmp").unwrap().physicalPath,
@@ -723,7 +746,7 @@ mod tests {
         }
         #[cfg(not(target_os = "android"))]
         {
-            assert_eq!(mapper().resolve("/sdcard/Download/Operit").unwrap().physicalPath, "D:/operit/extensions/plugins/data");
+            assert_eq!(mapper().resolve("/sdcard/Download/Operit").unwrap().physicalPath, "D:/operit/extensions/device/plugins/data");
             assert!(mapper().resolve("/data/local/tmp").is_err());
         }
     }

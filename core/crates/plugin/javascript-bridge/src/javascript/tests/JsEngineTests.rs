@@ -50,6 +50,33 @@ fn newTestJsEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
     super::JsEngine::new(executionHost)
 }
 
+/// Creates a package-bound UI engine for asynchronous cross-runtime IPC tests.
+#[allow(non_snake_case)]
+fn newTestIpcEngine(executionHost: Arc<dyn JsExecutionHost>) -> super::JsEngine {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    super::JsEngine::new_toolpkg_execution_engine(
+        executionHost,
+        ToolPkgExecutionContext {
+            context_key: "toolpkg_compose_dsl:test.package:test".to_string(),
+            container_package_name: "test.package".to_string(),
+            api_version: "2.0.0".to_string(),
+            text_resource_host: Arc::new(StaticToolPkgTextResourceHost {
+                resources: BTreeMap::new(),
+            }),
+        },
+    )
+}
+
+/// Returns the repository root above core/crates/plugin/javascript-bridge.
+#[allow(non_snake_case)]
+fn testRepositoryRoot() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+        .expect("repository root")
+}
+
 /// Creates one ToolPkg registration engine after installing the concrete native Host.
 #[allow(non_snake_case)]
 fn newTestToolPkgRegistrationEngine() -> super::JsEngine {
@@ -160,7 +187,7 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
     fn plugin_config_dir(&self, plugin_id: &str) -> Result<String, String> {
         let safeBaseName = plugin_id.trim().replace(':', "_");
         Ok(format!(
-            "/app/data/extensions/plugins/configs/{safeBaseName}"
+            "/app/data/extensions/device/plugins/configs/{safeBaseName}"
         ))
     }
 
@@ -1003,7 +1030,7 @@ fn runtime_context_with_context_runs_local_main_runner() {
 fn toolpkg_ipc_cross_runtime_dispatch_is_asynchronous() {
     ensure_test_runtime_root();
     let host = Arc::new(TestPluginConfigExecutionHost::default());
-    let engine = newTestJsEngine(host.clone());
+    let engine = newTestIpcEngine(host.clone());
     let script = r#"
         exports.remote_ipc = async function(_params) {
             return await ToolPkg.ipc.call('test.async', { value: 41 });
@@ -1054,7 +1081,7 @@ fn toolpkg_ipc_cross_runtime_dispatch_is_asynchronous() {
 fn runtime_context_cross_runtime_dispatch_is_asynchronous() {
     ensure_test_runtime_root();
     let host = Arc::new(TestPluginConfigExecutionHost::default());
-    let engine = newTestJsEngine(host.clone());
+    let engine = newTestIpcEngine(host.clone());
     let script = r#"
         exports.remote_context = async function(_params) {
             return await withContext('main', { value: 41 }, function() {
@@ -1537,10 +1564,7 @@ fn execute_minified_package_script_with_metadata() {
 fn register_thinking_guidance_toolpkg_main() {
     ensure_test_runtime_root();
     let engine = newTestToolPkgRegistrationEngine();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let scriptPath = repoRoot.join("plugins/packages/buildin/thinking_guidance/dist/main.js");
     let script = std::fs::read_to_string(&scriptPath).expect("thinking_guidance main.js");
     let mut params = testParams();
@@ -1565,10 +1589,7 @@ fn register_thinking_guidance_toolpkg_main() {
 fn register_message_insert_toolpkg_main() {
     ensure_test_runtime_root();
     let engine = newTestToolPkgRegistrationEngine();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let scriptPath = repoRoot.join("plugins/packages/external/message_insert/dist/main.js");
     let script = std::fs::read_to_string(&scriptPath).expect("message_insert main.js");
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
@@ -1616,10 +1637,7 @@ fn register_message_insert_toolpkg_main() {
 #[test]
 fn execute_message_insert_shared_module_loads() {
     ensure_test_runtime_root();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let script = r#"
         exports.load_shared = function() {
@@ -1663,10 +1681,7 @@ fn execute_message_insert_shared_module_loads() {
 #[test]
 fn execute_message_insert_input_menu_hook_from_main_entry() {
     ensure_test_runtime_root();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let script = format!(
         "{}\nTools.Files.exists = function(path) {{ return Promise.resolve({{ path: path, exists: false }}); }};",
@@ -1777,10 +1792,7 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
 #[test]
 fn render_planask_through_async_compose_host() {
     ensure_test_runtime_root();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(4)
-        .unwrap();
+    let root = testRepositoryRoot();
     let dist = root.join("plugins/packages/buildin/plan_mode/dist");
     let script = std::fs::read_to_string(dist.join("ui/planask/index.ui.js")).unwrap();
     let mut resources = BTreeMap::new();
@@ -1946,10 +1958,7 @@ fn compose_timer_state_change_reaches_intermediate_render_after_action_completio
 #[test]
 fn render_message_insert_compose_dsl_screen() {
     ensure_test_runtime_root();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let script = std::fs::read_to_string(distRoot.join("ui/index.ui.js"))
         .expect("message_insert compose screen");
@@ -1985,10 +1994,7 @@ fn render_message_insert_compose_dsl_screen() {
 #[test]
 fn message_insert_compose_master_switch_updates_before_async_persistence() {
     ensure_test_runtime_root();
-    let repoRoot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .expect("repo root");
+    let repoRoot = testRepositoryRoot();
     let distRoot = repoRoot.join("plugins/packages/external/message_insert/dist");
     let script = std::fs::read_to_string(distRoot.join("ui/index.ui.js"))
         .expect("message_insert compose screen");
@@ -2345,11 +2351,11 @@ fn registration_config_context_does_not_leak_into_runtime_execution() {
     ).expect("space registration configuration");
     let output = engine.execute_script_function(
         "exports.read_config = function() { return ToolPkg.getConfigDir(); };",
-        "read_config", &params, &BTreeMap::new(), None, true, 2,
+        "read_config", &params, &BTreeMap::new(), None, true, 2, None,
     ).expect("runtime configuration must use the installed-owner callback")
         .expect("runtime configuration result");
     assert_eq!(serde_json::from_str::<String>(&output).unwrap(),
-        "/app/data/extensions/plugins/configs/first_import");
+        "/app/data/extensions/device/plugins/configs/first_import");
     assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 1);
 }
 
@@ -2439,7 +2445,8 @@ fn native_interface_resolves_plugin_config_dir() {
             return getPluginConfigDir('plugin:name');
         };
     "#;
-    let params = testParams();
+    let mut params = testParams();
+    params.insert("toolPkgId".to_string(), Value::String("test.package".to_string()));
 
     let output = state.execute_script_function_on_current_thread(
         script,
@@ -2454,7 +2461,7 @@ fn native_interface_resolves_plugin_config_dir() {
     let output = expect_js_output(output, "config dir execution");
     let path = serde_json::from_str::<String>(&output).expect("serialized config dir");
 
-    assert_eq!(path, "/app/data/extensions/plugins/configs/plugin_name");
+    assert_eq!(path, "/app/data/extensions/device/plugins/configs/plugin_name");
 }
 
 #[test]

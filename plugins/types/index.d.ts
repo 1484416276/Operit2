@@ -250,6 +250,10 @@ declare global {
     function getCallerCardId(): string | undefined;
 
     const OPERIT_DOWNLOAD_DIR: string;
+    /**
+     * Absolute VFS directory for temporary files removed on exit.
+     * Use with Tools.Files; this is not a physical path for shell commands.
+     */
     const OPERIT_CLEAN_ON_EXIT_DIR: string;
 
     // Utility objects

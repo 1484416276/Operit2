@@ -26,8 +26,7 @@ runtime.
 - `src/core/application/`: `OperitApplication` startup and crate wiring.
 - `src/core/chat/`: AI message manager and message-processing plugins.
 - `src/data/`: runtime-owned preferences, backup, and runtime data services.
-- `src/plugins/`: built-in plugin assets, registry, ToolPkg bridges, toolbox,
-  and workflow lifecycle plugins.
+- `src/plugins/`: built-in plugin assets, registry, ToolPkg bridges, and toolbox.
 - `src/services/`: chat service core, delegates, TTS synthesis/playback, host
   info, host interaction, terminal, workspace orchestration, runtime event
   ingress, and support implementations installed into child crates.

@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/foundation/host-api",
-    "crates/ui",
     "crates/foundation/model",
     "crates/foundation/util",
     "crates/foundation/link",

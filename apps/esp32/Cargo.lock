@@ -1075,7 +1075,6 @@ dependencies = [
  "esp-idf-hal",
  "log",
  "operit-host-api",
- "operit-ui",
  "tokio",
 ]
 
@@ -1106,7 +1105,6 @@ dependencies = [
  "operit-node-edge",
  "operit-node-runtime",
  "operit-peer-link",
- "operit-ui",
  "serde",
  "serde_json",
  "tokio",
@@ -1179,13 +1177,6 @@ dependencies = [
  "async-trait",
  "operit-host-api",
  "operit-link",
- "serde",
-]
-
-[[package]]
-name = "operit-ui"
-version = "0.1.0"
-dependencies = [
  "serde",
 ]
 

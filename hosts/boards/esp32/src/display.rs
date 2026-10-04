@@ -442,26 +442,3 @@ impl FaceCanvas for Esp32Ili9341 {
         Ok(())
     }
 }
-
-impl operit_ui::Canvas for Esp32Ili9341 {
-    fn size(&self) -> (u16, u16) {
-        (self.width, self.height)
-    }
-
-    fn fill(&mut self, color: operit_ui::Color) {
-        FaceCanvas::fill(self, color.0).unwrap_or(());
-    }
-
-    fn fill_rect(&mut self, rect: operit_ui::Rect, color: operit_ui::Color) {
-        let _ = FaceCanvas::fillRect(
-            self,
-            FaceRect {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height,
-            },
-            color.0,
-        );
-    }
-}

@@ -7,10 +7,12 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../screens/QuickPluginCreatorSetupSupport.dart';
 
 class QuickPluginCreatorDialog extends StatefulWidget {
+  /// Creates the requirement dialog for an AI-assisted plugin development draft.
   const QuickPluginCreatorDialog({super.key, required this.clients});
 
   final GeneratedCoreProxyClients clients;
 
+  /// Opens the requirement dialog and returns the confirmed development request.
   static Future<String?> show({
     required BuildContext context,
     required GeneratedCoreProxyClients clients,
@@ -21,6 +23,7 @@ class QuickPluginCreatorDialog extends StatefulWidget {
     );
   }
 
+  /// Creates the state that prepares the bundled authoring resources.
   @override
   State<QuickPluginCreatorDialog> createState() =>
       _QuickPluginCreatorDialogState();
@@ -32,12 +35,14 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
   QuickPluginCreatorSetupResult? _setupResult;
   String? _requirementError;
 
+  /// Releases the requirement input controller.
   @override
   void dispose() {
     _requirementController.dispose();
     super.dispose();
   }
 
+  /// Validates the requirement and prepares verified resources before returning it.
   Future<void> _confirm() async {
     if (_confirmRunning) {
       return;
@@ -67,6 +72,7 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
     Navigator.of(context).pop(requirement);
   }
 
+  /// Builds the requirement form and reports the actual preparation outcome.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -83,7 +89,7 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
               const _DialogSectionTitle('插件需求'),
               const SizedBox(height: 8),
               Text(
-                '确认后会加入 PackageBuilder skill，并启用 operit_editor 内置包。',
+                '确认后会准备并开放 PackageBuilder Skill、启用 operit_editor 操作手册包，然后跳转聊天并填入需求草稿。发送草稿后才开始开发；本操作不会自动生成、安装或发布插件。',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 10),
@@ -107,7 +113,7 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
               if (setupResult != null && !setupResult.success) ...<Widget>[
                 const SizedBox(height: 8),
                 Text(
-                  setupResult.error ?? '插件创作环境准备失败',
+                  setupResult.error!,
                   style: TextStyle(color: colorScheme.error),
                 ),
               ],
@@ -124,7 +130,7 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
           onPressed: _confirmRunning ? null : _confirm,
           child: _confirmRunning
               ? const M3LoadingIndicator(size: 16)
-              : const Text('确认'),
+              : const Text('准备并前往聊天'),
         ),
       ],
     );
@@ -132,10 +138,12 @@ class _QuickPluginCreatorDialogState extends State<QuickPluginCreatorDialog> {
 }
 
 class _DialogSectionTitle extends StatelessWidget {
+  /// Creates a titled section within the requirement form.
   const _DialogSectionTitle(this.text);
 
   final String text;
 
+  /// Renders the title using the current dialog typography.
   @override
   Widget build(BuildContext context) {
     return Text(text, style: const TextStyle(fontWeight: FontWeight.w700));

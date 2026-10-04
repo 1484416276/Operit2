@@ -22,8 +22,6 @@ pub mod UIHierarchyManager;
 pub mod UsageStatisticsStore;
 #[path = "UserMarkdownRepository.rs"]
 pub mod UserMarkdownRepository;
-#[path = "WorkflowRepository.rs"]
-pub mod WorkflowRepository;
 #[path = "WorkspacePreferenceStore.rs"]
 pub mod WorkspacePreferenceStore;
 
@@ -36,5 +34,4 @@ pub use RuntimeStorageRepository::*;
 pub use UIHierarchyManager::*;
 pub use UsageStatisticsStore::*;
 pub use UserMarkdownRepository::*;
-pub use WorkflowRepository::*;
 pub use WorkspacePreferenceStore::*;

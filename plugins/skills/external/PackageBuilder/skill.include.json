@@ -1,6 +1,10 @@
 {
   "includes": [
     {
+      "source": "../../../docs/package_builder/PLUGIN_CREATION_WORKFLOW.md",
+      "target": "references/PLUGIN_CREATION_WORKFLOW.md"
+    },
+    {
       "source": "../../../docs/package_builder/SCRIPT_DEV_GUIDE.md",
       "target": "references/SCRIPT_DEV_GUIDE.md"
     },

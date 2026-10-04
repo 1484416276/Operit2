@@ -114,10 +114,6 @@ pub mod ToolPrompt;
 pub mod TtsCatalog;
 #[path = "TtsConfig.rs"]
 pub mod TtsConfig;
-#[path = "Workflow.rs"]
-pub mod Workflow;
-#[path = "WorkflowExecutionLog.rs"]
-pub mod WorkflowExecutionLog;
 #[path = "Workspace.rs"]
 pub mod Workspace;
 #[path = "WorkspaceRenameResult.rs"]
@@ -179,7 +175,5 @@ pub use SttConfig::*;
 pub use ToolPrompt::*;
 pub use TtsCatalog::*;
 pub use TtsConfig::*;
-pub use Workflow::*;
-pub use WorkflowExecutionLog::*;
 pub use Workspace::*;
 pub use WorkspaceRenameResult::*;

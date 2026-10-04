@@ -13,6 +13,7 @@ import '../navigation/AppNavigationModels.dart';
 import '../layout/SidebarDockController.dart';
 import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
+import 'ConversationSwipeActions.dart';
 import 'NavigationDrawerAppearance.dart';
 
 class CollapsedDrawerContent extends StatelessWidget {
@@ -537,16 +538,10 @@ class _ConversationDrawerItemState extends State<ConversationDrawerItem>
                                 )
                               : null,
                         ),
-                        child: Dismissible(
+                        child: ConversationSwipeActions(
                           key: ValueKey<String>('conversation-${history.id}'),
-                          confirmDismiss: (direction) async {
-                            if (direction == DismissDirection.startToEnd) {
-                              widget.onRename();
-                            } else {
-                              widget.onDelete();
-                            }
-                            return false;
-                          },
+                          onRename: widget.onRename,
+                          onDelete: widget.onDelete,
                           background: _SwipeActionBackground(
                             alignment: AlignmentDirectional.centerStart,
                             color: Theme.of(context).colorScheme.primary,

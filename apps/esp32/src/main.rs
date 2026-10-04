@@ -10,7 +10,6 @@ mod lvgl;
 #[cfg(target_os = "espidf")]
 mod settings;
 mod status;
-mod ui;
 #[cfg(target_os = "espidf")]
 mod ui_deploy;
 

@@ -7,7 +7,6 @@ use operit_host_api::{
 };
 
 use crate::face::{faceLayout, validateExpression, FaceLayout, FaceRect, INITIAL_EXPRESSION};
-use operit_ui::{Canvas, Color, Rect};
 
 /// Draws robot face rectangles onto a board-owned pixel target.
 pub trait FaceCanvas: Send {
@@ -86,29 +85,6 @@ impl FaceCanvas for MemoryFaceCanvas {
     }
 }
 
-impl Canvas for MemoryFaceCanvas {
-    fn size(&self) -> (u16, u16) {
-        (self.width, self.height)
-    }
-
-    fn fill(&mut self, color: Color) {
-        let _ = FaceCanvas::fill(self, color.0);
-    }
-
-    fn fill_rect(&mut self, rect: Rect, color: Color) {
-        let _ = FaceCanvas::fillRect(
-            self,
-            FaceRect {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height,
-            },
-            color.0,
-        );
-    }
-}
-
 /// Renders validated robot face expressions through a board display canvas.
 pub struct Esp32RobotFaceHost<C: FaceCanvas> {
     canvas: Mutex<C>,
@@ -169,19 +145,6 @@ impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
             .lock()
             .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
         crate::shell::paintTerminal(&mut *canvas)
-    }
-
-    /// Paints a UI-library scene onto the board display.
-    pub fn paintScreen(&self, screen: &operit_ui::Screen) -> HostResult<()>
-    where
-        C: Canvas,
-    {
-        let mut canvas = self
-            .canvas
-            .lock()
-            .map_err(|error| HostError::new(format!("robot face canvas lock poisoned: {error}")))?;
-        screen.paint(&mut *canvas);
-        Ok(())
     }
 
     /// Sends one LVGL partial framebuffer region through the board canvas.

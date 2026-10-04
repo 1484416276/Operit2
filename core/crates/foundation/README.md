@@ -7,7 +7,7 @@ They must stay free of application ownership, runtime construction, node routing
 ## Crates
 
 - `host-api`: host capability contracts and `HostManager`.
-- `model`: shared data models for chat, memory, prompts, workflow, STT/TTS, and nodes.
+- `model`: shared data models for chat, memory, prompts, STT/TTS, and nodes.
 - `util`: common filesystem, network, logging, serialization, archive, media, and stream utilities.
 - `link`: core link protocol types, `CoreValue`, calls, watches, pushes, events, frames, and route runtime contracts.
 

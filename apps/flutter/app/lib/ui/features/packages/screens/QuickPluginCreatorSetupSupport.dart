@@ -4,6 +4,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
 class QuickPluginCreatorSetupResult {
+  /// Creates a result containing the observed resource preparation outcome.
   const QuickPluginCreatorSetupResult({
     required this.success,
     required this.skillName,
@@ -17,6 +18,7 @@ class QuickPluginCreatorSetupResult {
   final String? error;
 }
 
+/// Prepares bundled authoring resources and verifies the actual editor state.
 Future<QuickPluginCreatorSetupResult> runQuickPluginCreatorSetup(
   GeneratedCoreProxyClients clients,
 ) async {
@@ -27,6 +29,12 @@ Future<QuickPluginCreatorSetupResult> runQuickPluginCreatorSetup(
     final packageResult = await clients.application
         .packageManager()
         .enablePackage(packageName: 'operit_editor');
+    final editorEnabled = await clients.application
+        .packageManager()
+        .isPackageEnabled(packageName: 'operit_editor');
+    if (!editorEnabled) {
+      throw StateError('operit_editor 未启用，插件创作准备未完成。$packageResult');
+    }
     ToolPkgCatalogChangeBus.notifyCatalogChanged();
     return QuickPluginCreatorSetupResult(
       success: true,

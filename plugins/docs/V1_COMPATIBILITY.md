@@ -1,5 +1,26 @@
 # ToolPkg v1 compatibility in Operit2
 
+## Supported versions and platform scope
+
+Operit2's supported ToolPkg API version is **2.0.0**. Its loading compatibility
+for **1.0.0** and **1.0.1** is incomplete; accepting those version identifiers
+does not imply complete implementation of their contracts.
+
+Operit1 fully supports **1.0.0** and **1.0.1**. These are the older API forms
+primarily designed for Android, not a promise of cross-platform behavior.
+
+API **2.0.0** is designed for multiple platforms. Nearly all public interfaces
+provide cross-platform compatibility through the shared host layer, so ordinary
+features should use those interfaces without separate per-platform implementations.
+Authors must still consider other platforms when using platform-specific
+interfaces, document their scope, and verify installation, UI, and core behavior
+on the other intended platforms. Migrating a legacy package requires checking
+API, path, and platform semantics, not merely changing its version declaration.
+
+New Operit2 ToolPkg manifests should explicitly declare `"api_version": "2.0.0"`
+and use the current bundled declarations. Manifest `schema_version`, ToolPkg
+`api_version`, and the plugin's release `version` identify different things.
+
 ## Contract ownership
 
 - **v1:** `plugins/types-v1/*.d.ts`, copied without edits from the handwritten v1 SDK.

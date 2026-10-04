@@ -106,11 +106,6 @@ impl Esp32Board {
         self.robotFaceHost.paintTerminal()
     }
 
-    /// Paints one document-driven UI-library screen on the board display.
-    pub fn paintScreen(&self, screen: &operit_ui::Screen) -> HostResult<()> {
-        self.robotFaceHost.paintScreen(screen)
-    }
-
     /// Flushes an LVGL RGB565 region to the physical display.
     pub fn flushLvgl(&self, rect: FaceRect, pixels: &[u8]) -> HostResult<()> {
         self.robotFaceHost.flushRgb565(rect, pixels)

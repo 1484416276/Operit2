@@ -1324,13 +1324,12 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.updateChatTitle(chatId, title);
     }
 
-    /// Binds a chat to an existing workspace path.
+    /// Mounts a selected folder and propagates path validation and persistence errors.
     #[allow(non_snake_case)]
     pub fn bindChatToWorkspace(&mut self, chatId: String, workspace: String) -> Result<(), String> {
-        let workspace = PathMapper::normalizeWorkspaceBindingPath(&workspace)?;
         self.chatHistoryDelegate
-            .bindChatToWorkspace(chatId, workspace);
-        Ok(())
+            .bindChatToFolderPath(chatId, workspace)
+            .map(|_| ())
     }
 
     /// Creates the default workspace directory for a chat and returns its path.

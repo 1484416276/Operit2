@@ -12,7 +12,7 @@ helpers, and sync operation logs.
 - Provide Kotlin Flow-like state containers used by preference managers.
 - Persist preferences and sync metadata through `RuntimeStorageHost`.
 - Persist repository-owned data for chat history, memory, avatars, custom emoji,
-  markdown, usage statistics, workflow state, and UI hierarchy state.
+  markdown, usage statistics, and UI hierarchy state.
 - Provide SQLite and ObjectBox-style store helpers used by repositories.
 - Compact and query sync operation streams.
 

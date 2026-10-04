@@ -6,11 +6,19 @@
 
 脚本主要使用 **TypeScript** 编写，以利用其强大的类型系统，但也可以使用原生 JavaScript (ES6+)。
 
+## ToolPkg API 版本与跨平台要求
+
+Operit2 的 ToolPkg API 支持版本为 `2.0.0`；对 `1.0.0` 和 `1.0.1` 的加载支持并不完整。Operit1 完整支持 ToolPkg API `1.0.0` 和 `1.0.1`，这两个版本主要面向 Android，是旧版 API 形式。
+
+在 Operit2 创建 ToolPkg 时显式填写 `"api_version": "2.0.0"`，接口以随 PackageBuilder 携带的当前版本类型为准。不能通过仅改 manifest 版本号把旧 Android 插件视为已完成迁移；需要检查实际接口与平台行为。`api_version` 是 ToolPkg 清单字段，不是单文件脚本的元数据字段。
+
+ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统一 host 能力提供跨平台兼容。常规功能直接使用当前版本接口即可，不必为每个平台重复实现。作者仍需注重跨平台兼容性：遇到平台特异接口时，明确其适用范围，考虑并验证其他平台的安装、界面与核心功能；不能把某个平台的专用能力当作所有平台都具备的接口。
+
 ## 2. 快速上手
 
 **📝 最简单的方式：直接编写 JavaScript**
 
-如果你只是想快速编写脚本，不想配置任何环境，可以直接创建 `.js` 文件并编写 JavaScript 代码。不需要安装 TypeScript、不需要编译，只需要一个文本编辑器即可。参考 **[第 4 章：编写第一个脚本](#4-编写第一个脚本-typescript)** 中的代码结构，去掉类型标注即可。
+如果你只是想快速编写脚本，不想配置任何环境，可以直接创建 `.js` 文件并编写 JavaScript 代码。不需要安装 TypeScript、不需要编译，只需要一个文本编辑器即可。参考第 4 章的脚本结构 中的代码结构，去掉类型标注即可。
 
 **开发环境与市场发布是两件独立的事：**
 
@@ -34,255 +42,72 @@
 
 ---
 
-### 在 Operit 项目中开发
+### 2.1. 当前版本开发入口
 
-这是最推荐的入门方式。Operit 项目本身就是一个功能完备的开发环境，让你免于手动配置。
+从包管理的“快速创作你的插件”开始时，应用准备 PackageBuilder 与 operit_editor，并把需求填入聊天草稿。用户发送草稿后，由 AI 与用户协作开发；不是按钮自动生成或安装成品。
 
-**步骤 1: 克隆项目并安装依赖**
+先阅读 [当前版本插件创作流程](./PLUGIN_CREATION_WORKFLOW.md)。通过 `["skill", "show", "PackageBuilder"]` 读取真实 Skill 目录，检查终端 host 与可写文件位置，确定 `<dev_root>`。所有平台都使用现有 host API；不固定到某个平台的下载目录。
 
-```bash
-# 克隆项目仓库
-git clone https://github.com/AAswordman/Operit.git
-cd Operit
+独立插件项目放在 `<dev_root>/<package_id>/`，将 Skill 的 `types/` 完整复制到 `<dev_root>/types/`。贡献 Operit 主项目时，脚本源码位于 `plugins/packages/buildin/` 或 `plugins/packages/external/`；不要把 Skill 内的示例副本当作应用已经安装的包。
 
-# 安装项目依赖 (主要是TypeScript编译器)
-npm install
-```
+### 2.2. TypeScript 项目配置
 
-**步骤 2: 创建你的第一个脚本**
-
-所有的脚本都存放在 `examples/` 目录下。请在该目录中创建一个新文件，例如 `my_first_script.ts`，然后将下面的代码复制进去。
-
-```typescript
-/*
-METADATA
-{
-    "name": "MyFirstScript",
-    "description": "我的第一个脚本，用于演示。",
-    "category": "Utility",
-    "tools": [
-        {
-            "name": "hello_world",
-            "description": "向世界问好。",
-            "parameters": [
-                {
-                    "name": "name",
-                    "description": "要问好的人名",
-                    "type": "string",
-                    "required": true
-                }
-            ]
-        }
-    ]
-}
-*/
-
-// 引用核心类型，这会给你带来代码自动补全的奇效
-/// <reference path="./types/index.d.ts" />
-
-// 这是一个标准的脚本结构，建议你直接复用
-const MyFirstScript = (function () {
-    // 包装函数，统一处理成功/失败的返回
-    async function wrap(func: (params: any) => Promise<any>, params: any) {
-        try {
-            const result = await func(params);
-            complete(result); // 也可以直接 return result；这里只是统一走显式完成
-        } catch (error) {
-            complete({ success: false, message: `执行失败: ${error.message}` });
-        }
-    }
-
-    // 这是你工具的具体实现
-    async function hello_world(params: { name: string }): Promise<any> {
-        const message = `你好, ${params.name}! 欢迎来到 Operit 脚本世界。`;
-        await Tools.System.sleep(500); // 调用内置API
-        return { success: true, message: message };
-    }
-
-    // 导出你的工具，使其可以被调用
-    return {
-        hello_world: (params: any) => wrap(hello_world, params),
-    };
-})();
-
-// 将工具函数暴露给脚本执行引擎
-exports.hello_world = MyFirstScript.hello_world;
-```
-
-**步骤 3: 编译脚本**
-
-TypeScript (`.ts`) 文件需要被编译成 JavaScript (`.js`) 才能执行。`tsc` 命令会自动读取 `tsconfig.json` 文件并根据其配置来编译。
-
-```bash
-# 进入 examples 目录
-cd examples
-
-# 编译目录下的所有 TypeScript 脚本
-npx tsc
-```
-
-执行成功后，你会看到 `my_first_script.ts` 旁边生成了一个 `my_first_script.js` 文件。
-
-**步骤 4: 在设备上运行脚本**
-
-确保你已连接安卓设备并开启了USB调试。然后返回项目根目录，使用我们提供的工具来执行脚本。
-
-```bash
-# 回到项目根目录
-cd ..
-
-# 执行脚本的 `hello_world` 函数
-# Windows:
-tools\\execute_js.bat examples\\my_first_script.js hello_world "{\\"name\\":\\"世界\\"}"
-# Linux / macOS:
-./tools/execute_js.sh examples/my_first_script.js hello_world '{"name":"世界"}'
-```
-
-如果你要直接运行整段 sandbox script，而不是指定某个导出函数：
-
-```bash
-# Windows:
-tools\\run_sandbox_script.bat examples\\my_first_script.js "{\\"name\\":\\"世界\\"}"
-# Linux / macOS:
-./tools/run_sandbox_script.sh examples/my_first_script.js '{"name":"世界"}'
-```
-
-**步骤 5: 查看结果**
-
-脚本执行器会等待结构化结果文件返回。如果一切顺利，你会在终端看到包含 `"你好, 世界!..."` 的成功信息，以及日志事件和最终结果。
-
-**恭喜你！**
-
-你已经完成了第一个脚本的开发和运行。现在你已经掌握了基础，可以继续深入探索 **[第 3 章：核心概念](#3-核心概念)** 来学习 `METADATA` 的详细配置和 `Tools` API 的更多用法，或者直接跳到 **[第 6 章：UI自动化详解](#6-ui自动化详解)** 编写更强大的自动化脚本。
-
----
-
-### 独立插件项目
-
-如果你希望独立管理你的脚本，可以按照以下步骤从零开始搭建一个开发环境。
-
-#### 2.1. 初始化项目与依赖 (`package.json`)
-
-`package.json` 文件是 Node.js 项目的清单，用于管理项目的元数据和依赖项。
-
-**步骤 1: 创建 `package.json`**
-
-在你的空项目文件夹中，创建一个名为 `package.json` 的文件，并填入以下基础内容：
+确认当前终端具备可用的 Node.js、包管理器和 TypeScript 编译器后，在包项目中声明开发依赖及构建命令。安装开发依赖只影响项目构建；它不向 QuickJS 注入 Node.js 模块。
 
 ```json
 {
-    "name": "my-script-project",
-    "version": "1.0.0",
-    "description": "My new script project.",
-    "scripts": {
-        "build": "tsc"
-    },
-    "devDependencies": {
-        "@types/node": "^22.0.0",
-        "typescript": "^5.4.5"
-    }
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
 }
 ```
-*注意: 我们推荐使用较新版本的 `typescript` 和 `@types/node`，你可以根据需要调整版本号。*
 
-**步骤 2: 安装依赖**
-
-打开终端，在项目根目录下运行以下命令来安装开发依赖：
-
-```bash
-npm install
-```
-
-此命令会根据 `package.json` 中的 `devDependencies` 下载 `typescript` 和 Node.js 的类型定义。
-
-#### 2.2. 配置 TypeScript (`tsconfig.json`)
-
-`tsconfig.json` 文件用于指定 TypeScript 编译器的选项，告诉它如何将 `.ts` 文件编译成 `.js` 文件。
-
-**步骤: 创建 `tsconfig.json`**
-
-在项目根目录创建 `tsconfig.json` 文件，并复制以下推荐配置。这个配置与本项目使用的标准配置 (`examples/tsconfig.json`) 保持一致，确保了兼容性。
+`tsconfig.json` 示例适用于以下结构：`<dev_root>/types/` 与 `<dev_root>/<package_id>/src/`。ToolPkg 的 main、子包、UI 等编译入口按项目需要放在 `src/` 下，manifest 路径对应 `dist/` 中的产物。
 
 ```json
 {
   "compilerOptions": {
     "target": "es2020",
     "module": "commonjs",
-    "lib": [
-      "es2020"
-    ],
-    "declaration": false,
-    "strict": false,
-    "noImplicitAny": false,
-    "strictNullChecks": true,
-    "noImplicitThis": true,
-    "alwaysStrict": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noImplicitReturns": true,
+    "lib": ["es2020"],
+    "rootDir": "src",
+    "outDir": "dist",
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
+    "strict": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "typeRoots": [
-      "./types"
-    ]
+    "esModuleInterop": true,
+    "typeRoots": ["../types"]
   },
-  "include": [
-    "**/*.ts",
-    "**/*.d.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts", "../types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
 }
 ```
 
-**关键配置解释:**
--   `"target": "es2020"`: 将代码编译为 ES2020 版本的 JavaScript，以匹配 QuickJS 运行时可用的现代语法能力。
--   `"module": "commonjs"`: 使用 CommonJS 模块系统，这是脚本执行环境所要求的。
--   `"lib": ["es2020"]`: 以 ECMAScript 标准库为基础，不默认引入浏览器 DOM 类型。Operit 的脚本运行在 QuickJS 宿主中，不是网页环境；`console`、timer 等宿主能力由平台兼容层单独提供。
--   `"typeRoots": ["./types"]`: 指定了类型定义文件 (`.d.ts`) 的存放目录。你需要手动在项目中创建一个 `types` 文件夹，并将平台提供的核心类型定义文件 (`index.d.ts`, `files.d.ts` 等) 放进去，这样才能获得 `Tools` 等全局对象的智能提示。
--   `"include": ["**/*.ts", "**/*.d.ts"]`: 告诉编译器同时纳入脚本源码和补充的宿主类型声明文件。
+- CommonJS 对应当前运行时模块加载方式；不能把构建时使用的 Node.js 当作脚本执行宿主。
+- `lib` 不引入浏览器 DOM；全局 `Tools`、`console` 等声明由随 Skill 携带的类型提供。
+- `include` 纳入完整平台声明。`src/` 内三斜线引用的相对路径为 `../../types/index.d.ts`。
+- 确认真实编译器可用后执行项目声明的构建命令，例如 `npm run build`。检查退出码与 `dist/` 文件，不根据命令已提交宣称构建成功。
 
-完成以上步骤后，你的项目就搭建好了。现在你可以继续阅读后续章节，了解项目的具体结构和脚本的编写方法。
+### 2.3. 第一个包的安装与执行
 
-#### 2.3. 复制平台核心文件
+在 `<dev_root>/<package_id>/src/my_new_script.ts` 按第 4 章写入 `METADATA` 和导出函数，构建得到 `dist/my_new_script.js`。单文件 JS 包直接导入编译成品；ToolPkg 按格式指南打包后导入。
 
-为了让你的脚本能与平台交互，并能在设备上执行，你需要从本开发指南所在的源项目（即 `assistance` 项目）中复制一些核心文件到你的新项目里。
+以下是系统工具 `execute_cli_command` 的参数数组，路径须替换为当前 runtime FileSystemHost 可读的真实成品路径：
 
-**需要复制的内容：**
-
-1.  **类型定义文件**: 将源项目中的 `types/` 整个文件夹复制到你的新项目根目录，并确保文件夹名称就是 `types`。这与 `tsconfig.json` 中的 `"typeRoots": ["./types"]` 配置相对应。这些文件定义了 `Tools` 等全局对象的类型，是获得代码智能提示的关键。
-2.  **执行工具**: 将源项目根目录下的 `tools/` 整个文件夹复制到你的新项目根目录。这些脚本（如 `execute_js.bat`）是用来在设备上运行和测试你的代码的。
-
-**复制后的项目结构**
-
-完成以上所有步骤后，你的新项目文件夹看起来应该是这样的：
-
-```plaintext
-my-script-project/
-├── node_modules/
-├── tools/
-│   ├── execute_js.bat
-│   └── execute_js.sh
-├── types/
-│   ├── core.d.ts
-│   ├── files.d.ts
-│   ├── index.d.ts
-│   ├── network.d.ts
-│   ├── system.d.ts
-│   ├── ui.d.ts
-│   └── ... (其他核心类型定义文件)
-├── my_first_script.ts  // 这是你将要创建的脚本文件
-├── package.json
-└── tsconfig.json
+```json
+["package", "import", "<artifact_host_path>"]
+["package", "enable", "MyNewScript"]
+["package", "list"]
+["package", "show", "MyNewScript"]
+["package", "exec", "MyNewScript:hello_world", "{\"name\":\"世界\"}"]
+["log", "package"]
 ```
 
-现在，你的开发环境已经完全准备就绪。
+名称与导出函数来自第 4 章示例。实际项目使用导入结果与 `package show` 返回的名称。核对 `package list` 的真实启用状态与执行返回内容。同名包重新安装会被拒绝，更新需要按 [创作流程第 5 节](./PLUGIN_CREATION_WORKFLOW.md#5-同-id-的修改与重新安装) 完成明确授权的替换操作。
 
 ## 3. 核心概念
 
@@ -292,7 +117,7 @@ my-script-project/
 
 每个脚本文件的开头都必须包含一个 `/* METADATA ... */` 注释块。这个块定义了脚本的名称、描述、分类以及最重要的——它所提供的工具。**这块元数据是 Operit AI 理解并调用你所编写功能的唯一途径。AI 会解析 `METADATA` 中的信息，将其作为可用的“工具”呈现给大语言模型（LLM），从而实现通过自然语言指令来执行复杂脚本的能力。**
 
-**示例：** (`examples/automatic_bilibili_assistant.ts`)
+**示例：**（元数据结构示意；具体示例以本 Skill 的 `examples/packages/` 为准）
 
 ```typescript
 /*
@@ -491,7 +316,7 @@ METADATA
 
 ### 3.1.3. `category` 字段规范
 
-`category` 为 **可选字段**，类型为字符串，用于脚本分类展示与检索。建议直接复用 `examples/` 中已使用的分类，避免创建语义重复的新分类。
+`category` 为 **可选字段**，类型为字符串，用于脚本分类展示与检索。建议直接复用 `examples/packages/` 中已使用的分类，避免创建语义重复的新分类。
 
 ```json
 "category": "Utility"
@@ -503,7 +328,7 @@ METADATA
 "category": "Other"
 ```
 
-当前 `examples/` 中可参考的分类值：
+本 Skill 的 `examples/packages/` 中可参考的分类值：
 
 -   `Automatic`
 -   `Chat`
@@ -547,7 +372,7 @@ await Tools.UI.swipe(540, 1800, 540, 900);
 
 ### 3.4. Java/Kotlin 类桥接 (Java Bridge)
 
-除了 `Tools` 外，脚本运行时还注入了 `Java` / `Kotlin` 全局对象，用于直接调用 Java/Kotlin/Android 类。
+Java/Kotlin Bridge 是需要对应 host 实现支持的专用能力，类型声明不代表每个平台都能调用 Java 或 Android 类。全平台插件的文件、网络和终端操作应使用统一 `Tools` 与 host API，不要用 Java Bridge 替代这些抽象。以下示例仅说明已提供 Java Bridge 的宿主上的调用契约。
 
 这套能力适用于：
 
@@ -690,98 +515,44 @@ METADATA
 
 ### 步骤 3: 编写主体逻辑
 
-使用一个立即执行函数表达式 (IIFE) 来封装脚本逻辑，避免污染全局作用域。
+导出名称与 `METADATA.tools[].name` 保持一致。直接返回真实工具结果，执行错误由当前运行时记录；不要把失败转换成成功返回。
 
 ```typescript
-// 引用核心类型，以获得代码提示
-/// <reference path="./types/index.d.ts" />
+/// <reference path="../../types/index.d.ts" />
 
-const MyNewScript = (function () {
-    // 辅助函数，用于统一返回结果
-    async function wrapToolExecution(func: (params: any) => Promise<any>, params: any) {
-        try {
-            const result = await func(params);
-            return result;
-        } catch (error) {
-            console.error(`工具 ${func.name} 执行失败`, error);
-            return {
-                success: false,
-                message: `工具执行时发生意外错误: ${error.message}`,
-            };
-        }
-    }
-
-    // 实现 `hello_world` 工具
-    async function hello_world(params: { name: string }): Promise<any> {
-        const { name } = params;
-        
-        // 使用内置工具
-        await Tools.System.sleep(500);
-        
-        const message = `你好, ${name}! 欢迎使用脚本。`;
-        
-        // 返回成功结果
-        return { success: true, message: message };
-    }
-
-    // 导出工具
+/** Greets the named user after a host-backed sleep operation. */
+async function hello_world(
+    params: { name: string }
+): Promise<{ success: boolean; message: string }> {
+    await Tools.System.sleep(500);
     return {
-        hello_world: (params: any) => wrapToolExecution(hello_world, params),
+        success: true,
+        message: `你好, ${params.name}! 欢迎使用脚本。`,
     };
-})();
+}
 
-// 导出模块，使其可以被系统加载
-exports.hello_world = MyNewScript.hello_world;
+exports.hello_world = hello_world;
 ```
 
 ### 步骤 4: 使用类型
 
--   在文件顶部添加 `/// <reference path="./types/index.d.ts" />` 可以让 TypeScript 编译器和你的IDE（如 VS Code）找到全局的类型定义。
--   `types/` 目录下的 `.d.ts` 文件详细定义了所有可用工具的签名和返回类型。Java Bridge 的契约说明优先以 [docs/JAVA_BRIDGE_INTERFACE.md](./JAVA_BRIDGE_INTERFACE.md) 为准。
+-   在文件顶部添加 `/// <reference path="../../types/index.d.ts" />` 可以让 TypeScript 编译器和你的IDE（如 VS Code）找到全局的类型定义。
+-   `types/` 目录下的 `.d.ts` 文件详细定义了所有可用工具的签名和返回类型。Java Bridge 的签名以随 Skill 携带的声明为准，调用前核对当前宿主能力。
 
-## 5. 深入学习：示例脚本解析
+## 5. 当前版本示例
 
-当你掌握了基础脚本的写法后，最好的学习方式就是阅读现有的优秀代码。`examples/` 目录下包含了许多功能各异的脚本，我们精选了以下几个作为推荐的进阶学习材料：
+示例由当前版本软件随 PackageBuilder 提供，位于 Skill 的 `examples/packages/`。下列文件实际来自当前源码；构建产物并不代表它们已安装到当前 runtime。
 
-### 5.1. 终极入门教程: `examples/quick_start.ts`
+- `examples/packages/buildin/time.ts`：单文件工具包的 `METADATA`、参数与导出函数。
+- `examples/packages/buildin/operit_editor.ts`：只返回操作手册的包；实际修改通过 `execute_cli_command` 或 `Tools.SoftwareSettings.exec(args)` 执行。
+- `examples/packages/external/template_try/`：ToolPkg 清单、工作流模板、工作区模板和资源注册。
+- `examples/packages/buildin/workflow/`：较完整的 ToolPkg 项目，包含 UI、公共接口和构建说明。
 
-这个脚本是一部从零开始的、带有超详细注释的教科书。它不仅仅是一个工具，更是一份动态的开发文档。
-
-*   **学习重点**:
-    *   **语法基础**: 详细解释了变量、数据类型、`async/await` 和 `try/catch` 错误处理。
-    *   **设计模式演进**: 从一个简单的全局函数开始，逐步重构为使用 `IIFE` 模式隔离作用域，最终演进到我们强烈推荐的 `Wrapper` 模式，让你深刻理解为什么我们的代码要这样组织。
-    *   **`Tools` API 调用**: 演示了如何调用 `Tools.System` 和 `Tools.Files` 来与系统交互。
-*   **建议**: 如果你对 TypeScript/JavaScript 不熟悉，或者对 `IIFE` 和 `Wrapper` 模式感到困惑，请务必完整阅读一遍此文件。
-
-### 5.2. 网络请求与并发: `examples/various_search.ts`
-
-这个脚本实现了一个实用的多平台搜索引擎聚合工具，是学习网络操作的最佳范例。
-
-*   **学习重点**:
-    *   **网络请求**: 演示了如何使用 `Tools.Net.visit` 来访问网页并获取可读内容。它不等价于原始 HTTP GET/POST；如果你需要接口响应体，请改用 `httpGet` / `httpPost` / `http`。
-    *   **多工具聚合**: `combined_search` 函数展示了如何在一个工具内部调用其他多个工具的逻辑，并使用 `Promise.all` 来同时等待多个 `toolCall()`。注意：这不等于底层工具一定真正并行，实际并发度仍取决于宿主实现与具体工具执行器。
-    *   **代码复用**: `performSearch` 作为一个内部辅助函数，被多个导出的工具复用，展示了良好的代码组织。
-
-### 5.3. 纯粹的工具集: `examples/time.ts`
-
-这是一个非常简洁的工具包，提供了多种时间格式化功能。
-
-*   **学习重点**:
-    *   **IIFE 的标准用法**: 完美展示了如何使用 `IIFE` 模式来封装一组相关的、无副作用的纯函数。
-    *   **多函数导出**: 演示了如何在一个文件中定义并导出多个小而美的功能函数。
-    *   **无外部依赖**: 这个脚本完全不依赖 `Tools` API，是一个纯粹的逻辑计算示例。
-
-### 5.4. “元数据”的高级技巧: `examples/various_output.ts`
-
-这个脚本看起来很简单，但它展示了一种与AI交互的特殊技巧。
-
-*   **学习重点**:
-    *   **利用描述(Description)**: `output_image` 工具的 `description` 字段并非简单描述功能，而是直接给出了一段提示(prompt)，指导AI如何通过输出特定格式的Markdown文本来展示图片。
-    *   **另类工具**: 这表明了 `METADATA` 不仅可以用来定义可执行的函数，还可以作为一种向AI传递“指令”或“知识”的灵活机制。
-
-通过研究以上这些脚本，你可以更快地掌握脚本开发的核心思想和最佳实践。
+读取所选示例的实际 manifest、package.json 和源码，再确定项目结构、API 版本及构建命令，不使用旧版仓库中的固定示例路径。
 
 ## 6. UI自动化详解
+
+UI 自动化由当前 host 提供；不同宿主暴露的能力有明确范围。不要把 Android 页面结构或应用标识当作全平台通用值；调用前查看实际工具与返回结果。
 
 UI自动化是许多脚本的核心。
 
@@ -826,240 +597,24 @@ if (loginButton) {
 
 ## 7. 调试
 
--   使用 `console.log()`、`console.error()` 等函数输出日志。日志信息可以在执行环境中查看。
--   将复杂的逻辑拆分成小函数，并为每个函数添加清晰的日志输出。
--   在执行UI操作后，加入适当的 `Tools.System.sleep()` 来等待UI更新，避免操作过快导致失败。
--   如果你对某段代码本身是否可运行、某个 API 的返回值、Java bridge 行为或小片段语法不够确定，不要直接把猜测写进正式包里；可以先用 `operit_editor` 包里的 `debug_run_sandbox_script` 工具执行一小段 sandbox script 做快速验证。
--   这种小片段测试特别适合验证：
-    -   某个 `Tools.*` 接口是否存在、参数怎么传
-    -   某个 Java 类型/方法在当前宿主里能否正常调用
-    -   某段 JSON / 返回结构 / 文件路径逻辑是否符合预期
--   建议先把不确定的逻辑缩成最小可运行片段，验证通过后再合并进正式脚本或 ToolPkg。
+- 将不确定的逻辑缩为有 `METADATA` 和导出函数的独立测试包，通过 `package import/enable/list/show/exec` 验证真实行为。
+- operit_editor 仅返回操作手册，不提供脚本直跑工具；不要编造其工具名。
+- 查看 `["log", "package"]`、`["log", "show"]` 的实际日志，保存原始失败信息。工具调用失败后停止并定位，不切换另一套执行链路。
+- UI、hook、provider 注册需要安装并在应用对应场景测试，不能仅执行一个导出函数就宣称这些能力已经通过测试。
+- 构建、安装、启用、执行与发布分别核验，交付时明确说明哪些环节已验证。
 
-## 8. 编译
+## 8. 编译与打包
 
-TypeScript 脚本 (`.ts`) 需要被编译成 JavaScript (`.js`)才能被执行。项目已配置好 `tsconfig.json`，通常可以使用 `tsc` 命令来编译所有脚本。 
+按第 2 节的项目配置将 TypeScript 输出为 CommonJS JavaScript。单文件包保留元数据与导出函数；ToolPkg 根据 manifest 收集入口、子包、UI、资源和源码。
 
-## 9. 在设备上运行和测试脚本
+`Tools.Files.zip(sourceVfsPath, artifactVfsPath, false)` 可以生成不含外层目录的 ToolPkg 归档。成品放在源码目录之外，扩展名为 `.toolpkg`，manifest 位于归档根目录。打包细节见 [ToolPkg 格式指南](./TOOLPKG_FORMAT_GUIDE.md)。
 
-当你编写完脚本并将其编译成 JavaScript 后，可以使用 `tools/` 目录下的辅助脚本通过 ADB (Android Debug Bridge) 在连接的安卓设备上运行它。
+## 9. 安装、更新与测试
 
-### 9.1. 前提条件
+使用 [当前版本插件创作流程](./PLUGIN_CREATION_WORKFLOW.md) 中的首次安装与同 ID 更新步骤。Core command 参数数组不含 `operit2`；脚本可调用 `Tools.SoftwareSettings.exec(args)`，AI 可直接调用系统工具 `execute_cli_command`。
 
-- **Android SDK (ADB)**: 确保你已经安装了 Android SDK，并且 `adb` 命令在你的系统路径中可用。
-- **安卓设备**: 连接一台开启了“USB调试”功能的安卓设备，并已授权电脑进行调试。
-- **Operit 应用程序**: 确保 `com.ai.assistance.operit` 应用程序已经安装并在目标设备上运行。脚本的执行依赖于应用内的 `ScriptExecutionReceiver` 来接收和处理来自 ADB 的命令。
+`package import` 接收成品文件，不接收源码目录，并拒绝重复的已注册包名。更新前完成构建、记录配置并获得删除授权，再明确执行删除、导入、恢复配置与重新测试。不能把源码同步、命令回显或一次工具调用完成解释为热更新成功。
 
-### 9.2. 执行脚本函数
+## 10. 编辑器辅助
 
-`tools` 目录下提供了 `execute_js.bat` (Windows) 和 `execute_js.sh` (Linux/macOS) 脚本来简化执行流程。
-
-**使用方法 (以 Windows 为例):**
-
-打开命令行工具，执行以下命令：
-
-```cmd
-tools\\execute_js.bat <JS文件路径> <要调用的函数名> [JSON格式的参数]
-```
-
-**示例：**
-
-假设我们要执行 `my_new_script.js` 中的 `hello_world` 函数，并传入参数 `{ "name": "世界" }`：
-
-```cmd
-tools\\execute_js.bat examples\\my_new_script.js hello_world "{\\"name\\":\\"世界\\"}"
-```
-
-- 如果连接了多台设备，脚本会提示你选择要操作的设备。
-- 注意：在 Windows `cmd` 中，JSON 字符串中的双引号需要使用 `\` 来转义。
-
-### 9.3. 查看输出和调试
-
-脚本执行后，`tools/execute_js.*` 不再依赖 `adb logcat` 抓输出，而是会等待应用写出一份**结构化结果 JSON**。终端里会直接打印这份 JSON，其中包含：
-
-- `success`
-- `result`
-- `error`
-- `events`
-- `durationMs`
-
-`events` 里会带上脚本运行过程中的 `console.log/info/warn/error` 输出，以及中间过程产生的 intermediate result，后续调试时不需要再先清空 logcat 再碰运气抓日志。
-
-如果脚本执行时间比较长，可以通过环境变量调整等待时间：
-
-```bash
-OPERIT_RESULT_WAIT_SECONDS=30 ./tools/execute_js.sh examples/my_script.js main '{}'
-```
-
-这样就完成了一个从编写到设备上测试的完整开发循环。 
-
-### 9.4. VS Code 集成 (推荐)
-
-为了进一步简化开发流程，项目预置了 VS Code 的启动配置，让你可以直接在编辑器内一键运行和测试脚本。
-
-**如何使用：**
-
-1.  在 VS Code 中打开你要测试的脚本文件（`.ts` 或 `.js`）。
-2.  切换到“运行和调试”视图 (快捷键 `Ctrl+Shift+D`)。
-3.  在顶部的下拉菜单中，你会看到两个可用的配置：
-    -   **`在Android设备上运行TS (编译+运行)`**: **推荐用法**。当你正在编辑一个 `.ts` 文件时，选择此项。它会自动编译你的代码，然后提示你输入要执行的函数名和参数，最后在设备上运行。
-    -   **`在Android设备上运行JS`**: 用于直接运行一个已经编译好的 `.js` 文件。流程与上面类似，但不会执行编译步骤。
-4.  点击绿色的“启动调试”按钮 (F5)。
-5.  根据顶部弹出的提示框，依次输入**函数名**和 **JSON 格式的参数**，然后按回车。
-
-VS Code 会自动打开一个新的终端面板，并执行相应的脚本，你可以在该面板中直接看到结构化 JSON 执行结果。这个集成化的工作流极大地提升了开发和调试的效率。 
-
-## 10. VS Code 配置 (可选)
-
-为了安全和避免不同开发者环境的冲突，`.vscode` 文件夹通常会被添加到 `.gitignore` 中，本项目也不例外。这意味着 `launch.json` 和 `tasks.json` 这两个配置文件不会被提交到版本控制中。
-
-如果你想使用上一章节描述的 VS Code 一键启动功能，你需要手动在项目根目录创建这些文件。
-
-### 10.1. 创建 tasks.json
-
-1.  在项目根目录创建一个名为 `.vscode` 的文件夹。
-2.  在 `.vscode` 文件夹内，创建一个名为 `tasks.json` 的文件。
-3.  将以下内容复制并粘贴到 `tasks.json` 文件中：
-
-```json
-{
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "运行JavaScript到Android设备",
-            "type": "shell",
-            "command": ".\\tools\\execute_js.bat",
-            "args": [
-                "${fileDirname}\\${fileBasenameNoExtension}.js",
-                "${input:jsFunction}",
-                "${input:jsParameters}"
-            ],
-            "windows": {
-                "command": ".\\tools\\execute_js.bat"
-            },
-            "linux": {
-                "command": "./tools/execute_js.sh"
-            },
-            "osx": {
-                "command": "./tools/execute_js.sh"
-            },
-            "problemMatcher": [],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "new",
-                "focus": true
-            }
-        },
-        {
-            "label": "tsc-watch",
-            "type": "shell",
-            "command": "tsc",
-            "args": [
-                "--watch",
-                "--project",
-                "."
-            ],
-            "isBackground": true,
-            "problemMatcher": "$tsc-watch",
-            "group": "build",
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "focus": false
-            }
-        },
-        {
-            "label": "运行TypeScript到Android设备",
-            "dependsOn": [
-                "tsc-watch"
-            ],
-            "dependsOrder": "sequence",
-            "type": "shell",
-            "command": ".\\tools\\execute_js.bat",
-            "args": [
-                "${fileDirname}\\${fileBasenameNoExtension}.js",
-                "${input:jsFunction}",
-                "${input:jsParameters}"
-            ],
-            "windows": {
-                "command": ".\\tools\\execute_js.bat"
-            },
-            "linux": {
-                "command": "./tools/execute_js.sh"
-            },
-            "osx": {
-                "command": "./tools/execute_js.sh"
-            },
-            "problemMatcher": [],
-            "group": "test",
-            "presentation": {
-                "reveal": "always",
-                "panel": "new",
-                "focus": true
-            }
-        }
-    ],
-    "inputs": [
-        {
-            "id": "jsFunction",
-            "description": "要执行的JavaScript函数名",
-            "default": "main",
-            "type": "promptString"
-        },
-        {
-            "id": "jsParameters",
-            "description": "函数参数(JSON格式)",
-            "default": "{}",
-            "type": "promptString"
-        }
-    ]
-}
-```
-
-### 10.2. 创建 launch.json
-
-1.  同样在 `.vscode` 文件夹内，创建一个名为 `launch.json` 的文件。
-2.  将以下内容复制并粘贴到 `launch.json` 文件中：
-
-```json
-{
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "在Android设备上运行JS",
-            "type": "node",
-            "request": "launch",
-            "preLaunchTask": "运行JavaScript到Android设备",
-            "presentation": {
-                "hidden": false,
-                "group": "",
-                "order": 1
-            }
-        },
-        {
-            "name": "在Android设备上运行TS (编译+运行)",
-            "type": "node",
-            "request": "launch",
-            "preLaunchTask": "运行TypeScript到Android设备",
-            "presentation": {
-                "hidden": false,
-                "group": "",
-                "order": 2
-            }
-        }
-    ]
-}
-```
-
-完成这两个文件的创建后，重启 VS Code，“运行和调试”中的配置项就应该可用了。 
+可使用编辑器的 TypeScript 提示和项目构建任务。编辑器负责本地源码与构建检查；真实插件行为必须在当前 Operit runtime 内测试。仓库没有通用的 ADB 脚本执行或一键烧录流程，不配置指向不存在工具的 VS Code 任务。

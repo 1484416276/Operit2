@@ -902,7 +902,6 @@ dependencies = [
  "log",
  "operit-host-api",
  "operit-host-native-scheduler",
- "operit-ui",
  "tokio",
 ]
 
@@ -922,13 +921,6 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "tokio",
-]
-
-[[package]]
-name = "operit-ui"
-version = "0.1.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ class WorkspaceHomeContent extends StatelessWidget {
     required this.onAddFolder,
     required this.onCreateWorkspace,
     required this.onChooseExistingWorkspace,
+    required this.onUnbindWorkspace,
     required this.onOpenTerminal,
     required this.onOpenTerminalSessions,
     required this.onOpenBrowserSessions,
@@ -34,6 +35,7 @@ class WorkspaceHomeContent extends StatelessWidget {
   final VoidCallback onAddFolder;
   final VoidCallback onCreateWorkspace;
   final VoidCallback onChooseExistingWorkspace;
+  final VoidCallback onUnbindWorkspace;
   final VoidCallback onOpenTerminal;
   final VoidCallback onOpenTerminalSessions;
   final VoidCallback onOpenBrowserSessions;
@@ -62,6 +64,13 @@ class WorkspaceHomeContent extends StatelessWidget {
           onOpenBrowserSessions: onOpenBrowserSessions,
         ),
         const SizedBox(height: 8),
+        if (hasBoundWorkspace)
+          _WorkspacePrimaryAction(
+            icon: Icons.link_off,
+            title: l10n.workspaceUnbindTitle,
+            subtitle: l10n.workspaceUnbindDescription,
+            onTap: onUnbindWorkspace,
+          ),
         if (!hasBoundWorkspace) ...[
           _WorkspacePrimaryAction(
             icon: Icons.create_new_folder,

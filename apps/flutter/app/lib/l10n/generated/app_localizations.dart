@@ -800,6 +800,36 @@ abstract class AppLocalizations {
   /// **'Choose the default workspace type to create'**
   String get workspaceProjectTypeDialogDescription;
 
+  /// No description provided for @workspaceUnbindTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unbind workspace'**
+  String get workspaceUnbindTitle;
+
+  /// No description provided for @workspaceUnbindDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Detach this chat without deleting workspace files'**
+  String get workspaceUnbindDescription;
+
+  /// No description provided for @workspaceUnbindConfirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Unbind the workspace from this chat? The workspace and its files will be kept, and other chats will not be affected. You can bind a workspace again later.'**
+  String get workspaceUnbindConfirmation;
+
+  /// No description provided for @workspaceUnbindFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to unbind workspace. Please try again.'**
+  String get workspaceUnbindFailed;
+
+  /// No description provided for @workspaceUnbindChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The current chat or workspace has changed. Cancel and try again.'**
+  String get workspaceUnbindChanged;
+
   /// No description provided for @workspaceBindDialogTitle.
   ///
   /// In en, this message translates to:

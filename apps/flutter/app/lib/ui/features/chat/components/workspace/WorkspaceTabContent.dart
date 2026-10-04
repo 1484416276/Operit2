@@ -47,6 +47,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onOpenWorkspaceCreator,
     required this.onBindWorkspace,
     required this.onChooseExistingWorkspace,
+    required this.onUnbindWorkspace,
     required this.splitMarkdownContent,
   });
 
@@ -84,6 +85,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onOpenWorkspaceCreator;
   final Future<void> Function(String workspace) onBindWorkspace;
   final VoidCallback onChooseExistingWorkspace;
+  final VoidCallback onUnbindWorkspace;
   final MarkdownContentSplitter splitMarkdownContent;
 
   @override
@@ -100,6 +102,7 @@ class WorkspaceTabContent extends StatelessWidget {
           onAddFolder: onAddFolder,
           onCreateWorkspace: onOpenWorkspaceCreator,
           onChooseExistingWorkspace: onChooseExistingWorkspace,
+          onUnbindWorkspace: onUnbindWorkspace,
           onOpenTerminal: onOpenTerminal,
           onOpenTerminalSessions: onOpenTerminalSessions,
           onOpenBrowserSessions: onOpenBrowserSessions,

@@ -57,6 +57,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
   static const double _dragThreshold = 40;
 
   late final AnimationController _drawerProgressController;
+  final SnapshotController _contentSnapshotController = SnapshotController();
   double _currentDrag = 0;
   double _verticalDrag = 0;
 
@@ -67,6 +68,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
       vsync: this,
       value: widget.drawerOpenState.value ? 1.0 : 0.0,
     );
+    _drawerProgressController.addStatusListener(_handleDrawerAnimationStatus);
     widget.drawerOpenState.addListener(_animateDrawerProgress);
   }
 
@@ -83,8 +85,22 @@ class _PhoneLayoutState extends State<PhoneLayout>
   @override
   void dispose() {
     widget.drawerOpenState.removeListener(_animateDrawerProgress);
+    _drawerProgressController.removeStatusListener(
+      _handleDrawerAnimationStatus,
+    );
     _drawerProgressController.dispose();
+    _contentSnapshotController.dispose();
     super.dispose();
+  }
+
+  /// Flatten the expensive content layer tree only for the short transition.
+  /// A RepaintBoundary retains display lists, not necessarily rasterized pixels:
+  /// changing scale/rotation can still make the engine rasterize them each frame.
+  void _handleDrawerAnimationStatus(AnimationStatus status) {
+    // CanvasKit shares the UI/raster thread, where snapshot capture can regress
+    // performance. Native platform views use permissive's live-paint fallback.
+    _contentSnapshotController.allowSnapshotting =
+        !kIsWeb && _drawerProgressController.isAnimating;
   }
 
   void _animateDrawerProgress() {
@@ -137,29 +153,45 @@ class _PhoneLayoutState extends State<PhoneLayout>
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
     final animatedChild = _PhoneLayoutAnimatedChild(
-      content: RepaintBoundary(child: widget.content),
+      content: RepaintBoundary(
+        child: SnapshotWidget(
+          controller: _contentSnapshotController,
+          mode: SnapshotMode.permissive,
+          autoresize: true,
+          // Keep the live subtree mounted, and reuse its display lists when
+          // taking a snapshot or returning to live content after the animation.
+          child: RepaintBoundary(child: widget.content),
+        ),
+      ),
       drawerContent: RepaintBoundary(
-        child: ValueListenableBuilder<DrawerConversationState>(
-          valueListenable: widget.drawerConversationState,
-          builder: (context, drawerState, _) {
-            return DrawerContent(
-              key: const ValueKey<String>('phoneDrawerContent'),
-              navigationEntries: widget.navigationEntries,
-              pluginEntries: widget.pluginSidebarEntries,
-              selectedRouteId: widget.selectedRouteId,
-              appearance: appearance,
-              histories: drawerState.histories,
-              activeStreamingChatIds: drawerState.activeStreamingChatIds,
-              characterGroupNamesById: drawerState.characterGroupNamesById,
-              characterCardAvatarUrisByName:
-                  drawerState.characterCardAvatarUrisByName,
-              currentChatId: drawerState.currentChatId,
-              errorMessage: drawerState.errorMessage,
-              loading: drawerState.loading,
-              onNavigationEntrySelected: widget.onNavigationEntrySelected,
-              onConversationActivated: widget.onConversationActivated,
-            );
-          },
+        // Only the phone drawer content avoids the system navigation bar;
+        // keep its glass background edge-to-edge and other layouts unchanged.
+        child: SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          child: ValueListenableBuilder<DrawerConversationState>(
+            valueListenable: widget.drawerConversationState,
+            builder: (context, drawerState, _) {
+              return DrawerContent(
+                key: const ValueKey<String>('phoneDrawerContent'),
+                navigationEntries: widget.navigationEntries,
+                pluginEntries: widget.pluginSidebarEntries,
+                selectedRouteId: widget.selectedRouteId,
+                appearance: appearance,
+                histories: drawerState.histories,
+                activeStreamingChatIds: drawerState.activeStreamingChatIds,
+                characterGroupNamesById: drawerState.characterGroupNamesById,
+                characterCardAvatarUrisByName:
+                    drawerState.characterCardAvatarUrisByName,
+                currentChatId: drawerState.currentChatId,
+                errorMessage: drawerState.errorMessage,
+                loading: drawerState.loading,
+                onNavigationEntrySelected: widget.onNavigationEntrySelected,
+                onConversationActivated: widget.onConversationActivated,
+              );
+            },
+          ),
         ),
       ),
     );

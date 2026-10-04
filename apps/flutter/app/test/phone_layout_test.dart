@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/interactions/DrawerGestureExclusion.dart';
@@ -205,6 +206,141 @@ void main() {
       },
     );
     testWidgets(
+      'flattens content layers only during transitions (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        final revision = ValueNotifier<int>(0);
+        addTearDown(drawerOpen.dispose);
+        addTearDown(revision.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: ValueListenableBuilder<int>(
+            valueListenable: revision,
+            builder: (_, value, _) => ColoredBox(
+              color: value.isEven ? Colors.red : Colors.blue,
+              child: Text('Message revision $value'),
+            ),
+          ),
+        );
+        final snapshot = tester.widget<SnapshotWidget>(
+          find.byType(SnapshotWidget),
+        );
+        final liveContent = tester.renderObject<RenderRepaintBoundary>(
+          find.byWidget(snapshot.child!),
+        );
+        final contentElement = tester.element(find.byWidget(snapshot.child!));
+        expect(snapshot.controller.allowSnapshotting, isFalse);
+        expect(liveContent.debugLayer!.parent, isNotNull);
+
+        for (final open in <bool>[true, false, true, false]) {
+          drawerOpen.value = open;
+          await tester.pump();
+          expect(snapshot.controller.allowSnapshotting, isTrue);
+          // Unlike build/paint counters, this verifies the complex content
+          // layers are absent from the scene being transformed each frame.
+          expect(liveContent.debugLayer!.parent, isNull);
+          for (var frame = 0; frame < 5; frame++) {
+            revision.value++;
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(snapshot.controller.allowSnapshotting, isTrue);
+            expect(liveContent.debugLayer!.parent, isNull);
+            expect(
+              find.text('Message revision ${revision.value}'),
+              findsOneWidget,
+            );
+          }
+          await tester.pumpAndSettle();
+          expect(snapshot.controller.allowSnapshotting, isFalse);
+          expect(liveContent.debugLayer!.parent, isNotNull);
+          expect(
+            tester.element(find.byWidget(snapshot.child!)),
+            same(contentElement),
+          );
+          // Streaming output remains live while the drawer is at rest, too.
+          revision.value++;
+          await tester.pump();
+          expect(liveContent.debugLayer!.parent, isNotNull);
+          expect(tester.binding.hasScheduledFrame, isFalse);
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'snapshot handles reversal resize and disposal (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(true);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: const ColoredBox(color: Colors.green),
+        );
+        final snapshot = tester.widget<SnapshotWidget>(
+          find.byType(SnapshotWidget),
+        );
+        expect(snapshot.controller.allowSnapshotting, isFalse);
+        drawerOpen.value = false;
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 32));
+        expect(snapshot.controller.allowSnapshotting, isTrue);
+        drawerOpen.value = true;
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(snapshot.controller.allowSnapshotting, isTrue);
+        tester.view.physicalSize = const Size(400, 600);
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(
+          tester.getSize(find.byType(SnapshotWidget)),
+          const Size(400, 600),
+        );
+        await tester.pumpAndSettle();
+        expect(snapshot.controller.allowSnapshotting, isFalse);
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        drawerOpen.value = false;
+        await tester.pump();
+        expect(snapshot.controller.allowSnapshotting, isTrue);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+    testWidgets(
+      'non-rasterizable content stays live during transitions (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        addTearDown(drawerOpen.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: const _PlatformLayerProbe(),
+        );
+        final snapshot = tester.widget<SnapshotWidget>(
+          find.byType(SnapshotWidget),
+        );
+        final liveContent = tester.renderObject<RenderRepaintBoundary>(
+          find.byWidget(snapshot.child!),
+        );
+        expect(snapshot.mode, SnapshotMode.permissive);
+        for (final open in <bool>[true, false]) {
+          drawerOpen.value = open;
+          await tester.pump();
+          for (var frame = 0; frame < 5; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(snapshot.controller.allowSnapshotting, isTrue);
+            expect(liveContent.debugLayer!.parent, isNotNull);
+          }
+          await tester.pumpAndSettle();
+          expect(snapshot.controller.allowSnapshotting, isFalse);
+          expect(tester.takeException(), isNull);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
       'preserves drawer state across transitions (effects: $enableNavigationAnimation)',
       (tester) async {
         final drawerOpen = ValueNotifier<bool>(false);
@@ -360,4 +496,30 @@ class _ContentBox extends RenderBox {
     counts.paints++;
     context.canvas.drawRect(offset & size, Paint()..color = Colors.white);
   }
+}
+
+/// Emulates a native platform view's rasterization restriction without a plugin.
+class _PlatformLayerProbe extends LeafRenderObjectWidget {
+  const _PlatformLayerProbe();
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _PlatformLayerBox();
+}
+
+class _PlatformLayerBox extends RenderBox {
+  @override
+  bool get alwaysNeedsCompositing => true;
+
+  @override
+  void performLayout() => size = constraints.biggest;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    context.addLayer(_NonRasterizableLayer());
+  }
+}
+
+class _NonRasterizableLayer extends ContainerLayer {
+  @override
+  bool supportsRasterization() => false;
 }

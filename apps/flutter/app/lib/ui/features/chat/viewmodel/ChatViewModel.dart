@@ -487,6 +487,11 @@ class ChatViewModel {
     return _chat.bindChatToWorkspace(chatId: chatId, workspace: workspace);
   }
 
+  /// Detaches this chat without deleting the workspace or its files.
+  Future<void> unbindChatFromWorkspace(String chatId) {
+    return _chat.unbindChatFromWorkspace(chatId: chatId);
+  }
+
   Future<List<WorkspaceFileEntry>> listWorkspaceFiles(
     String relativePath,
   ) async {

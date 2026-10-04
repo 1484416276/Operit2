@@ -1,7 +1,7 @@
 // ignore_for_file: file_names
 
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_all/webview_all.dart';
 
@@ -14,7 +14,12 @@ class WorkspaceHtmlPreviewWidget extends StatefulWidget {
     super.key,
     required this.relativePath,
     required this.onReadWorkspaceFileBytes,
+    this.previewServer,
   });
+
+  /// Allows isolated lifecycle tests without binding the app's preview port.
+  @visibleForTesting
+  final WorkspaceHtmlPreviewServer? previewServer;
 
   final String relativePath;
   final Future<Uint8List> Function(String path) onReadWorkspaceFileBytes;
@@ -26,9 +31,17 @@ class WorkspaceHtmlPreviewWidget extends StatefulWidget {
 
 class _WorkspaceHtmlPreviewWidgetState
     extends State<WorkspaceHtmlPreviewWidget> {
+  // Match the DSL WebView: page gestures must win over ancestor navigation.
+  static final Set<Factory<OneSequenceGestureRecognizer>>
+  _pageGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+    Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
+  };
+
   late final WebViewController _controller;
+  late final Widget _webViewWidget;
   late final WorkspaceHtmlPreviewServer _server;
   Future<void>? _loadFuture;
+  int _loadGeneration = 0;
   bool _canGoBack = false;
   bool _canGoForward = false;
   bool _isPageLoading = false;
@@ -42,7 +55,7 @@ class _WorkspaceHtmlPreviewWidgetState
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {
-            if (!mounted) {
+            if (!mounted || _isPageLoading) {
               return;
             }
             setState(() {
@@ -54,10 +67,17 @@ class _WorkspaceHtmlPreviewWidgetState
           },
         ),
       );
-    _server = WorkspaceHtmlPreviewServer(
-      onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
+    // Retain the platform wrapper across toolbar updates and file navigation.
+    _webViewWidget = WebViewWidget(
+      controller: _controller,
+      gestureRecognizers: _pageGestureRecognizers,
     );
-    _loadFuture = _load();
+    _server =
+        widget.previewServer ??
+        WorkspaceHtmlPreviewServer(
+          onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
+        );
+    _loadFuture = _load(widget.relativePath);
   }
 
   @override
@@ -65,60 +85,80 @@ class _WorkspaceHtmlPreviewWidgetState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.relativePath != widget.relativePath) {
       setState(() {
-        _loadFuture = _reload();
+        _loadFuture = _load(widget.relativePath);
       });
     }
   }
 
   @override
   void dispose() {
+    _loadGeneration += 1;
     _server.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<void>(
-      future: _loadFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text(snapshot.error.toString()));
-        }
-        return Column(
-          children: <Widget>[
-            _WorkspaceHtmlPreviewToolbar(
-              canGoBack: _canGoBack,
-              canGoForward: _canGoForward,
-              isLoading: _isPageLoading,
-              onBack: _goBack,
-              onForward: _goForward,
-              onRefresh: _refresh,
-            ),
-            Expanded(child: WebViewWidget(controller: _controller)),
-          ],
-        );
-      },
+    return Column(
+      children: <Widget>[
+        _WorkspaceHtmlPreviewToolbar(
+          canGoBack: _canGoBack,
+          canGoForward: _canGoForward,
+          isLoading: _isPageLoading,
+          onBack: _goBack,
+          onForward: _goForward,
+          onRefresh: _refresh,
+        ),
+        Expanded(
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              _webViewWidget,
+              // Loading must not unmount the native view and lose page focus.
+              FutureBuilder<void>(
+                future: _loadFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.done &&
+                      !snapshot.hasError) {
+                    return const SizedBox.shrink();
+                  }
+                  return ColoredBox(
+                    color: Theme.of(context).colorScheme.surface,
+                    child: Center(
+                      child: snapshot.hasError
+                          ? Text(snapshot.error.toString())
+                          : const CircularProgressIndicator(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  Future<void> _reload() async {
-    await _server.stop();
-    await _load();
-  }
-
-  Future<void> _load() async {
-    final uri = await _server.start(widget.relativePath);
+  Future<void> _load(String relativePath) async {
+    final generation = ++_loadGeneration;
+    final uri = await _server.start(relativePath);
+    if (!mounted || generation != _loadGeneration) {
+      return;
+    }
     await _controller.loadRequest(uri);
-    await _updateNavigationState(isPageLoading: false);
+    // Page completion, not loadRequest completion, clears the loading state.
   }
 
   Future<void> _updateNavigationState({required bool isPageLoading}) async {
+    if (!mounted) {
+      return;
+    }
     final canGoBack = await _controller.canGoBack();
     final canGoForward = await _controller.canGoForward();
-    if (!mounted) {
+    if (!mounted ||
+        (_canGoBack == canGoBack &&
+            _canGoForward == canGoForward &&
+            _isPageLoading == isPageLoading)) {
       return;
     }
     setState(() {
@@ -168,6 +208,7 @@ class _WorkspaceHtmlPreviewToolbar extends StatelessWidget {
     return OperitGlassSurface(
       color: theme.colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
       layer: OperitGlassSurfaceLayer.control,
+      enableBackdropFilter: false,
       border: Border(
         bottom: BorderSide(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.36),

@@ -32,6 +32,7 @@ class WorkspaceShell extends StatelessWidget {
     required this.onOpenWorkspaceFile,
     required this.onCreateWorkspace,
     required this.onBindWorkspace,
+    required this.onUnbindWorkspace,
     required this.child,
   });
 
@@ -52,6 +53,7 @@ class WorkspaceShell extends StatelessWidget {
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String name) onCreateWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
+  final Future<void> Function() onUnbindWorkspace;
   final Widget child;
 
   /// Builds the workspace panel with plugins rendered as peer tabs.
@@ -90,6 +92,7 @@ class WorkspaceShell extends StatelessWidget {
         onOpenWorkspaceFile: onOpenWorkspaceFile,
         onCreateWorkspace: onCreateWorkspace,
         onBindWorkspace: onBindWorkspace,
+        onUnbindWorkspace: onUnbindWorkspace,
       ),
       child: child,
     );

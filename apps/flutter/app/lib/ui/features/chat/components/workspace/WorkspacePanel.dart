@@ -20,6 +20,7 @@ import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceTabContent.dart';
 import 'WorkspaceTabModels.dart';
 import 'WorkspaceSession.dart';
+import 'WorkspaceUnbindDialog.dart';
 import 'WorkspaceTabStrip.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
@@ -42,6 +43,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.onOpenWorkspaceFile,
     required this.onCreateWorkspace,
     required this.onBindWorkspace,
+    required this.onUnbindWorkspace,
   });
 
   final WorkspaceSession session;
@@ -61,6 +63,7 @@ class WorkspacePanel extends StatefulWidget {
   final Future<void> Function(String path) onOpenWorkspaceFile;
   final Future<void> Function(String name) onCreateWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
+  final Future<void> Function() onUnbindWorkspace;
 
   @override
   State<WorkspacePanel> createState() => _WorkspacePanelState();
@@ -88,6 +91,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   int? _dropHoverPaneIndex;
   _WorkspaceDropZone? _dropHoverZone;
   int _filesListingRevision = 0;
+  bool _workspaceUnbindDialogOpen = false;
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
       const <WorkspaceTerminalSessionInfo>[];
   final ValueNotifier<int> _terminalSessionCount = ValueNotifier<int>(0);
@@ -1204,6 +1208,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onCloseCurrentTab: () => _closeWorkspaceTab(tab, paneIndex: paneIndex),
       onOpenWorkspaceCreator: _showCreateWorkspaceDialog,
       onBindWorkspace: _bindWorkspaceFolder,
+      onUnbindWorkspace: _showUnbindWorkspaceDialog,
       onChooseExistingWorkspace: _openWorkspaceBindingPickerTab,
       splitMarkdownContent: (content) =>
           widget.chatCore.splitMarkdownContent(content: content),
@@ -1629,6 +1634,39 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
+  /// Confirms detaching only this chat, keeping workspace files intact.
+  Future<void> _showUnbindWorkspaceDialog() async {
+    final chatId = widget.currentChatId;
+    if (_workspaceUnbindDialogOpen || chatId == null) {
+      return;
+    }
+    final workspacePath = widget.workspacePath;
+    final onUnbindWorkspace = widget.onUnbindWorkspace;
+    _workspaceUnbindDialogOpen = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => WorkspaceUnbindDialog(
+          onUnbindWorkspace: () async {
+            // A chat switch while the confirmation is open must not detach
+            // the newly selected chat or a different workspace binding.
+            if (!mounted ||
+                widget.currentChatId != chatId ||
+                widget.workspacePath != workspacePath) {
+              throw StateError(
+                AppLocalizations.of(context)!.workspaceUnbindChanged,
+              );
+            }
+            await onUnbindWorkspace();
+          },
+        ),
+      );
+    } finally {
+      _workspaceUnbindDialogOpen = false;
+    }
+  }
+
   /// Opens the file tree for one mounted workspace folder.
   void _openMountedFolder(WorkspaceMountedFolder folder) {
     final relativePath = folder.relativePath.trim();
@@ -1864,9 +1902,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   Future<void> _openFileTab(WorkspaceFileEntry entry) async {
     final previewKind = workspacePreviewKindForPath(entry.path);
     var content = '';
+    // HTML is loaded by the preview server; pre-reading its text duplicates
+    // the core/VFS round trip and allocates an unused copy of the document.
     if (previewKind == WorkspaceFilePreviewKind.text ||
-        previewKind == WorkspaceFilePreviewKind.markdown ||
-        previewKind == WorkspaceFilePreviewKind.html) {
+        previewKind == WorkspaceFilePreviewKind.markdown) {
       content = await widget.onReadWorkspaceTextFile(entry.relativePath);
     }
 

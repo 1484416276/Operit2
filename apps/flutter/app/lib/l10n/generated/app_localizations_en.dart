@@ -394,6 +394,25 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose the default workspace type to create';
 
   @override
+  String get workspaceUnbindTitle => 'Unbind workspace';
+
+  @override
+  String get workspaceUnbindDescription =>
+      'Detach this chat without deleting workspace files';
+
+  @override
+  String get workspaceUnbindConfirmation =>
+      'Unbind the workspace from this chat? The workspace and its files will be kept, and other chats will not be affected. You can bind a workspace again later.';
+
+  @override
+  String get workspaceUnbindFailed =>
+      'Failed to unbind workspace. Please try again.';
+
+  @override
+  String get workspaceUnbindChanged =>
+      'The current chat or workspace has changed. Cancel and try again.';
+
+  @override
   String get workspaceBindDialogTitle => 'Choose existing workspace';
 
   @override

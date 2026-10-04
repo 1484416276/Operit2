@@ -33,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       widget.initialCategory ?? SettingsCategory.model;
   TopBarController? _topBarController;
   bool _isCurrentMainScreen = true;
+  bool _useWideLayout = false;
 
   @override
   void didChangeDependencies() {
@@ -60,22 +61,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final useWideLayout = settingsUseWideLayout(context);
-    if (useWideLayout) {
-      return _buildWideSettingsLayout(context);
-    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Navigation consumes part of the window width. Using MediaQuery here
+        // can squeeze the detail pane (including offstage cached pages) to
+        // almost zero width and repeatedly fail ExpansionTile layout.
+        final useWideLayout = settingsUseWideLayout(constraints.maxWidth);
+        if (_useWideLayout != useWideLayout) {
+          _useWideLayout = useWideLayout;
+          _syncTopBarTitle();
+        }
+        if (useWideLayout) {
+          return _buildWideSettingsLayout(context);
+        }
 
-    final selectedCategory = _phoneSelectedCategory;
-    if (selectedCategory == null) {
-      return SettingsCategoryList(
-        selectedCategory: null,
-        onCategorySelected: _openPhoneCategory,
-      );
-    }
+        final selectedCategory = _phoneSelectedCategory;
+        if (selectedCategory == null) {
+          return SettingsCategoryList(
+            selectedCategory: null,
+            onCategorySelected: _openPhoneCategory,
+          );
+        }
 
-    return SettingsDetailView(
-      category: selectedCategory,
-      onOpenProfile: () => _openPhoneCategory(SettingsCategory.profile),
+        return SettingsDetailView(
+          category: selectedCategory,
+          onOpenProfile: () => _openPhoneCategory(SettingsCategory.profile),
+        );
+      },
     );
   }
 
@@ -179,7 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       controller.clearTitleContent(owner: this);
       return;
     }
-    final category = settingsUseWideLayout(context)
+    final category = _useWideLayout
         ? _wideSelectedCategory
         : _phoneSelectedCategory;
     if (category == null) {

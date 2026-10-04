@@ -384,6 +384,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceProjectTypeDialogDescription => '请选择要创建的默认工作区类型';
 
   @override
+  String get workspaceUnbindTitle => '解除绑定';
+
+  @override
+  String get workspaceUnbindDescription => '解除当前会话的关联，保留工作区文件';
+
+  @override
+  String get workspaceUnbindConfirmation =>
+      '确定解除当前会话与工作区的绑定吗？工作区和文件都会保留，不影响其他会话，之后可以重新绑定工作区。';
+
+  @override
+  String get workspaceUnbindFailed => '解除绑定失败，请重试。';
+
+  @override
+  String get workspaceUnbindChanged => '当前会话或工作区已切换，请取消后重试。';
+
+  @override
   String get workspaceBindDialogTitle => '选择已有工作区';
 
   @override

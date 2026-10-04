@@ -2165,6 +2165,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
         onCreateWorkspace: _createWorkspace,
         onBindWorkspace: _bindWorkspace,
+        onUnbindWorkspace: _unbindWorkspace,
         child: content,
       ),
     );
@@ -2391,6 +2392,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
       onCreateWorkspace: _createWorkspace,
       onBindWorkspace: _bindWorkspace,
+      onUnbindWorkspace: _unbindWorkspace,
       child: child,
     );
   }
@@ -2462,6 +2464,14 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       throw StateError('No current chat');
     }
     await _viewModel.createAndBindWorkspace(chatId, name);
+  }
+
+  Future<void> _unbindWorkspace() async {
+    final chatId = _currentChatId;
+    if (chatId == null) {
+      throw StateError('No current chat');
+    }
+    await _viewModel.unbindChatFromWorkspace(chatId);
   }
 
   Future<void> _bindWorkspace(String workspace) async {

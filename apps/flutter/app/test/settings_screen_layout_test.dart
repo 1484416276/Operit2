@@ -1,0 +1,111 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/features/settings/about/AboutOperitScreen.dart';
+import 'package:operit2/ui/features/settings/components/SettingsCategoryList.dart';
+import 'package:operit2/ui/features/settings/models/SettingsModels.dart';
+import 'package:operit2/ui/features/settings/screens/SettingsScreen.dart';
+import 'package:operit2/ui/main/TopBarController.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
+
+void main() {
+  for (final width in <double>[340, 520, 759, 760, 920]) {
+    testWidgets('settings use their available width: $width', (tester) async {
+      final availableWidth = ValueNotifier<double>(width);
+      final hidden = ValueNotifier<bool>(false);
+      final topBar = TopBarController();
+      addTearDown(availableWidth.dispose);
+      addTearDown(hidden.dispose);
+      addTearDown(topBar.dispose);
+      await _pumpSettings(tester, availableWidth, hidden, topBar);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byType(SettingsCategoryList),
+        width >= 760 ? findsOneWidget : findsNothing,
+      );
+      expect(
+        tester.getSize(find.byType(AboutOperitScreen)).width,
+        width >= 760 ? width - 260 : width,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('cached offstage settings adapt during sidebar resizing', (
+    tester,
+  ) async {
+    final availableWidth = ValueNotifier<double>(920);
+    final hidden = ValueNotifier<bool>(false);
+    final topBar = TopBarController();
+    addTearDown(availableWidth.dispose);
+    addTearDown(hidden.dispose);
+    addTearDown(topBar.dispose);
+    await _pumpSettings(tester, availableWidth, hidden, topBar);
+    await tester.pumpAndSettle();
+    final state = tester.state(find.byType(SettingsScreen));
+
+    hidden.value = true;
+    await tester.pump();
+    for (final width in <double>[800, 760, 744, 640, 520, 340, 520, 760, 920]) {
+      availableWidth.value = width;
+      await tester.pump();
+      expect(
+        tester.state(find.byType(SettingsScreen, skipOffstage: false)),
+        same(state),
+      );
+      expect(
+        find.byType(SettingsCategoryList, skipOffstage: false),
+        width >= 760 ? findsOneWidget : findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    }
+    hidden.value = false;
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(SettingsScreen)), same(state));
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Future<void> _pumpSettings(
+  WidgetTester tester,
+  ValueNotifier<double> availableWidth,
+  ValueNotifier<bool> hidden,
+  TopBarController topBar,
+) async {
+  // A desktop window stays wide while navigation leaves less space for settings.
+  tester.view.physicalSize = const Size(1200, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpWidget(
+    OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
+      unconfiguredChildEnabled: true,
+      hostInteractionHostsEnabled: false,
+      child: TopBarScope(
+        controller: topBar,
+        child: Scaffold(
+          body: Align(
+            alignment: Alignment.centerLeft,
+            child: ValueListenableBuilder<double>(
+              valueListenable: availableWidth,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: hidden,
+                child: const SettingsScreen(
+                  initialCategory: SettingsCategory.about,
+                ),
+                builder: (context, offstage, child) =>
+                    Offstage(offstage: offstage, child: child),
+              ),
+              builder: (context, width, child) =>
+                  SizedBox(width: width, child: child),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}

@@ -2,6 +2,18 @@
 
 part of '../ToolPkgUiLauncherScreen.dart';
 
+/// Exposes the production action-event parser for return-type regression tests.
+@visibleForTesting
+({Object? actionResult, Object? renderedActionResult, bool hasRenderResult})
+parseComposeDslActionEventForTest(String event) {
+  final parsed = _ParsedComposeDslActionEvent.parse(event);
+  return (
+    actionResult: parsed.actionResult,
+    renderedActionResult: parsed.renderResult?.actionResult,
+    hasRenderResult: parsed.renderResult != null,
+  );
+}
+
 class _ParsedComposeDslActionEvent {
   /// Resolves parsed compose dsl action event for the Compose DSL renderer.
   const _ParsedComposeDslActionEvent({
@@ -104,7 +116,8 @@ class _ComposeDslRenderResult {
       tree: tree,
       state: _stringMap(value['state']),
       memo: _stringMap(value['memo']),
-      actionResult: _plainJsonValue(value['actionResult']),
+      // The outer envelope is already decoded; preserve the callback's type.
+      actionResult: value['actionResult'],
     );
   }
 
@@ -118,7 +131,8 @@ class _ComposeDslRenderResult {
     if (success == false) {
       throw Exception((value['message'] ?? 'compose_dsl failed').toString());
     }
-    return _plainJsonValue(value['actionResult']);
+    // JSON-looking strings are callback data, not another transport envelope.
+    return value['actionResult'];
   }
 
   static Map<Object?, Object?>? _rootObject(String? raw) {
@@ -152,7 +166,6 @@ class _ComposeDslRenderResult {
   }
 }
 
-
 /// Decodes one queued Compose navigation request.
 ({String routeId, Map<String, Object?> args}) _composeNavigateCommand(
   Object? raw,
@@ -168,22 +181,6 @@ class _ComposeDslRenderResult {
   final argsRaw = map['args'];
   final args = argsRaw is Map ? _stringMap(argsRaw) : <String, Object?>{};
   return (routeId: routeId, args: args);
-}
-
-/// Resolves plain json value for the Compose DSL renderer.
-Object? _plainJsonValue(Object? raw) {
-  if (raw is! String) {
-    return raw;
-  }
-  final trimmed = raw.trim();
-  if (trimmed.isEmpty) {
-    return null;
-  }
-  try {
-    return jsonDecode(trimmed);
-  } catch (_) {
-    return raw;
-  }
 }
 
 /// Canonical node names indexed by the Kotlin-compatible normalized token.

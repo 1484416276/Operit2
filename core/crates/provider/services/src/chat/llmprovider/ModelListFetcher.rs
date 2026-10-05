@@ -2,11 +2,12 @@ use operit_host_api::HostManager::defaultHttpHost;
 use operit_host_api::HttpRequestData;
 use serde_json::Value;
 
+use crate::chat::llmprovider::OpenCodeProvider::OpenCodeRouting;
 use operit_model::BillingMode::BillingMode;
 use operit_model::ModelConfigData::{
-    AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities, ModelContextSpec,
-    ModelPricing, ModelRequestSpec, PricingCurrency, ProviderCatalogEntry, ProviderOperationSpec,
-    ProviderProfile,
+    ApiProviderType, AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities,
+    ModelContextSpec, ModelPricing, ModelRequestSpec, PricingCurrency, ProviderCatalogEntry,
+    ProviderOperationSpec, ProviderProfile,
 };
 
 pub struct ModelListFetcher;
@@ -65,7 +66,7 @@ impl ModelListFetcher {
             ));
         }
 
-        let requestUrl = operationUrl(&provider.endpoint, &operation.path)?;
+        let requestUrl = operationUrl(provider, operation)?;
         let requestHeaders = headers(provider, operation)?;
 
         let response = defaultHttpHost()
@@ -125,9 +126,23 @@ impl ModelListFetcher {
 
 /// Builds the provider operation URL from the chat endpoint and operation path.
 #[allow(non_snake_case)]
-fn operationUrl(endpoint: &str, path: &str) -> Result<String, String> {
-    let mut url = url::Url::parse(endpoint).map_err(|error| error.to_string())?;
-    url.set_path(path);
+fn operationUrl(
+    provider: &ProviderProfile,
+    operation: &ProviderOperationSpec,
+) -> Result<String, String> {
+    let mut url = if provider.providerType == ApiProviderType::OPENCODE
+        && operation.operationType == "list_models"
+    {
+        // Unlike root-relative catalog paths, OpenCode routes live below Zen or Go.
+        // Reuse the same normalization as the inference provider and the Kotlin port.
+        url::Url::parse(&OpenCodeRouting::models_endpoint(&provider.endpoint))
+    } else {
+        url::Url::parse(&provider.endpoint).map(|mut url| {
+            url.set_path(&operation.path);
+            url
+        })
+    }
+    .map_err(|error| error.to_string())?;
     url.set_query(None);
     url.set_fragment(None);
     Ok(url.to_string())
@@ -145,13 +160,18 @@ fn headers(
     let object = customHeaders
         .as_object()
         .ok_or_else(|| "customHeaders is not a JSON object".to_string())?;
+    let isOpenCode = provider.providerType == ApiProviderType::OPENCODE;
     let mut hasAuthorization = false;
     for (name, value) in object {
         let headerValue = value
             .as_str()
             .ok_or_else(|| format!("customHeaders value for {name} is not a string"))?;
+        if isOpenCode && name.eq_ignore_ascii_case("User-Agent") {
+            // OpenCode expects the agent-owned identity, not a generic HTTP client.
+            continue;
+        }
         if name.eq_ignore_ascii_case("Authorization") {
-            if operation.requiresApiKey && headerValue.trim().is_empty() {
+            if (operation.requiresApiKey || isOpenCode) && headerValue.trim().is_empty() {
                 // An empty legacy custom header must not erase the generated API key.
                 continue;
             }
@@ -159,10 +179,17 @@ fn headers(
         }
         headers.push((name.clone(), headerValue.to_string()));
     }
-    if operation.requiresApiKey && !hasAuthorization {
+    if !hasAuthorization && (operation.requiresApiKey || isOpenCode) {
+        if let Some(apiKey) = apiKey(provider) {
+            headers.push(("Authorization".to_string(), bearerAuthorization(apiKey)));
+        } else if operation.requiresApiKey {
+            return Err("provider api key is required".to_string());
+        }
+    }
+    if isOpenCode {
         headers.push((
-            "Authorization".to_string(),
-            bearerAuthorization(&apiKey(provider)?),
+            "User-Agent".to_string(),
+            format!("Operit/{}", env!("CARGO_PKG_VERSION")),
         ));
     }
     Ok(headers)
@@ -184,7 +211,7 @@ fn bearerAuthorization(apiKey: &str) -> String {
 
 /// Selects the API key used by the provider model list request.
 #[allow(non_snake_case)]
-fn apiKey(provider: &ProviderProfile) -> Result<String, String> {
+fn apiKey(provider: &ProviderProfile) -> Option<&str> {
     if provider.useMultipleApiKeys {
         let apiKeys: Vec<&str> = provider
             .apiKeyPool
@@ -193,16 +220,16 @@ fn apiKey(provider: &ProviderProfile) -> Result<String, String> {
             .map(|info| info.key.trim())
             .collect();
         if apiKeys.is_empty() {
-            return Err("provider api key is required".to_string());
+            return None;
         }
         let index = provider.currentKeyIndex.rem_euclid(apiKeys.len() as i32) as usize;
-        return Ok(apiKeys[index].to_string());
+        return Some(apiKeys[index]);
     }
     let apiKey = provider.apiKey.trim();
     if apiKey.is_empty() {
-        return Err("provider api key is required".to_string());
+        return None;
     }
-    Ok(apiKey.to_string())
+    Some(apiKey)
 }
 
 /// Reads pricing metadata from one provider model item.
@@ -503,5 +530,141 @@ mod tests {
             .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
             .map(|(_, value)| value.as_str());
         assert_eq!(authorization, Some("Token custom"));
+    }
+
+    fn openCodeProvider(endpoint: &str, apiKey: &str, customHeaders: &str) -> ProviderProfile {
+        let mut provider = testProvider(apiKey, customHeaders);
+        provider.providerType = ApiProviderType::OPENCODE;
+        provider.providerTypeId = "OPENCODE".to_string();
+        provider.endpoint = endpoint.to_string();
+        provider
+    }
+
+    fn openCodeOperation() -> ProviderOperationSpec {
+        operit_model::ModelCatalog::ModelCatalog::provider("OPENCODE")
+            .expect("OpenCode catalog should exist")
+            .operations
+            .into_iter()
+            .find(|operation| operation.operationType == "list_models")
+            .expect("OpenCode should support model listing")
+    }
+
+    #[test]
+    fn opencode_model_urls_preserve_zen_and_go_base_paths() {
+        for (endpoint, expected) in [
+            (
+                "https://opencode.ai/zen",
+                "https://opencode.ai/zen/v1/models",
+            ),
+            (
+                "https://opencode.ai/zen/",
+                "https://opencode.ai/zen/v1/models",
+            ),
+            (
+                "https://opencode.ai/zen/v1",
+                "https://opencode.ai/zen/v1/models",
+            ),
+            (
+                "https://opencode.ai/zen/v1/",
+                "https://opencode.ai/zen/v1/models",
+            ),
+            (
+                "https://opencode.ai/zen/go",
+                "https://opencode.ai/zen/go/v1/models",
+            ),
+            (
+                "https://opencode.ai/zen/go/v1/",
+                "https://opencode.ai/zen/go/v1/models",
+            ),
+            (
+                "https://gateway.example/proxy/zen/go",
+                "https://gateway.example/proxy/zen/go/v1/models",
+            ),
+        ] {
+            let provider = openCodeProvider(endpoint, "sk-test", "{}");
+            assert_eq!(
+                operationUrl(&provider, &openCodeOperation()).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn opencode_model_listing_sets_agent_user_agent() {
+        let provider = openCodeProvider(
+            "https://opencode.ai/zen/go",
+            "sk-test",
+            r#"{"user-agent":"custom-client","X-Test":"keep-me"}"#,
+        );
+        let headers = headers(&provider, &openCodeOperation()).unwrap();
+        let userAgents: Vec<_> = headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("User-Agent"))
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(
+            userAgents,
+            vec![concat!("Operit/", env!("CARGO_PKG_VERSION"))]
+        );
+        assert!(headers.contains(&("X-Test".to_string(), "keep-me".to_string())));
+        assert!(headers.contains(&("Authorization".to_string(), "Bearer sk-test".to_string())));
+    }
+
+    #[test]
+    fn opencode_public_model_catalog_does_not_require_an_api_key() {
+        let provider = openCodeProvider("https://opencode.ai/zen", "", "{}");
+        let headers = headers(&provider, &openCodeOperation()).unwrap();
+        assert!(!headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("Authorization")));
+    }
+
+    #[test]
+    fn ordinary_provider_operations_keep_their_catalog_paths() {
+        let provider = testProvider("sk-test", "{}");
+        assert_eq!(
+            operationUrl(&provider, &testOperation(true)).unwrap(),
+            "https://example.com/v1/models"
+        );
+        assert!(headers(&testProvider("", "{}"), &testOperation(true)).is_err());
+    }
+
+    #[test]
+    fn opencode_optional_auth_preserves_custom_authorization() {
+        let provider = openCodeProvider(
+            "https://opencode.ai/zen",
+            "sk-test",
+            r#"{"authorization":"Bearer custom"}"#,
+        );
+        let headers = headers(&provider, &openCodeOperation()).unwrap();
+        let authorization: Vec<_> = headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("Authorization"))
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(authorization, vec!["Bearer custom"]);
+    }
+
+    #[test]
+    fn opencode_optional_auth_uses_enabled_key_pool_and_rotation() {
+        use operit_model::ApiKeyInfo::ApiKeyInfo;
+        let mut provider = openCodeProvider("https://opencode.ai/zen/go", "unused", "{}");
+        provider.useMultipleApiKeys = true;
+        let mut disabled = ApiKeyInfo::new("disabled".to_string(), "disabled-key".to_string());
+        disabled.isEnabled = false;
+        provider.apiKeyPool = vec![
+            disabled,
+            ApiKeyInfo::new("blank".to_string(), "  ".to_string()),
+            ApiKeyInfo::new("first".to_string(), "sk-first".to_string()),
+            ApiKeyInfo::new("second".to_string(), "Bearer sk-second".to_string()),
+        ];
+        provider.currentKeyIndex = -1;
+        let headers = headers(&provider, &openCodeOperation()).unwrap();
+        assert!(headers.contains(&("Authorization".to_string(), "Bearer sk-second".to_string())));
+        provider.apiKeyPool.clear();
+        let headers = super::headers(&provider, &openCodeOperation()).unwrap();
+        assert!(!headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("Authorization")));
     }
 }

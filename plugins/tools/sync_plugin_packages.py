@@ -469,10 +469,214 @@ def _typescript_command(repo_root: Path, *, dry_run: bool) -> str:
     if dry_run:
         return executable
 
+    if _provision_typescript(repo_root) is not None:
+        return str(repository_executable)
+
     raise FileNotFoundError(
         "TypeScript compiler not found. Expected the repository-managed compiler at "
         f"{repository_executable} or '{executable}' on PATH."
     )
+
+
+# TypeScript major.minor line installed when the repository pins no version.
+FALLBACK_TYPESCRIPT_LINE = "5.9"
+
+
+# Writes one diagnostic line for the plugin sync tooling.
+def _log_plugin_sync(message: str) -> None:
+    print(f"[plugin-sync] {message}", file=sys.stderr, flush=True)
+
+
+# Locates node together with npm's CLI entry point.
+#
+# CI runners that never ran actions/setup-node keep node in the runner tool
+# cache, so neither 'node' nor 'npm' is on PATH even though both exist on disk.
+def _node_toolchain() -> tuple[str, str, str] | None:
+    candidates: list[Path] = []
+    for executable in ("node", "npm"):
+        resolved = shutil.which(executable)
+        if resolved:
+            location = Path(resolved)
+            candidates.append(location)
+            candidates.append(location.resolve())
+    for candidate in ("/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"):
+        candidates.append(Path(candidate))
+    home = Path.home()
+    for pattern in (
+        "hostedtoolcache/node/*/arm64/bin",
+        "hostedtoolcache/node/*/x64/bin",
+        "hostedtoolcache/node/*/bin",
+        ".nvm/versions/node/*/bin",
+        ".fnm/node-versions/*/installation/bin",
+        ".local/share/fnm/node-versions/*/installation/bin",
+        "Library/Application Support/fnm/node-versions/*/installation/bin",
+    ):
+        for discovered in sorted(home.glob(pattern), reverse=True):
+            candidates.append(discovered / "node")
+
+    searched: list[str] = []
+    for candidate in candidates:
+        directory = candidate.parent
+        if str(directory) in searched:
+            continue
+        searched.append(str(directory))
+        if not candidate.is_file():
+            continue
+        npm_script = _npm_script_path(directory)
+        if npm_script is None:
+            continue
+        return str(candidate), npm_script, str(directory)
+    _log_plugin_sync(
+        "node toolchain not found; searched dirs: " + ", ".join(searched)
+    )
+    _log_node_search_state()
+    return None
+
+
+# Reports where a node installation could have been looked for.
+def _log_node_search_state() -> None:
+    home = Path.home()
+    directories = (
+        home / "hostedtoolcache",
+        home / "hostedtoolcache" / "node",
+        home / ".nvm" / "versions" / "node",
+        home / ".fnm" / "node-versions",
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+    )
+    for directory in directories:
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError as error:
+            _log_plugin_sync(f"ls({directory}) failed: {error}")
+            continue
+        relevant = [
+            entry
+            for entry in entries
+            if any(word in entry for word in ("node", "npm", "corepack", "pnpm"))
+        ]
+        _log_plugin_sync(f"ls({directory})={relevant[:40]}")
+
+
+# Finds npm's JavaScript entry point inside a node installation.
+def _npm_script_path(directory: Path) -> str | None:
+    candidates = (
+        directory.parent / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js",
+        directory / "npm-cli.js",
+        directory / "npm",
+        directory / "npm.cmd",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+# Prepends the discovered node directory to PATH so every child process
+# (tsc, corepack, pnpm, node) becomes resolvable for the rest of the build.
+def _ensure_node_on_path() -> Path | None:
+    toolchain = _node_toolchain()
+    if toolchain is None:
+        return None
+    directory = Path(toolchain[2])
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    if str(directory) not in entries:
+        os.environ["PATH"] = os.pathsep.join([str(directory), *entries])
+        _log_plugin_sync(f"PATH <- {directory}")
+    return directory
+
+
+# Reads the TypeScript line pinned by the plugin SDK client when present.
+#
+# Only the major.minor pair is kept: exact pins such as '5.8.0' are not always
+# published (TypeScript shipped 5.8.2 as the first 5.8 release) while a caret
+# range would happily jump to the next minor version.
+def _typescript_version_line(repo_root: Path) -> str:
+    manifests = (
+        repo_root / "plugins" / "sdk" / "clients" / "typescript" / "package.json",
+        repo_root / "package.json",
+    )
+    for manifest in manifests:
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for section in ("devDependencies", "dependencies"):
+            entries = payload.get(section)
+            if not isinstance(entries, dict):
+                continue
+            line = _major_minor(str(entries.get("typescript", "")))
+            if line:
+                return line
+    return FALLBACK_TYPESCRIPT_LINE
+
+
+# Extracts the leading 'major.minor' pair from a semver-ish spec.
+def _major_minor(version: str) -> str:
+    digits: list[str] = []
+    current = ""
+    for character in version:
+        if character.isdigit():
+            current += character
+        elif current:
+            digits.append(current)
+            current = ""
+    if current:
+        digits.append(current)
+    if len(digits) >= 2:
+        return f"{digits[0]}.{digits[1]}"
+    return digits[0] if digits else ""
+
+
+# Installs the repository-managed TypeScript compiler into .ci-tools.
+def _provision_typescript(repo_root: Path) -> Path | None:
+    root = repo_root / ".ci-tools" / "typescript"
+    executable = "tsc.cmd" if os.name == "nt" else "tsc"
+    repository_executable = root / "node_modules" / ".bin" / executable
+    if repository_executable.is_file():
+        return repository_executable
+    if _ensure_node_on_path() is None:
+        return None
+    toolchain = _node_toolchain()
+    if toolchain is None:
+        return None
+    node, npm_cli, _ = toolchain
+    version = _typescript_version_line(repo_root)
+    _log_plugin_sync(f"provisioning typescript@{version} into {root}")
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        _log_plugin_sync(f"cannot create {root}: {error}")
+        return None
+    completed = subprocess.run(
+        [
+            node,
+            npm_cli,
+            "install",
+            "--prefix",
+            str(root),
+            "--no-audit",
+            "--no-fund",
+            "--loglevel",
+            "error",
+            f"typescript@{version}",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    _log_plugin_sync(f"npm install typescript@{version} -> rc={completed.returncode}")
+    for stream, content in (
+        ("stdout", completed.stdout),
+        ("stderr", completed.stderr),
+    ):
+        trimmed = content.strip()
+        if trimmed:
+            _log_plugin_sync(f"{stream}: {trimmed[-600:]}")
+    return repository_executable if repository_executable.is_file() else None
 
 
 def _generate_plugin_sdk_types(repo_root: Path, *, dry_run: bool) -> None:
@@ -890,6 +1094,9 @@ def main() -> int:
     args = parser.parse_args()
 
     _generate_plugin_sdk_types(repo_root, dry_run=bool(args.dry_run))
+
+    if not args.dry_run:
+        _ensure_node_on_path()
 
     total_copied = 0
     total_packed = 0

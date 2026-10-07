@@ -617,7 +617,7 @@ fn workspace_command_working_dir(
     } else {
         PathMapper::joinVfsPath(workspacePath, trimmed)?
     };
-    Ok(vfs.resolvePath(&workingDirPath)?.physicalPath)
+    vfs.resolvePath(&workingDirPath)?.nativePath()
 }
 
 /// Builds the terminal session name for a workspace command.

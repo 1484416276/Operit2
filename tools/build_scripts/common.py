@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 
@@ -283,11 +284,31 @@ def dart_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = No
 
 
 def flutter_pub_get(enforce_lockfile: bool = False, env: dict[str, str] | None = None) -> None:
-    """Resolves app dependencies and generates native plugin registrants with FVM Flutter."""
+    """Resolves app dependencies and generates native plugin registrants with FVM Flutter.
+
+    The OHOS Flutter fork resolves a few packages from a git mirror that is
+    regularly unreachable from CI runners ("Connection reset by peer" while
+    cloning), so the resolution is retried a few times before the build fails.
+    """
     command = [flutter_command(), "pub", "get"]
     if enforce_lockfile:
         command.append("--enforce-lockfile")
-    run(command, cwd=FLUTTER_APP_DIR, env=env)
+    attempts = 4 if not enforce_lockfile else 1
+    delay_seconds = 15
+    for attempt in range(1, attempts + 1):
+        try:
+            run(command, cwd=FLUTTER_APP_DIR, env=env)
+            return
+        except subprocess.CalledProcessError as error:
+            if attempt >= attempts:
+                raise
+            print(
+                f"flutter pub get failed (attempt {attempt}/{attempts}): {error}. "
+                f"Retrying in {delay_seconds} seconds.",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay_seconds)
 
 
 def build_env_with_typescript(version: str) -> dict[str, str]:

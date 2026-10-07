@@ -459,6 +459,12 @@ def _platform_command(executable: str) -> str:
         resolved = shutil.which(candidate)
         if resolved is not None:
             return resolved
+    if executable in {"cargo", "rustc", "rustdoc"}:
+        toolchain = _resolve_rust_toolchain(os.environ)
+        if toolchain is not None:
+            toolchain_executable = os.path.join(toolchain[2], executable)
+            if os.path.isfile(toolchain_executable):
+                return toolchain_executable
     raise FileNotFoundError(
         f"Required executable is not available on PATH: {', '.join(candidates)}"
     )
@@ -639,6 +645,26 @@ def _major_minor(version: str) -> str:
     if len(digits) >= 2:
         return f"{digits[0]}.{digits[1]}"
     return digits[0] if digits else ""
+
+
+# Exports the rust toolchain into the process environment.
+#
+# Xcode's build service hands the hook a PATH without a usable cargo/rustc pair
+# and Flutter re-runs the hook in that same state, so the toolchain has to be
+# exported once per invocation instead of being pinned for a single command.
+def _expose_rust_toolchain() -> None:
+    resolved = _resolve_rust_toolchain(os.environ)
+    if resolved is None:
+        _log_plugin_sync(
+            "no rustup toolchain carrying cargo + rustc found in the environment"
+        )
+        return
+    rustup_home, toolchain, bin_directory = resolved
+    os.environ["RUSTUP_HOME"] = rustup_home
+    os.environ["RUSTUP_TOOLCHAIN"] = toolchain
+    os.environ["RUSTC"] = os.path.join(bin_directory, "rustc")
+    _prepend_path(Path(bin_directory))
+    _log_plugin_sync(f"rust toolchain: {toolchain} ({bin_directory})")
 
 
 # Prepends a directory to PATH when it is missing from it.
@@ -1205,6 +1231,7 @@ def main() -> int:
     _generate_plugin_sdk_types(repo_root, dry_run=bool(args.dry_run))
 
     if not args.dry_run:
+        _expose_rust_toolchain()
         _ensure_node_on_path()
 
     total_copied = 0

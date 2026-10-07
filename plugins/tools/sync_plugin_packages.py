@@ -146,6 +146,75 @@ def _run_checked_command(
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {command_text}")
 
 
+# 诊断并修复：native-assets / Xcode 钩子环境下 cargo 找不到 rustc。
+def _diagnose_and_repair_rustc(environment: dict[str, str]) -> None:
+    import sys as _sys
+
+    def _log(message: str) -> None:
+        print(f"[rustc-diag] {message}", file=_sys.stderr, flush=True)
+
+    path = environment.get("PATH", "")
+    cargo_home = environment.get("CARGO_HOME") or os.path.expanduser("~/.cargo")
+    rustup_home = environment.get("RUSTUP_HOME") or os.path.expanduser("~/.rustup")
+    bin_dir = os.path.join(cargo_home, "bin")
+    toolchains_dir = os.path.join(rustup_home, "toolchains")
+    settings = os.path.join(rustup_home, "settings.toml")
+
+    _log(f"platform={_sys.platform}")
+    _log(f"CARGO_HOME={cargo_home}")
+    _log(f"RUSTUP_HOME={rustup_home}")
+    _log(f"RUSTUP_TOOLCHAIN={environment.get('RUSTUP_TOOLCHAIN')!r}")
+    _log(f"PATH={path}")
+    try:
+        _log(f"ls({bin_dir})={sorted(os.listdir(bin_dir))}")
+    except Exception as error:  # noqa: BLE001
+        _log(f"ls({bin_dir}) failed: {error}")
+    rustc_proxy = os.path.join(bin_dir, "rustc")
+    _log(f"rustc proxy exists={os.path.exists(rustc_proxy)}")
+    try:
+        _log(f"toolchains={sorted(os.listdir(toolchains_dir))}")
+    except Exception as error:  # noqa: BLE001
+        _log(f"toolchains read failed: {error}")
+    if os.path.isfile(settings):
+        with open(settings, encoding="utf-8") as handle:
+            _log(f"settings.toml={handle.read().strip()!r}")
+    else:
+        _log("settings.toml missing")
+
+    # 修复 1：确保 cargo bin 目录位于 PATH 最前面
+    if path and bin_dir not in path.split(os.pathsep):
+        environment["PATH"] = bin_dir + os.pathsep + path
+        _log("fix1: prepended cargo bin to PATH")
+
+    # 修复 2：若派生的 toolchain 实际不存在，直接丢弃，让 rustup 用默认值
+    toolchain = environment.get("RUSTUP_TOOLCHAIN")
+    if toolchain and not os.path.isdir(os.path.join(toolchains_dir, toolchain)):
+        _log(f"fix2: dropping bogus RUSTUP_TOOLCHAIN={toolchain!r}")
+        environment.pop("RUSTUP_TOOLCHAIN", None)
+        toolchain = None
+
+    # 修复 3：rustup 代理缺失时，让 cargo 直接指向真实 rustc
+    if not os.path.exists(rustc_proxy):
+        if not toolchain and os.path.isfile(settings):
+            with open(settings, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip().startswith("default_toolchain"):
+                        toolchain = line.split("=", 1)[1].strip().strip('"')
+                        break
+        if toolchain:
+            real_rustc = os.path.join(toolchains_dir, toolchain, "bin", "rustc")
+            if os.path.exists(real_rustc):
+                environment["RUSTC"] = real_rustc
+                environment["PATH"] = (
+                    os.path.dirname(real_rustc) + os.pathsep + environment["PATH"]
+                )
+                _log(f"fix3: RUSTC -> {real_rustc}")
+            else:
+                _log(f"fix3 skipped, real rustc missing: {real_rustc}")
+
+    _log("done")
+
+
 # Builds the environment used for host-only Cargo code generators.
 def _host_cargo_environment() -> dict[str, str]:
     environment = os.environ.copy()
@@ -160,6 +229,7 @@ def _host_cargo_environment() -> dict[str, str]:
         )
         environment["SDKROOT"] = completed.stdout.strip()
     _apply_rustup_proxy_environment(environment)
+    _diagnose_and_repair_rustc(environment)
     return environment
 
 

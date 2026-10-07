@@ -137,13 +137,24 @@ def _run_checked_command(
         return
     print(f"RUN-CMD: (cd {cwd}) {command_text}")
     completed = subprocess.run(
-        command, cwd=str(cwd), env=env, stderr=subprocess.PIPE, text=True, errors="replace"
+        command,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
     )
+    stdout_tail = (completed.stdout or "").strip()
+    stderr_tail = (completed.stderr or "").strip()
     if completed.returncode != 0:
-        stderr_tail = (completed.stderr or "").strip()[-4000:]
+        if stdout_tail:
+            print(f"stdout: {stdout_tail[-4000:]}", flush=True)
         if stderr_tail:
-            print(stderr_tail, flush=True)
+            print(f"stderr: {stderr_tail[-4000:]}", flush=True)
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {command_text}")
+    if stdout_tail or stderr_tail:
+        print(f"output: {(stdout_tail + chr(10) + stderr_tail).strip()[-1500:]}", flush=True)
 
 
 # Reports the rust related environment and pins it onto a real toolchain.
@@ -630,6 +641,104 @@ def _major_minor(version: str) -> str:
     return digits[0] if digits else ""
 
 
+# Prepends a directory to PATH when it is missing from it.
+def _prepend_path(directory: Path) -> None:
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    if str(directory) in entries:
+        return
+    os.environ["PATH"] = os.pathsep.join([str(directory), *entries])
+    _log_plugin_sync(f"PATH <- {directory}")
+
+
+# Locates corepack next to the node installation.
+def _corepack_command(node_directory: Path) -> str | None:
+    for name in ("corepack", "corepack.cmd"):
+        candidate = node_directory / name
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("corepack")
+
+
+# Puts corepack's pnpm shim on PATH so `pnpm run ...` works inside pack scripts.
+def _ensure_package_manager(corepack: str, repo_root: Path) -> None:
+    directory = repo_root / ".ci-tools" / "bin"
+    shim = directory / ("pnpm.cmd" if os.name == "nt" else "pnpm")
+    if not shim.exists():
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            _log_plugin_sync(f"cannot create {directory}: {error}")
+            return
+        completed = subprocess.run(
+            [corepack, "enable", "--install-directory", str(directory), "pnpm"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        _log_plugin_sync(f"corepack enable pnpm -> rc={completed.returncode}")
+        for stream, content in (
+            ("stdout", completed.stdout),
+            ("stderr", completed.stderr),
+        ):
+            trimmed = content.strip()
+            if trimmed:
+                _log_plugin_sync(f"{stream}: {trimmed[-600:]}")
+    if shim.exists():
+        _prepend_path(directory)
+    else:
+        _log_plugin_sync(f"corepack did not create {shim}")
+
+
+# Installs the dependencies declared by a script-packed ToolPkg.
+def _install_toolpkg_dependencies(corepack: str, child_dir: Path) -> None:
+    _log_plugin_sync(f"installing dependencies for {child_dir.name}")
+    completed = subprocess.run(
+        [corepack, "pnpm", "install"],
+        cwd=str(child_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    _log_plugin_sync(f"pnpm install -> rc={completed.returncode}")
+    for stream, content in (
+        ("stdout", completed.stdout),
+        ("stderr", completed.stderr),
+    ):
+        trimmed = content.strip()
+        if trimmed:
+            _log_plugin_sync(f"{stream}: {trimmed[-1500:]}")
+    if completed.returncode != 0:
+        raise RuntimeError(f"Failed to install dependencies for {child_dir.name}")
+
+
+# Makes a script-packed ToolPkg buildable inside the host build environment.
+#
+# Its pack script calls bare `tsc`, `pnpm` and `node`, and it bundles the web
+# experience with esbuild, so the compiler, the package manager shim and the
+# declared dependencies must all exist before the script runs.
+def _prepare_script_toolpkg(
+    repo_root: Path,
+    child_dir: Path,
+    *,
+    dry_run: bool,
+) -> str:
+    if dry_run:
+        return shutil.which("corepack") or "corepack"
+    node_directory = _ensure_node_on_path()
+    if node_directory is None:
+        raise FileNotFoundError("Node.js is required to build script-packed ToolPkgs")
+    _prepend_path(Path(_typescript_command(repo_root, dry_run=False)).parent)
+    corepack = _corepack_command(node_directory)
+    if corepack is None:
+        raise FileNotFoundError("Corepack is required to build script-packed ToolPkgs")
+    _ensure_package_manager(corepack, repo_root)
+    os.environ.setdefault("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0")
+    os.environ.setdefault("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")
+    if not (child_dir / "node_modules").is_dir():
+        _install_toolpkg_dependencies(corepack, child_dir)
+    return corepack
+
+
 # Installs the repository-managed TypeScript compiler into .ci-tools.
 def _provision_typescript(repo_root: Path) -> Path | None:
     root = repo_root / ".ci-tools" / "typescript"
@@ -947,9 +1056,9 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
     )
     for child_dir in child_dirs:
         if _is_script_packed_toolpkg(child_dir):
-            corepack_command = shutil.which("corepack")
-            if corepack_command is None:
-                raise FileNotFoundError("Corepack is required to build script-packed ToolPkgs")
+            corepack_command = _prepare_script_toolpkg(
+                repo_root, child_dir, dry_run=dry_run
+            )
             _run_checked_command(
                 [corepack_command, "pnpm", "run", "pack:toolpkg"],
                 child_dir,

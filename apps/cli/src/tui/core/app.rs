@@ -1752,16 +1752,22 @@ impl OperitTui {
             None | Some("show") if args.len() <= 1 => {
                 let state = self.networkControl.deviceSpaceControl()?;
                 let topology = self.networkControl.deviceSpaceTopology()?;
-                self.status_message = format!(
-                    "network {} · {} devices · {} identities",
-                    if state.initialized {
-                        "ready"
-                    } else {
-                        "not initialized"
-                    },
-                    topology.devices.len(),
-                    state.roles.len(),
-                );
+                // Read-only views share the list popup so output persists
+                // until Esc instead of competing for the status line.
+                let items = vec![
+                    format!(
+                        "state: {}",
+                        if state.initialized {
+                            "ready"
+                        } else {
+                            "not initialized"
+                        }
+                    ),
+                    format!("devices: {}", topology.devices.len()),
+                    format!("identities: {}", state.roles.len()),
+                    format!("policies: {}", state.policies.len()),
+                ];
+                self.open_list_popup("Network".to_string(), items);
             }
             Some("bootstrap") if args.len() == 1 => {
                 self.networkControl.bootstrapDeviceSpaceControl()?;
@@ -2895,8 +2901,10 @@ impl OperitTui {
                     self.last_current_chat_loading = false;
                     self.follow_transcript = true;
                     self.refresh_chats().await;
+                    // Model binding now lives in the persistent right footer
+                    // segment; reset the left status for command feedback.
                     match self.current_chat_model_status_label().await {
-                        Ok(label) => self.set_status_message(label),
+                        Ok(_) => self.status_message.clear(),
                         Err(error) => self.set_status_message(error),
                     }
                 }
@@ -2927,16 +2935,10 @@ impl OperitTui {
             self.awaiting_runtime_loading = false;
             self.follow_transcript = true;
             self.refresh_chats().await;
+            // Loading just finished; reset the status line for command
+            // feedback instead of rewriting the model binding label.
             match self.current_chat_model_status_label().await {
-                Ok(label) => self.set_status_message(label),
-                Err(error) => self.set_status_message(error),
-            }
-        } else if matches!(
-            state,
-            InputProcessingState::Idle | InputProcessingState::Completed
-        ) {
-            match self.current_chat_model_status_label().await {
-                Ok(label) => self.set_status_message(label),
+                Ok(_) => self.status_message.clear(),
                 Err(error) => self.set_status_message(error),
             }
         }
@@ -2967,7 +2969,17 @@ impl OperitTui {
         }
     }
 
+    /// Persistent right footer segment: chat model binding plus context
+    /// usage. The model label used to live in the left status segment,
+    /// which the runtime refresher rewrote periodically and clobbered
+    /// command feedback.
     async fn current_context_usage_label(&mut self) -> Result<String, String> {
+        let model_label = self.current_chat_model_status_label().await?;
+        let usage = self.current_context_usage_text().await?;
+        Ok(format!("{model_label} | {usage}"))
+    }
+
+    async fn current_context_usage_text(&mut self) -> Result<String, String> {
         let model_ref = self.editable_chat_model_ref().await?;
         let config = self
             .core

@@ -42,7 +42,7 @@ use operit_util::GithubReleaseUtil::{
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
 use super::approval::TuiApprovalBridge;
-use super::commands::TuiPluginCommandSpec;
+use super::commands::{expand_plugin_command, keyword_options_for, TuiPluginCommandSpec};
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
@@ -180,11 +180,7 @@ async fn load_plugin_command_specs(
         .map_err(|error| format!("plugin command metadata is invalid: {error}"))?;
     Ok(commands
         .into_iter()
-        .map(|command| TuiPluginCommandSpec {
-            name: command.name,
-            usage: command.usage,
-            description: command.description,
-        })
+        .flat_map(|command| expand_plugin_command(command.name, command.usage, command.description))
         .collect())
 }
 
@@ -1501,7 +1497,11 @@ impl OperitTui {
         if input.starts_with('/') {
             self.input.clear();
             self.input_cursor = 0;
-            self.handle_local_command(&input).await?;
+            // Slash-command failures (bad arguments, rejected core calls) are
+            // status-line material, never reasons to tear down the TUI loop.
+            if let Err(error) = self.handle_local_command(&input).await {
+                self.status_message = error;
+            }
             return Ok(());
         }
 
@@ -1604,7 +1604,9 @@ impl OperitTui {
             return Ok(());
         }
         let command = parts[0].trim_start_matches('/');
-        match command {
+        // Builtin dispatch is case-insensitive to match the completion popup;
+        // plugin commands still receive the original spelling.
+        match command.to_ascii_lowercase().as_str() {
             "help" => {
                 self.show_help = true;
             }
@@ -1612,7 +1614,8 @@ impl OperitTui {
                 self.should_quit = true;
             }
             "new" => {
-                let shell_args = parse_shell_args(&parts[1..])?;
+                let shell_args = Self::parse_new_chat_args(&parts[1..])
+                    .map_err(|()| self.text().usage_new().to_string())?;
                 self.create_new_chat(shell_args).await?;
             }
             "switch" => {
@@ -1689,6 +1692,29 @@ impl OperitTui {
             }
         }
         Ok(())
+    }
+
+    /// `/new` takes repeatable `keyword value` pairs (`character`,
+    /// `group-card`, `group`); translate them into the shared shell flags so
+    /// `parse_shell_args` stays the single option parser. Legacy `--keyword`
+    /// spellings are still accepted.
+    fn parse_new_chat_args(args: &[String]) -> Result<ShellArgs, ()> {
+        let options = keyword_options_for("new").ok_or(())?;
+        let mut translated = Vec::with_capacity(args.len());
+        let mut index = 0;
+        while index < args.len() {
+            let keyword = args[index].trim_start_matches("--").to_ascii_lowercase();
+            if !options.contains(&keyword.as_str()) {
+                return Err(());
+            }
+            let Some(value) = args.get(index + 1) else {
+                return Err(());
+            };
+            translated.push(format!("--{keyword}"));
+            translated.push(value.clone());
+            index += 2;
+        }
+        parse_shell_args(&translated).map_err(|_| ())
     }
 
     /// Executes a ToolPkg slash command through the shared Core command dispatcher.
@@ -3015,7 +3041,7 @@ impl OperitTui {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
                 .get(1)
-                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                .ok_or_else(|| self.text().usage_skill_toggle().to_string())?;
             self.status_message = self.text().skill_toggled(name, "toggled");
             return Ok(());
         }
@@ -3043,7 +3069,7 @@ impl OperitTui {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
                 .get(1)
-                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                .ok_or_else(|| self.text().usage_package_toggle().to_string())?;
             self.status_message = self.text().package_toggled(name, "toggled");
             return Ok(());
         }
@@ -3069,7 +3095,7 @@ impl OperitTui {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
                 .get(1)
-                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                .ok_or_else(|| self.text().usage_plugin_toggle().to_string())?;
             self.status_message = self.text().plugin_toggled(name, "toggled");
             return Ok(());
         }
@@ -3096,7 +3122,7 @@ impl OperitTui {
         if args.first().map(String::as_str) == Some("toggle") {
             let name = args
                 .get(1)
-                .ok_or_else(|| self.text().usage_approval_tool().to_string())?;
+                .ok_or_else(|| self.text().usage_mcp_toggle().to_string())?;
             self.status_message = self.text().mcp_toggled(name, "toggled");
             return Ok(());
         }
@@ -3292,6 +3318,34 @@ mod tests {
     use super::*;
     use operit_model::MessagePart::MessagePartKind;
     use operit_model::MessagePartCodec::MessagePartCodec;
+
+    /// Verifies `/new` keyword options translate into the shared shell flags.
+    #[test]
+    fn new_chat_args_translate_keywords_into_shell_flags() {
+        let args = OperitTui::parse_new_chat_args(&[
+            "character".to_string(),
+            "Alice".to_string(),
+            "group-card".to_string(),
+            "42".to_string(),
+            "group".to_string(),
+            "Heroes".to_string(),
+        ])
+        .expect("keyword options must translate");
+        assert_eq!(args.characterCardName.as_deref(), Some("Alice"));
+        assert_eq!(args.characterGroupId.as_deref(), Some("42"));
+        assert_eq!(args.group.as_deref(), Some("Heroes"));
+    }
+
+    /// Verifies legacy `--` spellings still parse and bad input is rejected.
+    #[test]
+    fn new_chat_args_accept_legacy_flags_and_reject_unknowns() {
+        let args = OperitTui::parse_new_chat_args(&["--group".to_string(), "Heroes".to_string()])
+            .expect("legacy flag spelling must translate");
+        assert_eq!(args.group.as_deref(), Some("Heroes"));
+
+        assert!(OperitTui::parse_new_chat_args(&["chat".to_string(), "x".to_string()]).is_err());
+        assert!(OperitTui::parse_new_chat_args(&["character".to_string()]).is_err());
+    }
 
     /// Verifies TUI embedded stream projection preserves split tool markup.
     #[test]

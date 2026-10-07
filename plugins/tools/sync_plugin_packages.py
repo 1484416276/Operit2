@@ -146,73 +146,168 @@ def _run_checked_command(
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {command_text}")
 
 
-# 诊断并修复：native-assets / Xcode 钩子环境下 cargo 找不到 rustc。
-def _diagnose_and_repair_rustc(environment: dict[str, str]) -> None:
-    import sys as _sys
-
+# Reports the rust related environment and pins it onto a real toolchain.
+#
+# IDE hosts, MSBuild and Xcode's build service hand us a polluted rust
+# environment: PATH carries a stale rustup proxy `cargo` (sometimes symlinked
+# into Homebrew's Cellar) while neither a `rustc` proxy nor a toolchain bin
+# directory is reachable, and CARGO_HOME points at a Homebrew prefix. The rustup
+# proxy then starts the real cargo, which runs `rustc -vV` and dies with
+# `could not execute process 'rustc -vV' (never executed)` because there is no
+# `rustc` to execute at all.
+#
+# _apply_rustup_proxy_environment only fills in *missing* variables, which can
+# never repair that state. This function instead resolves the toolchain that
+# actually owns a `cargo` + `rustc` pair and forces RUSTUP_HOME,
+# RUSTUP_TOOLCHAIN, RUSTC and the toolchain bin directory (prepended to PATH),
+# so cargo no longer depends on the caller's PATH to locate rustc.
+def _repair_rust_environment(environment: dict[str, str]) -> None:
     def _log(message: str) -> None:
-        print(f"[rustc-diag] {message}", file=_sys.stderr, flush=True)
+        print(f"[rust-env] {message}", file=sys.stderr, flush=True)
 
-    path = environment.get("PATH", "")
-    cargo_home = environment.get("CARGO_HOME") or os.path.expanduser("~/.cargo")
-    rustup_home = environment.get("RUSTUP_HOME") or os.path.expanduser("~/.rustup")
-    bin_dir = os.path.join(cargo_home, "bin")
-    toolchains_dir = os.path.join(rustup_home, "toolchains")
-    settings = os.path.join(rustup_home, "settings.toml")
-
-    _log(f"platform={_sys.platform}")
-    _log(f"CARGO_HOME={cargo_home}")
-    _log(f"RUSTUP_HOME={rustup_home}")
+    path_value = environment.get("PATH", "")
+    _log(f"platform={sys.platform}")
+    _log(f"CARGO_HOME={environment.get('CARGO_HOME')!r}")
+    _log(f"RUSTUP_HOME={environment.get('RUSTUP_HOME')!r}")
     _log(f"RUSTUP_TOOLCHAIN={environment.get('RUSTUP_TOOLCHAIN')!r}")
-    _log(f"PATH={path}")
-    try:
-        _log(f"ls({bin_dir})={sorted(os.listdir(bin_dir))}")
-    except Exception as error:  # noqa: BLE001
-        _log(f"ls({bin_dir}) failed: {error}")
-    rustc_proxy = os.path.join(bin_dir, "rustc")
-    _log(f"rustc proxy exists={os.path.exists(rustc_proxy)}")
-    try:
-        _log(f"toolchains={sorted(os.listdir(toolchains_dir))}")
-    except Exception as error:  # noqa: BLE001
-        _log(f"toolchains read failed: {error}")
-    if os.path.isfile(settings):
-        with open(settings, encoding="utf-8") as handle:
-            _log(f"settings.toml={handle.read().strip()!r}")
-    else:
-        _log("settings.toml missing")
+    _log(f"RUSTC={environment.get('RUSTC')!r}")
+    _log(f"which(cargo)={shutil.which('cargo')!r}")
+    _log(f"which(rustc)={shutil.which('rustc')!r}")
+    for directory in _rust_bin_directories(environment):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError as error:
+            _log(f"ls({directory})=<unreadable: {error}>")
+            continue
+        _log(f"ls({directory})={entries}")
+    _log(f"PATH={path_value}")
 
-    # 修复 1：确保 cargo bin 目录位于 PATH 最前面
-    if path and bin_dir not in path.split(os.pathsep):
-        environment["PATH"] = bin_dir + os.pathsep + path
-        _log("fix1: prepended cargo bin to PATH")
+    resolved = _resolve_rust_toolchain(environment)
+    if resolved is None:
+        _log("no rustup toolchain carrying cargo + rustc, environment unchanged")
+        return
 
-    # 修复 2：若派生的 toolchain 实际不存在，直接丢弃，让 rustup 用默认值
-    toolchain = environment.get("RUSTUP_TOOLCHAIN")
-    if toolchain and not os.path.isdir(os.path.join(toolchains_dir, toolchain)):
-        _log(f"fix2: dropping bogus RUSTUP_TOOLCHAIN={toolchain!r}")
-        environment.pop("RUSTUP_TOOLCHAIN", None)
-        toolchain = None
+    rustup_home, toolchain, bin_directory = resolved
+    environment["RUSTUP_HOME"] = rustup_home
+    environment["RUSTUP_TOOLCHAIN"] = toolchain
+    environment["RUSTC"] = os.path.join(bin_directory, "rustc")
+    entries = [
+        entry
+        for entry in path_value.split(os.pathsep)
+        if entry and entry != bin_directory
+    ]
+    environment["PATH"] = os.pathsep.join([bin_directory, *entries])
+    _log(f"repair: RUSTUP_HOME={rustup_home}")
+    _log(f"repair: RUSTUP_TOOLCHAIN={toolchain}")
+    _log(f"repair: RUSTC={environment['RUSTC']}")
+    _log(f"repair: PATH<-{bin_directory}")
+    _probe_rust_tools(environment, bin_directory)
 
-    # 修复 3：rustup 代理缺失时，让 cargo 直接指向真实 rustc
-    if not os.path.exists(rustc_proxy):
-        if not toolchain and os.path.isfile(settings):
-            with open(settings, encoding="utf-8") as handle:
-                for line in handle:
-                    if line.strip().startswith("default_toolchain"):
-                        toolchain = line.split("=", 1)[1].strip().strip('"')
-                        break
-        if toolchain:
-            real_rustc = os.path.join(toolchains_dir, toolchain, "bin", "rustc")
-            if os.path.exists(real_rustc):
-                environment["RUSTC"] = real_rustc
-                environment["PATH"] = (
-                    os.path.dirname(real_rustc) + os.pathsep + environment["PATH"]
-                )
-                _log(f"fix3: RUSTC -> {real_rustc}")
-            else:
-                _log(f"fix3 skipped, real rustc missing: {real_rustc}")
 
-    _log("done")
+# Runs the resolved tools once so a broken toolchain shows up in the build log.
+def _probe_rust_tools(environment: dict[str, str], bin_directory: str) -> None:
+    def _log(message: str) -> None:
+        print(f"[rust-env] {message}", file=sys.stderr, flush=True)
+
+    for tool in ("rustc", "cargo"):
+        executable = os.path.join(bin_directory, tool)
+        try:
+            completed = subprocess.run(
+                [executable, "-vV" if tool == "rustc" else "-V"],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            _log(f"probe {tool} failed: {error}")
+            continue
+        stdout = completed.stdout.strip().splitlines()
+        first_line = stdout[0] if stdout else ""
+        _log(
+            f"probe {tool}: rc={completed.returncode} "
+            f"out={first_line!r} "
+            f"err={completed.stderr.strip()[:200]!r}"
+        )
+
+
+# Lists the rust bin directories worth reporting while diagnosing.
+def _rust_bin_directories(environment: dict[str, str]) -> list[str]:
+    found: list[str] = []
+    for location in (shutil.which("cargo"), environment.get("CARGO_HOME")):
+        if not location:
+            continue
+        entry = Path(location)
+        if entry.name in {"cargo", "cargo.exe", "cargo.cmd", "cargo.bat"}:
+            directory = entry.parent
+        else:
+            directory = entry / "bin"
+        if str(directory) not in found:
+            found.append(str(directory))
+    for rustup_home in _rustup_home_candidates(environment):
+        toolchains = Path(rustup_home) / "toolchains"
+        try:
+            names = sorted(os.listdir(toolchains))
+        except OSError:
+            continue
+        for name in names:
+            directory = str(toolchains / name / "bin")
+            if directory not in found:
+                found.append(directory)
+    return found
+
+
+# Lists the rustup homes that could own a toolchain, most likely first.
+def _rustup_home_candidates(environment: dict[str, str]) -> list[str]:
+    locations: list[Path | None] = [
+        _path_or_none(environment.get("RUSTUP_HOME")),
+        Path.home() / ".rustup",
+    ]
+    cargo = shutil.which("cargo")
+    if cargo:
+        for parent in Path(cargo).resolve().parents:
+            locations.append(parent / "rustup")
+            locations.append(parent / ".rustup")
+    candidates: list[str] = []
+    for location in locations:
+        if location is None:
+            continue
+        resolved = str(location)
+        if resolved in candidates or not location.is_dir():
+            continue
+        candidates.append(resolved)
+    return candidates
+
+
+def _path_or_none(value: str | None) -> Path | None:
+    return Path(value) if value else None
+
+
+# Resolves (rustup_home, toolchain, bin_directory) for a usable toolchain.
+def _resolve_rust_toolchain(
+    environment: dict[str, str],
+) -> tuple[str, str, str] | None:
+    for rustup_home in _rustup_home_candidates(environment):
+        toolchains = Path(rustup_home) / "toolchains"
+        try:
+            names = sorted(os.listdir(toolchains))
+        except OSError:
+            continue
+        if not names:
+            continue
+        preferred = environment.get("RUSTUP_TOOLCHAIN") or _rustup_default_toolchain(
+            Path(rustup_home)
+        )
+        ordered = [name for name in names if name == preferred]
+        ordered.extend(name for name in names if name != preferred)
+        for name in ordered:
+            bin_directory = toolchains / name / "bin"
+            if (bin_directory / "cargo").is_file() and (
+                bin_directory / "rustc"
+            ).is_file():
+                return rustup_home, name, str(bin_directory)
+    return None
 
 
 # Builds the environment used for host-only Cargo code generators.
@@ -229,7 +324,7 @@ def _host_cargo_environment() -> dict[str, str]:
         )
         environment["SDKROOT"] = completed.stdout.strip()
     _apply_rustup_proxy_environment(environment)
-    _diagnose_and_repair_rustc(environment)
+    _repair_rust_environment(environment)
     return environment
 
 

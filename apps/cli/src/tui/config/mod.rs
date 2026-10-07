@@ -670,6 +670,76 @@ impl ConfigUi {
         );
     }
 
+    /// Routes a bracketed paste payload into the config window's focused text input.
+    pub(crate) fn handle_paste(&mut self, text: &str) {
+        // Every config input is single-line, so drop line breaks from multi-line pastes.
+        let text: String = text.chars().filter(|ch| *ch != '\n' && *ch != '\r').collect();
+        if text.is_empty() || self.show_confirm_dialog {
+            return;
+        }
+        if self.show_add_model_popup {
+            self.add_model_search.push_str(&text);
+            if !self.add_model_custom_mode {
+                self.update_add_model_filter();
+            }
+            return;
+        }
+        match &mut self.state {
+            ConfigState::ProviderList => {
+                self.search.push_str(&text);
+                self.status_message = None;
+                self.update_filter();
+            }
+            ConfigState::ModelList { .. } => {
+                self.search.push_str(&text);
+                self.update_filter();
+            }
+            ConfigState::ProviderForm(form) => {
+                if form.show_type_selector {
+                    form.type_selector_filter.push_str(&text);
+                    form.update_type_filter();
+                } else if form.editing_field {
+                    if let Some(field) = form.fields.get_mut(form.focus_index) {
+                        let mut cursor = field.cursor;
+                        while cursor > 0 && !field.value.is_char_boundary(cursor) {
+                            cursor -= 1;
+                        }
+                        field.value.insert_str(cursor, &text);
+                        field.cursor = cursor + text.len();
+                    }
+                }
+            }
+            ConfigState::ModelEditor(editor) => {
+                if !editor.editing_field {
+                    return;
+                }
+                match editor.level {
+                    model_editor::EditorLevel::Main => match editor.focused_main_item() {
+                        Some(model_editor::MainFocus::MaxContextLength) => {
+                            push_numeric_text(&mut editor.max_context_length, &text);
+                        }
+                        Some(model_editor::MainFocus::ThinkingConfigurations) => {
+                            editor.thinking_configurations.push_str(&text);
+                        }
+                        Some(model_editor::MainFocus::ThinkingOption) => {
+                            editor.thinking_option_id.push_str(&text);
+                        }
+                        _ => {}
+                    },
+                    model_editor::EditorLevel::Summary => match editor.focused_summary_item() {
+                        Some(model_editor::SummaryFocus::TokenThreshold) => {
+                            push_numeric_text(&mut editor.summary_token_threshold, &text);
+                        }
+                        Some(model_editor::SummaryFocus::MessageCountThreshold) => {
+                            push_numeric_text(&mut editor.summary_message_count_threshold, &text);
+                        }
+                        _ => {}
+                    },
+                }
+            }
+        }
+    }
+
     pub(crate) async fn handle_key(
         &mut self,
         key: KeyEvent,
@@ -1512,6 +1582,15 @@ impl ConfigUi {
                     None
                 }
             }
+        }
+    }
+}
+
+/// Appends only numeric characters, matching the digit-only model editor fields.
+fn push_numeric_text(target: &mut String, text: &str) {
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            target.push(ch);
         }
     }
 }
